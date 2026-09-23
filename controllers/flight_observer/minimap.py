@@ -51,7 +51,7 @@ class WorldView:
         self.camera = 'drone'
         self.make_background()
         self.set_camera('drone')
-        robot.setLabel(0, '1  DRONE    2  OVERVIEW    3  FOREST', 0.025, 0.025, 0.038, 0xE8EFEC, 0, 'Arial')
+        robot.setLabel(0, '1  DRONE    2  OVERVIEW    3  FOREST    4  BACKLIT', 0.025, 0.025, 0.038, 0xE8EFEC, 0, 'Arial')
 
     @staticmethod
     def ground(position):
@@ -112,8 +112,9 @@ class WorldView:
     def update(self, position, orientation):
         key = self.keyboard.getKey()
         while key != -1:
-            if key in (ord('1'), ord('2'), ord('3')):
-                self.set_camera({ord('1'): 'drone', ord('2'): 'overview', ord('3'): 'forest'}[key])
+            views = {ord('1'): 'drone', ord('2'): 'overview', ord('3'): 'forest', ord('4'): 'backlit'}
+            if key in views:
+                self.set_camera(views[key])
             key = self.keyboard.getKey()
         gpos = self.ground(position)
         if not self.trail or math.dist(gpos, self.trail[-1]) > 0.5:

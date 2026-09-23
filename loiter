@@ -357,7 +357,7 @@ def flight(headless, editor=False, world="forest"):
                 print(f"PASS: takeoff, hover, landing. Report: {run / 'result.json'}")
                 if not headless:
                     print(
-                        "World left open (keys 1/2/3 switch cameras). Ctrl+C to exit.",
+                        "World left open (keys 1–4 switch views). Ctrl+C to exit.",
                         flush=True,
                     )
                     webots.wait()
