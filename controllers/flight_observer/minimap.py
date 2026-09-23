@@ -120,6 +120,7 @@ class WorldView:
             self.trail.append(gpos)
             self.trail = self.trail[-2000:]
         status = self.run / 'flight-state.json'
+        previous = self.state
         if status.exists():
             try:
                 self.state = json.loads(status.read_text())['state']
@@ -149,3 +150,5 @@ class WorldView:
         state = 'LANDED' if self.state == 'COMPLETED' else self.state.replace('_', ' ')
         agl = max(0, position[2] - self.scene.get('pad_top', 0))
         d.drawText(f'{agl:04.1f} m   /   {state}', 22, 258)
+        if self.state != previous:  # keep the map of each run beside its logs
+            d.imageSave(None, str(self.run / 'world-map.png'))

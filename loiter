@@ -318,6 +318,16 @@ def flight(headless, editor=False, world="forest"):
                     raise RuntimeError(
                         "SITL container did not start within 30 seconds."
                     )
+                # Large worlds take a while to load. Start the flight check only
+                # once Webots runs controllers, so loading never eats its timeouts.
+                ready = run / "world-ready"
+                deadline = time.monotonic() + 600
+                while not ready.exists():
+                    if webots.poll() is not None or sitl.poll() is not None:
+                        raise RuntimeError(f"A simulator process exited while loading. Inspect {run}.")
+                    if time.monotonic() > deadline:
+                        raise RuntimeError(f"World did not load within 600 seconds. Inspect {run}.")
+                    time.sleep(0.2)
                 mission = subprocess.Popen(
                     [
                         "docker",
@@ -330,7 +340,8 @@ def flight(headless, editor=False, world="forest"):
                     ],
                     start_new_session=True,
                 )
-                deadline = time.monotonic() + 240
+                # A backstop only: the check itself times out on simulated time.
+                deadline = time.monotonic() + 900
                 while mission.poll() is None:
                     if webots.poll() is not None or sitl.poll() is not None:
                         raise RuntimeError(
@@ -338,7 +349,7 @@ def flight(headless, editor=False, world="forest"):
                         )
                     if time.monotonic() > deadline:
                         raise RuntimeError(
-                            f"Flight exceeded the 240-second wall-clock limit. Inspect {run}."
+                            f"Flight exceeded the 900-second wall-clock backstop. Inspect {run}."
                         )
                     time.sleep(0.2)
                 if mission.returncode:

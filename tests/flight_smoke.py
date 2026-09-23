@@ -19,6 +19,7 @@ class Flight:
         self.log = output.with_name("telemetry.jsonl").open("w", buffering=1)
         self.started = time.monotonic()
         self.last_heartbeat = 0
+        self.sim_time = None  # autopilot boot time in seconds; tracks simulated time
 
     def event(self, state):
         print(state, flush=True)
@@ -38,15 +39,27 @@ class Flight:
         message = self.connection.recv_match(blocking=True, timeout=0.2)
         if message and message.get_type() != "BAD_DATA":
             self.messages[message.get_type()] = message
+            boot = getattr(message, "time_boot_ms", None)
+            if boot is not None:
+                self.sim_time = boot / 1000
             self.log.write(json.dumps(message.to_dict()) + "\n")
             if message.get_type() == "STATUSTEXT":
                 print(f"  ArduPilot: {message.text}", flush=True)
         return message
 
+    def expired(self, sim_start, wall_start, timeout):
+        """Timeouts run on simulated time, so a slow renderer cannot fail a
+        correct flight. A wall-clock backstop still catches a stalled simulator."""
+        if self.sim_time is not None and sim_start is not None and self.sim_time - sim_start > timeout:
+            return True
+        return time.monotonic() - wall_start > max(4 * timeout, 60)
+
     def wait(self, description, predicate, timeout=30):
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        sim_start, wall_start = self.sim_time, time.monotonic()
+        while not self.expired(sim_start, wall_start, timeout):
             message = self.poll()
+            if sim_start is None:
+                sim_start = self.sim_time
             if message and predicate(message):
                 return message
         raise RuntimeError(f"Timeout: {description}")
@@ -116,8 +129,9 @@ class Flight:
         self.event("HOVERING")
         start = None
         hover = []
-        deadline = time.monotonic() + 25
-        while time.monotonic() < deadline:
+        hovered = False
+        sim_start, wall_start = self.sim_time, time.monotonic()
+        while not self.expired(sim_start, wall_start, 25):
             message = self.poll()
             if not message or message.get_type() != "GLOBAL_POSITION_INT":
                 continue
@@ -130,8 +144,9 @@ class Flight:
                 start = message.time_boot_ms
             hover.append(altitude)
             if message.time_boot_ms - start >= 5000:
+                hovered = True
                 break
-        else:
+        if not hovered:
             raise RuntimeError("Could not sustain a 5-second hover within 0.5 m of target altitude")
         self.event("LANDING")
         self.mode(9)  # LAND

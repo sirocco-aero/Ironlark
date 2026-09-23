@@ -19,6 +19,9 @@ if scene_path:
     from minimap import WorldView
     world_view = WorldView(robot, scene_path, destination)
 
+# Controllers start once the world has loaded; the launcher waits for this.
+(Path(destination) / "world-ready").touch()
+
 with (Path(destination) / "ground_truth.jsonl").open("w", buffering=1) as stream:
     while robot.step(100) != -1:
         position = drone.getPosition()

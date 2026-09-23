@@ -74,7 +74,7 @@ localization.
 
 Each run writes `runs/<timestamp>/`: `manifest.json` (versions, Webots patches,
 world, estimator), `result.json` (verdict, transitions, measurements),
-`telemetry.jsonl`, evaluator-only `ground_truth.jsonl`, and Webots, SITL and
+`telemetry.jsonl`, evaluator-only `ground_truth.jsonl`, `world-map.png` (forest), and Webots, SITL and
 ArduPilot logs. Ctrl+C or failure tears everything down; that is cleanup, not a
 recovery policy.
 
