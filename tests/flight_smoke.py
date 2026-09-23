@@ -1,0 +1,197 @@
+"""Execute and evaluate the simulated takeoff/hover/land integration gate."""
+
+import argparse
+import json
+import math
+from pathlib import Path
+import sys
+import time
+
+from pymavlink import mavutil
+
+
+class Flight:
+    def __init__(self, output):
+        self.output = output
+        self.connection = None
+        self.messages = {}
+        self.events = []
+        self.log = output.with_name("telemetry.jsonl").open("w", buffering=1)
+        self.started = time.monotonic()
+        self.last_heartbeat = 0
+
+    def event(self, state):
+        print(state, flush=True)
+        self.events.append({"state": state, "wall_seconds": time.monotonic() - self.started})
+        # Presentation consumes this state; it cannot send commands back.
+        status = self.output.with_name("flight-state.json")
+        temporary = status.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"state": state}) + "\n")
+        temporary.replace(status)
+
+    def poll(self):
+        now = time.monotonic()
+        if now - self.last_heartbeat >= 1:
+            self.connection.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_GCS,
+                mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
+            self.last_heartbeat = now
+        message = self.connection.recv_match(blocking=True, timeout=0.2)
+        if message and message.get_type() != "BAD_DATA":
+            self.messages[message.get_type()] = message
+            self.log.write(json.dumps(message.to_dict()) + "\n")
+            if message.get_type() == "STATUSTEXT":
+                print(f"  ArduPilot: {message.text}", flush=True)
+        return message
+
+    def wait(self, description, predicate, timeout=30):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            message = self.poll()
+            if message and predicate(message):
+                return message
+        raise RuntimeError(f"Timeout: {description}")
+
+    def command(self, command, *params):
+        self.connection.mav.command_long_send(
+            self.connection.target_system, self.connection.target_component,
+            command, 0, *(list(params) + [0] * (7 - len(params))))
+        ack = self.wait(f"command acknowledgement {command}",
+                        lambda m: m.get_type() == "COMMAND_ACK" and m.command == command, 10)
+        if ack.result != mavutil.mavlink.MAV_RESULT_ACCEPTED:
+            # The explanatory STATUSTEXT can arrive after the acknowledgement.
+            deadline = time.monotonic() + 0.5
+            while time.monotonic() < deadline:
+                self.poll()
+            status = self.messages.get("STATUSTEXT")
+            detail = f": {status.text}" if status else ""
+            raise RuntimeError(f"Command {command} rejected with result {ack.result}{detail}")
+
+    def mode(self, value):
+        self.command(mavutil.mavlink.MAV_CMD_DO_SET_MODE,
+                     mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, value)
+        self.wait(f"mode {value}", lambda m: m.get_type() == "HEARTBEAT" and m.custom_mode == value)
+
+    def connect(self):
+        self.event("CONNECTING")
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            try:
+                self.connection = mavutil.mavlink_connection("tcp:127.0.0.1:5760",
+                                                             source_system=255, retries=0)
+                break
+            except OSError:
+                time.sleep(0.5)
+        if self.connection is None:
+            raise RuntimeError("SITL did not expose MAVLink on loopback port 5760")
+        heartbeat = self.wait("autopilot heartbeat", lambda m: m.get_type() == "HEARTBEAT", 45)
+        self.connection.target_system = heartbeat.get_srcSystem()
+        self.connection.target_component = heartbeat.get_srcComponent()
+        self.connection.mav.request_data_stream_send(
+            self.connection.target_system, self.connection.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_ALL, 10, 1)
+        self.connection.mav.param_request_read_send(self.connection.target_system,
+            self.connection.target_component, b"AHRS_EKF_TYPE", -1)
+        estimator = self.wait("EKF3 configuration", lambda m: m.get_type() == "PARAM_VALUE"
+                              and m.param_id == "AHRS_EKF_TYPE")
+        if estimator.param_value != 3:
+            raise RuntimeError("Expected EKF3; refusing to validate a ground-truth-driven autopilot")
+
+    def execute(self):
+        self.connect()
+        self.event("WAITING_FOR_POSITION")
+        self.wait("GPS fix", lambda m: m.get_type() == "GPS_RAW_INT" and m.fix_type >= 3, 60)
+        # Require the EKF to have an absolute horizontal position estimate.
+        self.wait("EKF position", lambda m: m.get_type() == "EKF_STATUS_REPORT"
+                  and m.flags & 16 and not m.flags & 128, 60)
+        self.wait("local position", lambda m: m.get_type() == "LOCAL_POSITION_NED")
+        self.mode(4)  # GUIDED
+        self.event("ARMING")
+        self.command(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 1)
+        self.wait("armed", lambda m: m.get_type() == "HEARTBEAT"
+                  and m.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+        self.event("TAKING_OFF")
+        self.command(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 3)
+        self.wait("3 metre altitude", lambda m: m.get_type() == "GLOBAL_POSITION_INT"
+                  and 2700 <= m.relative_alt <= 3400, 45)
+        self.event("HOVERING")
+        start = None
+        hover = []
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            message = self.poll()
+            if not message or message.get_type() != "GLOBAL_POSITION_INT":
+                continue
+            altitude = message.relative_alt / 1000
+            if not 2.5 <= altitude <= 3.5:
+                start = None
+                hover = []
+                continue
+            if start is None:
+                start = message.time_boot_ms
+            hover.append(altitude)
+            if message.time_boot_ms - start >= 5000:
+                break
+        else:
+            raise RuntimeError("Could not sustain a 5-second hover within 0.5 m of target altitude")
+        self.event("LANDING")
+        self.mode(9)  # LAND
+        self.wait("landed and disarmed", lambda m: m.get_type() == "HEARTBEAT"
+                  and not m.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED, 60)
+        self.event("EVALUATING")
+        # Ground truth is read only after the mission, never to command the vehicle.
+        truth = [json.loads(line) for line in self.output.with_name("ground_truth.jsonl").read_text().splitlines()]
+        if not truth:
+            raise RuntimeError("No independent Webots trajectory was recorded")
+        autopilot_time = self.messages.get("SYSTEM_TIME")
+        if autopilot_time is None:
+            raise RuntimeError("No autopilot clock was recorded")
+        clock_difference = abs(autopilot_time.time_boot_ms / 1000 - truth[-1]["time"])
+        # The streams are sampled independently at 10 Hz. A one-second allowance
+        # accommodates startup/sampling offsets while catching backend clock jumps.
+        if clock_difference > 1:
+            raise RuntimeError(f"Autopilot/Webots clock mismatch: {clock_difference:.2f} s")
+        heights = [sample["position"][2] for sample in truth]
+        peak = max(heights)
+        start_xy = truth[0]["position"][:2]
+        drift = max(math.hypot(sample["position"][0] - start_xy[0],
+                               sample["position"][1] - start_xy[1]) for sample in truth)
+        if not 2.5 <= peak <= 4:
+            raise RuntimeError(f"Physical takeoff height out of bounds: {peak:.2f} m")
+        if heights[-1] > 0.2:
+            raise RuntimeError(f"Drone did not physically land: final height {heights[-1]:.2f} m")
+        if drift > 1.5:
+            raise RuntimeError(f"Excessive horizontal drift: {drift:.2f} m")
+        self.event("COMPLETED")
+        return {"peak_height_m": peak, "final_height_m": heights[-1], "max_horizontal_drift_m": drift,
+                "clock_difference_s": clock_difference,
+                "hover_min_altitude_m": min(hover), "hover_max_altitude_m": max(hover),
+                "hover_duration_s": (message.time_boot_ms - start) / 1000}
+
+    def close(self):
+        self.log.close()
+        if self.connection:
+            self.connection.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    flight = Flight(args.output)
+    report = {"passed": False, "estimator": "EKF3", "position_source": "simulated GPS"}
+    try:
+        report["measurements"] = flight.execute()
+        report["passed"] = True
+    except Exception as exc:
+        report["error"] = str(exc)
+        flight.event(f"FAILED: {exc}")
+        # The enclosing launcher tears down this software-only simulation on failure.
+    finally:
+        report["events"] = flight.events
+        args.output.write_text(json.dumps(report, indent=2) + "\n")
+        flight.close()
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

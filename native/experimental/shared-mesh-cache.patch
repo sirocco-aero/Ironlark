@@ -1,0 +1,144 @@
+diff --git a/include/wren/static_mesh.h b/include/wren/static_mesh.h
+index b50bcaf..95daf10 100644
+--- a/include/wren/static_mesh.h
++++ b/include/wren/static_mesh.h
+@@ -37,6 +37,9 @@ WrStaticMesh *wr_static_mesh_new(int vertex_count, int index_count, const float
+                                  const float *tex_coord_data, const float *unwrapped_tex_coord_data,
+                                  const unsigned int *index_data, bool outline);
+ 
++/* Retains the same immutable GPU mesh without rebuilding or hashing its buffers. */
++WrStaticMesh *wr_static_mesh_copy(const WrStaticMesh *mesh);
++
+ void wr_static_mesh_delete(WrStaticMesh *mesh);
+ 
+ /* Returns the bounding sphere in mesh space.
+diff --git a/src/webots/nodes/WbTriangleMeshGeometry.cpp b/src/webots/nodes/WbTriangleMeshGeometry.cpp
+index 48ed56b..45ce18d 100644
+--- a/src/webots/nodes/WbTriangleMeshGeometry.cpp
++++ b/src/webots/nodes/WbTriangleMeshGeometry.cpp
+@@ -203,14 +203,21 @@ void WbTriangleMeshGeometry::buildWrenMesh(bool updateCache) {
+   // Restore pickable state
+   setPickable(isPickable());
+ 
+-  WbWrenMeshBuffers *buffers = WbGeometry::createMeshBuffers(estimateVertexCount(), estimateIndexCount());
+-  buildGeomIntoBuffers(buffers, WbMatrix4(), !mTriangleMesh->areTextureCoordinatesValid());
+-
+-  mWrenMesh = wr_static_mesh_new(buffers->verticesCount(), buffers->indicesCount(), buffers->vertexBuffer(),
+-                                 buffers->normalBuffer(), buffers->texCoordBuffer(), buffers->unwrappedTexCoordBuffer(),
+-                                 buffers->indexBuffer(), createOutlineMesh);
+-
+-  delete buffers;
++  WrStaticMesh *&cached = getTriangleMeshMap().at(mMeshKey).mWrenMeshes[createOutlineMesh ? 1 : 0];
++  if (cached)
++    mWrenMesh = wr_static_mesh_copy(cached);
++  else {
++    WbWrenMeshBuffers *buffers = WbGeometry::createMeshBuffers(estimateVertexCount(), estimateIndexCount());
++    buildGeomIntoBuffers(buffers, WbMatrix4(), !mTriangleMesh->areTextureCoordinatesValid());
++  
++    mWrenMesh = wr_static_mesh_new(buffers->verticesCount(), buffers->indicesCount(), buffers->vertexBuffer(),
++                                   buffers->normalBuffer(), buffers->texCoordBuffer(), buffers->unwrappedTexCoordBuffer(),
++                                   buffers->indexBuffer(), createOutlineMesh);
++  
++    delete buffers;
++  
++    cached = wr_static_mesh_copy(mWrenMesh);
++  }
+ 
+   wr_renderable_set_mesh(mWrenRenderable, WR_MESH(mWrenMesh));
+   updateNormalsRepresentation();
+diff --git a/src/webots/nodes/utils/WbTriangleMeshCache.cpp b/src/webots/nodes/utils/WbTriangleMeshCache.cpp
+index dd1d509..08f06d4 100644
+--- a/src/webots/nodes/utils/WbTriangleMeshCache.cpp
++++ b/src/webots/nodes/utils/WbTriangleMeshCache.cpp
+@@ -23,6 +23,7 @@
+ #include "WbTriangleMesh.hpp"
+ #include "WbTriangleMeshGeometry.hpp"
+ 
++#include <wren/static_mesh.h>
+ #include <cassert>
+ #include <cstdlib>
+ #include <functional>
+@@ -36,9 +37,9 @@ namespace WbTriangleMeshCache {
+   uint64_t sipHash13c(const char *bytes, const int size) {
+     return highwayhash::SipHash13(SIPHASH_KEY, bytes, size);
+   }
+-  TriangleMeshInfo::TriangleMeshInfo() : mTriangleMesh(NULL), mNumUsers(0) {
++  TriangleMeshInfo::TriangleMeshInfo() : mTriangleMesh(NULL), mWrenMeshes{NULL, NULL}, mNumUsers(0) {
+   }
+-  TriangleMeshInfo::TriangleMeshInfo(WbTriangleMesh *triangleMesh) : mTriangleMesh(triangleMesh), mNumUsers(1) {
++  TriangleMeshInfo::TriangleMeshInfo(WbTriangleMesh *triangleMesh) : mTriangleMesh(triangleMesh), mWrenMeshes{NULL, NULL}, mNumUsers(1) {
+   }
+ 
+   TriangleMeshGeometryKey::TriangleMeshGeometryKey() {
+@@ -77,6 +78,8 @@ namespace WbTriangleMeshCache {
+       return;
+     TriangleMeshInfo &triangleMeshInfo = user->getTriangleMeshMap().at(user->getMeshKey());
+     if (--triangleMeshInfo.mNumUsers == 0) {
++      for (WrStaticMesh *mesh : triangleMeshInfo.mWrenMeshes)
++        wr_static_mesh_delete(mesh);
+       delete triangleMeshInfo.mTriangleMesh;
+       user->getTriangleMeshMap().erase(user->getMeshKey());
+     } else
+diff --git a/src/webots/nodes/utils/WbTriangleMeshCache.hpp b/src/webots/nodes/utils/WbTriangleMeshCache.hpp
+index 1fce462..a9605f0 100644
+--- a/src/webots/nodes/utils/WbTriangleMeshCache.hpp
++++ b/src/webots/nodes/utils/WbTriangleMeshCache.hpp
+@@ -19,6 +19,7 @@
+ 
+ class WbTriangleMeshGeometry;
+ class WbTriangleMesh;
++struct WrStaticMesh;
+ 
+ namespace WbTriangleMeshCache {
+   extern const highwayhash::HH_U64 SIPHASH_KEY[2];
+@@ -33,6 +34,7 @@ namespace WbTriangleMeshCache {
+     explicit TriangleMeshInfo(WbTriangleMesh *triangleMesh);
+ 
+     WbTriangleMesh *mTriangleMesh;
++    WrStaticMesh *mWrenMeshes[2];  // Filled and outline variants, retained while CPU geometry is shared.
+     int mNumUsers;
+   };
+ 
+diff --git a/src/wren/StaticMesh.cpp b/src/wren/StaticMesh.cpp
+index 048a70e..016e95f 100644
+--- a/src/wren/StaticMesh.cpp
++++ b/src/wren/StaticMesh.cpp
+@@ -1661,6 +1661,14 @@ namespace wren {
+     return mesh;
+   }
+ 
++  StaticMesh *StaticMesh::copy() const {
++    StaticMesh *mesh;
++    const bool found = createOrRetrieveFromCache(&mesh, mCacheKey);
++    assert(found);
++    (void)found;
++    return mesh;
++  }
++
+   size_t StaticMesh::cachedItemCount() {
+     size_t nonPersistentCount = 0;
+     for (std::pair<cache::Key, cache::MeshData> cachedMesh : cCache)
+@@ -2096,6 +2104,10 @@ WrStaticMesh *wr_static_mesh_new(int vertex_count, int index_count, const float
+     vertex_count, index_count, coord_data, normal_data, tex_coord_data, unwrapped_tex_coord_data, index_data, outline));
+ }
+ 
++WrStaticMesh *wr_static_mesh_copy(const WrStaticMesh *mesh) {
++  return reinterpret_cast<WrStaticMesh *>(reinterpret_cast<const wren::StaticMesh *>(mesh)->copy());
++}
++
+ void wr_static_mesh_delete(WrStaticMesh *mesh) {
+   wren::StaticMesh::deleteMesh(reinterpret_cast<wren::Mesh *>(mesh));
+ }
+diff --git a/src/wren/StaticMesh.hpp b/src/wren/StaticMesh.hpp
+index 5faf050..79c1b84 100644
+--- a/src/wren/StaticMesh.hpp
++++ b/src/wren/StaticMesh.hpp
+@@ -49,6 +49,8 @@ namespace wren {
+                                           const float *texCoordData, const float *unwrappedTexCoordData,
+                                           const unsigned int *indexData, bool outline);
+ 
++    StaticMesh *copy() const;
++
+     static size_t cachedItemCount();
+     static void printCacheContents();
+ 

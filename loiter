@@ -1,0 +1,411 @@
+#!/usr/bin/env python3
+"""Launch Loiter's first simulated-flight integration check (Linux)."""
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+
+ROOT = Path(__file__).resolve().parent
+CACHE = ROOT / ".cache"
+IMAGE = "loiter-sitl:copter-4.7.1"
+COMMIT = "dbe792162d06cab66c3475fd5556bf7a120f119e"
+UPSTREAM = "/opt/ardupilot/libraries/SITL/examples/Webots_Python"
+
+
+def call(*args, **kwargs):
+    return subprocess.run(args, check=True, **kwargs)
+
+
+def webots_home():
+    """WEBOTS_HOME, else the patched build if present, else stock ./webots."""
+    patched = CACHE / "webots-renderer"
+    default = patched if (patched / "loiter-renderer.json").is_file() else ROOT / "webots"
+    return Path(os.environ.get("WEBOTS_HOME", default)).resolve()
+
+
+def setup():
+    for executable in ("docker", "uv"):
+        if not shutil.which(executable):
+            raise RuntimeError(f"Install {executable} before running ./loiter setup.")
+    call("docker", "build", "-t", IMAGE, str(ROOT / "docker"))
+    CACHE.mkdir(exist_ok=True)
+    stamp = CACHE / "ardupilot-commit"
+    if not stamp.exists() or stamp.read_text().strip() != COMMIT:
+        container = subprocess.check_output(
+            ["docker", "create", IMAGE, "true"], text=True
+        ).strip()
+        try:
+            call("docker", "cp", f"{container}:{UPSTREAM}", str(CACHE))
+            call(
+                "docker",
+                "cp",
+                f"{container}:/opt/ardupilot/COPYING.txt",
+                str(CACHE / "ARDUPILOT-LICENSE.txt"),
+            )
+            stamp.write_text(COMMIT + "\n")
+        finally:
+            call("docker", "rm", container, stdout=subprocess.DEVNULL)
+    if not (ROOT / ".venv/bin/python").exists():
+        call("uv", "venv", "--python", "3.12.11", str(ROOT / ".venv"))
+    call(
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        str(ROOT / ".venv/bin/python"),
+        "numpy==2.2.6",
+        "Pillow==12.3.0",
+    )
+    print("Setup complete. Run ./loiter doctor, then ./loiter run.")
+
+
+def doctor():
+    checks = {
+        "Docker executable": shutil.which("docker") is not None,
+        "Webots executable": (webots_home() / "webots").is_file(),
+        "Webots R2025a": (webots_home() / "resources/version.txt").is_file()
+        and (webots_home() / "resources/version.txt").read_text().strip() == "R2025a",
+        "Python environment": (ROOT / ".venv/bin/python").is_file(),
+        "ArduPilot Webots assets": (
+            CACHE / "Webots_Python/protos/Iris.proto"
+        ).is_file(),
+        "Pinned bridge version": (CACHE / "ardupilot-commit").is_file()
+        and (CACHE / "ardupilot-commit").read_text().strip() == COMMIT,
+    }
+    if checks["Docker executable"]:
+        checks["Docker daemon"] = (
+            subprocess.run(
+                ["docker", "info"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            ).returncode
+            == 0
+        )
+        checks["Built SITL image"] = (
+            subprocess.run(
+                ["docker", "image", "inspect", IMAGE],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ).returncode
+            == 0
+        )
+    for name, ok in checks.items():
+        print(f"{'OK     ' if ok else 'MISSING'} {name}")
+    if not all(checks.values()):
+        raise RuntimeError("Complete setup first. See README.md.")
+
+
+def check_ports():
+    for kind, port in (
+        (socket.SOCK_STREAM, 5760),
+        (socket.SOCK_DGRAM, 9002),
+        (socket.SOCK_DGRAM, 9003),
+    ):
+        with socket.socket(socket.AF_INET, kind) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Port {port} is occupied. Stop the other simulation first."
+                ) from exc
+
+
+def stop_process(proc):
+    if proc is None or proc.poll() is not None:
+        return
+    os.killpg(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+
+
+def stage_world(run, world):
+    """Copy the selected world into the run dir; return (world_path, scene_path)."""
+    if world == "empty":
+        target = run / "worlds/flight_foundation.wbt"
+        target.parent.mkdir()
+        target.write_text(
+            (ROOT / "worlds/flight_foundation.wbt")
+            .read_text()
+            .replace("../.cache/", os.path.relpath(CACHE, target.parent) + "/")
+        )
+        shutil.copyfile(
+            ROOT / "worlds/.flight_foundation.wbproj",
+            target.parent / ".flight_foundation.wbproj",
+        )
+        return target, None
+    source = ROOT / "worlds/pine_forest/pine_forest.wbt"
+    if not source.is_file():
+        raise RuntimeError(
+            "Forest world is not built. Run ./loiter build-world first "
+            "(or copy .cache/forest-build from another machine)."
+        )
+    # Flat layout: Webots resolves controllers from <project>/controllers,
+    # where <project> is the parent of worlds/. A nested worlds/pine_forest/
+    # dir breaks that lookup and robots silently fall back to `generic`.
+    target_dir = run / "worlds"
+    target_dir.mkdir()
+    # Merge the built world (wbt, meshes/, scene.json) directly into worlds/.
+    shutil.copytree(ROOT / "worlds/pine_forest", target_dir, dirs_exist_ok=True)
+    target = target_dir / "pine_forest.wbt"
+    target.write_text(
+        target.read_text().replace(
+            "../.cache/", os.path.relpath(CACHE, target_dir) + "/"
+        )
+    )
+    return target, target_dir / "scene.json"
+
+
+def build_world(skip_export):
+    args = ["--skip-export"] if skip_export else []
+    run_tool("forest_pipeline.py", *args)
+
+
+def run_tool(name, *args):
+    python = ROOT / ".venv/bin/python"
+    if not python.is_file():
+        raise RuntimeError("Run ./loiter setup first.")
+    call(str(python), str(ROOT / "tools" / name), *args)
+
+
+def flight(headless, editor=False, world="forest"):
+    doctor()
+    CACHE.mkdir(exist_ok=True)
+    with (CACHE / "flight.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("Another Loiter flight is running.") from exc
+        check_ports()
+        if headless and not shutil.which("xvfb-run"):
+            raise RuntimeError("Headless checks require xvfb-run.")
+        run = ROOT / "runs" / (time.strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}")
+        run.mkdir(parents=True)
+        (run / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "ardupilot_commit": COMMIT,
+                    "webots": "R2025a",
+                    "webots_patches": (
+                        json.loads(renderer.read_text())
+                        if (renderer := webots_home() / "loiter-renderer.json").is_file()
+                        else None
+                    ),
+                    "estimator": "EKF3",
+                    "sitl_image_id": subprocess.check_output(
+                        ["docker", "image", "inspect", "--format", "{{.Id}}", IMAGE],
+                        text=True,
+                    ).strip(),
+                    "webots_clock_patch_sha256": hashlib.sha256(
+                        (ROOT / "docker/webots-clock.patch").read_bytes()
+                    ).hexdigest(),
+                    "position_source": "simulated GPS",
+                    "mission": "takeoff-hover-land",
+                    "headless": headless,
+                    "world": world,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        print(f"Flight logs: {run}", flush=True)
+        env = os.environ.copy()
+        env["WEBOTS_HOME"] = str(webots_home())
+        env["PATH"] = str(ROOT / ".venv/bin") + os.pathsep + env.get("PATH", "")
+        env["PYTHONUNBUFFERED"] = "1"
+        env["LOITER_RUN_DIR"] = str(run)
+        # Webots saves GUI perspectives beside the world. Give each run its own
+        # project so watching a flight never rewrites versioned source files.
+        world_path, scene_path = stage_world(run, world)
+        if scene_path is not None:
+            env["LOITER_SCENE"] = str(scene_path)
+        (run / "controllers").symlink_to(ROOT / "controllers", target_is_directory=True)
+        command = [
+            str(webots_home() / "webots"),
+            "--batch",
+            "--mode=realtime",
+            "--stdout",
+            "--stderr",
+        ]
+        if headless:
+            env["QT_QPA_PLATFORM"] = (
+                "xcb"  # use the virtual X display, even on Wayland hosts
+            )
+            command = ["xvfb-run", "-a", *command, "--no-rendering", "--minimize"]
+        elif not editor:
+            command.append("--fullscreen")
+        command.append(str(world_path))
+        name = f"loiter-sitl-{os.getpid()}"
+        webots = sitl = mission = None
+        with (
+            (run / "webots.log").open("w") as webots_log,
+            (run / "sitl.log").open("w") as sitl_log,
+        ):
+            try:
+                webots = subprocess.Popen(
+                    command,
+                    env=env,
+                    stdout=webots_log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                sitl = subprocess.Popen(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--name",
+                        name,
+                        "--network",
+                        "host",
+                        "--user",
+                        f"{os.getuid()}:{os.getgid()}",
+                        "--mount",
+                        f"type=bind,src={ROOT},dst=/project,readonly",
+                        "--mount",
+                        f"type=bind,src={run},dst=/run/loiter",
+                        IMAGE,
+                        "/opt/ardupilot/build/sitl/bin/arducopter",
+                        "--model",
+                        "webots-python",
+                        "--speedup",
+                        "1",
+                        "--wipe",
+                        "--home",
+                        "31.9500,35.9300,750,0",
+                        "--defaults",
+                        "/opt/ardupilot/Tools/autotest/default_params/copter.parm,"
+                        f"{UPSTREAM}/params/iris.parm,/project/config/flight.parm",
+                        "--serial0",
+                        "tcp:5760",
+                        "--serial1",
+                        "none",
+                        "--serial2",
+                        "none",
+                        "--sim-address",
+                        "127.0.0.1",
+                    ],
+                    stdout=sitl_log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                # Wait for docker run to create the container before docker exec.
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    if webots.poll() is not None or sitl.poll() is not None:
+                        raise RuntimeError(
+                            f"A simulator process exited. Inspect {run}."
+                        )
+                    status = subprocess.run(
+                        ["docker", "inspect", "-f", "{{.State.Running}}", name],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if status.returncode == 0 and status.stdout.strip() == "true":
+                        break
+                    time.sleep(0.2)
+                else:
+                    raise RuntimeError(
+                        "SITL container did not start within 30 seconds."
+                    )
+                mission = subprocess.Popen(
+                    [
+                        "docker",
+                        "exec",
+                        name,
+                        "python3",
+                        "/project/tests/flight_smoke.py",
+                        "--output",
+                        "/run/loiter/result.json",
+                    ],
+                    start_new_session=True,
+                )
+                deadline = time.monotonic() + 240
+                while mission.poll() is None:
+                    if webots.poll() is not None or sitl.poll() is not None:
+                        raise RuntimeError(
+                            f"A simulator process exited during flight. Inspect {run}."
+                        )
+                    if time.monotonic() > deadline:
+                        raise RuntimeError(
+                            f"Flight exceeded the 240-second wall-clock limit. Inspect {run}."
+                        )
+                    time.sleep(0.2)
+                if mission.returncode:
+                    raise RuntimeError(f"Flight check failed. Inspect {run}.")
+                print(f"PASS: takeoff, hover, landing. Report: {run / 'result.json'}")
+                if not headless:
+                    print(
+                        "World left open (keys 1/2/3 switch cameras). Ctrl+C to exit.",
+                        flush=True,
+                    )
+                    webots.wait()
+            finally:
+                stop_process(mission)
+                subprocess.run(
+                    ["docker", "stop", "--time", "3", name],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                stop_process(sitl)
+                stop_process(webots)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "command", choices=("setup", "doctor", "run", "check", "build-world", "build-renderer")
+    )
+    parser.add_argument(
+        "--editor", action="store_true", help="show Webots' development UI (run only)"
+    )
+    parser.add_argument(
+        "--world",
+        choices=("forest", "empty"),
+        default=None,
+        help="run/check world (defaults: forest for run, empty for check)",
+    )
+    parser.add_argument(
+        "--skip-export",
+        action="store_true",
+        help="build-world: reuse the existing Blender export output",
+    )
+    args = parser.parse_args()
+    if args.editor and args.command != "run":
+        parser.error("--editor is only available with run")
+    if args.skip_export and args.command != "build-world":
+        parser.error("--skip-export is only available with build-world")
+    if args.world is not None and args.command not in ("run", "check"):
+        parser.error("--world is only available with run and check")
+    if args.command == "setup":
+        setup()
+    elif args.command == "doctor":
+        doctor()
+    elif args.command == "build-renderer":
+        run_tool("build_webots_renderer.py")
+    elif args.command == "build-world":
+        build_world(skip_export=args.skip_export)
+    else:
+        world = args.world or ("empty" if args.command == "check" else "forest")
+        flight(headless=args.command == "check", editor=args.editor, world=world)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nSimulation stopped.", file=sys.stderr)
+        sys.exit(130)
+    except (RuntimeError, subprocess.CalledProcessError, OSError) as error:
+        print(f"Loiter: {error}", file=sys.stderr)
+        sys.exit(1)

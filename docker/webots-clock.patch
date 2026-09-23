@@ -1,0 +1,21 @@
+--- a/libraries/SITL/SIM_Webots_Python.cpp
++++ b/libraries/SITL/SIM_Webots_Python.cpp
+@@ -86,14 +86,13 @@
+      */
+     while (socket_sitl.recv(&pkt, sizeof(pkt), 100) != sizeof(pkt)) {
+         send_servos(input);
+-        // Reset the timestamp after a long disconnection, also catch webots reset
+-        if (get_wall_time_us() > last_wall_time_us + WEBOTS_TIMEOUT_US) {
+-            last_timestamp = 0;
+-        }
++        // Rendering or pausing can delay packets without advancing simulated
++        // time. Keep the last simulation timestamp across wall-clock delays.
+     }
+ 
+     const double deltat = pkt.timestamp - last_timestamp;  // in seconds
+-    if (deltat < 0) {  // don't use old packet
++    if (deltat < 0) {  // rebase after a Webots reset without reversing SITL time
++        last_timestamp = pkt.timestamp;
+         time_now_us += 1;
+         return;
+     }

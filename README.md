@@ -1,0 +1,122 @@
+# Loiter
+
+A playable Linux world where real drone autonomy software perceives, plans and
+flies. Missions will span departure, outdoor travel, GPS-denied exploration,
+inspection and return. Everything is simulated. Named for the holding
+pattern: sit back and watch autonomy fly.
+
+Today: a reproducible Webots–ArduPilot flight (take off, hover, land on EKF3
+with simulated GPS) over a Poly Haven pine forest. What comes next is in
+[ROADMAP.md](ROADMAP.md).
+
+## Quick start
+
+Needs Linux x86-64, OpenGL, Docker, [uv](https://docs.astral.sh/uv/),
+`xvfb-run`, and [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a)
+extracted to `./webots/` (or set `WEBOTS_HOME`).
+
+```sh
+./loiter setup           # pinned ArduPilot image, Python env
+./loiter build-world     # forest world (downloads Blender and the scene)
+./loiter build-renderer  # optional: Loiter's patched Webots
+./loiter run             # watch a flight, fullscreen
+./loiter check           # same flight, headless, pass/fail
+```
+
+| Command | Does |
+| --- | --- |
+| `setup` | Builds ArduPilot Copter 4.7.1 (`dbe7921`) in an Ubuntu 22.04 image; extracts its Iris model and Webots bridge to `.cache/`; creates `.venv/` (Python 3.12.11, NumPy, Pillow). System Python is untouched. |
+| `doctor` | Checks every prerequisite. |
+| `build-world` | Downloads Blender 4.2.9 and the [Poly Haven Pine Forest](https://polyhaven.com/collections/pine_forest) scene (checksummed), exports it stage by stage, and assembles `worlds/pine_forest/`. Resumable; `--skip-export` only reassembles. |
+| `build-renderer` | Builds patched Webots into `.cache/webots-renderer/`. See [Webots patches](#webots-patches). |
+| `run` | Flies over the forest in a fullscreen window, then exits. `--world empty` for the bare test area; `--editor` for Webots' UI. |
+| `check` | The same flight on a virtual display, empty world by default. Exits nonzero on failure. |
+
+Webots is chosen in order: `WEBOTS_HOME`, the patched build if present, `./webots/`.
+Build stages run with two jobs and stop at 4.5 GiB RSS; logs go to `.cache/build-logs/`.
+First setup needs internet and several GB of disk. OS packages in the image float,
+so builds are source-pinned, not bit-identical.
+
+Configure in files, not panels; restart to apply:
+[`worlds/flight_foundation.wbt`](worlds/flight_foundation.wbt) (empty-world scene, vehicle, camera, timestep),
+[`config/flight.parm`](config/flight.parm) (autopilot overrides),
+[`tests/flight_smoke.py`](tests/flight_smoke.py) (the flight check),
+[`loiter`](loiter) (startup, versions, cleanup),
+[`tools/`](tools) (the forest pipeline).
+
+## What `check` proves
+
+Native Webots runs the physics; containerized ArduPilot SITL flies. The upstream
+bridge carries dynamics and sensors to SITL and motor outputs back; a small Iris
+adapter treats disabled outputs as stopped, not reversed. MAVLink uses TCP 5760,
+the bridge UDP 9002–9003. Occupied ports and concurrent runs are refused.
+
+Pass requires EKF3, GPS fix, a valid position estimate, accepted commands,
+sustained hover and disarm after landing. A separate supervisor records ground
+truth, read only after landing: peak height 2.5–4 m, final ≤ 0.2 m, drift
+≤ 1.5 m, autopilot and Webots clocks within 1 s.
+
+Parameters load as: Copter SITL defaults, the Iris example, then
+`flight.parm`, which enables EKF3 and tunes gains for 4.7 at 500 Hz. Pre-arm
+checks stay on. Every run starts with fresh autopilot storage.
+
+[`docker/webots-clock.patch`](docker/webots-clock.patch) fixes the pinned
+bridge: after a packet delay it could reset its timestamp against a stale
+wall clock, repeatedly adding elapsed time to the autopilot. The patch keeps the
+timestamp across delays and rebases only when Webots time goes backwards.
+
+**Localization boundary.** The Iris example uses simulator truth
+(`AHRS_EKF_TYPE=10`); Loiter sets EKF3 (`3`), and the check rejects truth mode.
+Position still comes from simulated GPS, which ArduPilot synthesizes from the
+physical state Webots reports. GPS denial must be cut at the measurement layer,
+never by removing that state. Feeding evaluator pose in as odometry is not
+localization.
+
+Each run writes `runs/<timestamp>/`: `manifest.json` (versions, Webots patches,
+world, estimator), `result.json` (verdict, transitions, measurements),
+`telemetry.jsonl`, evaluator-only `ground_truth.jsonl`, and Webots, SITL and
+ArduPilot logs. Ctrl+C or failure tears everything down; that is cleanup, not a
+recovery policy.
+
+## Webots patches
+
+Loiter patches Webots where Webots is the bottleneck, rather than degrading
+assets to suit it. No fork: [`native/patches/`](native/patches) is a series
+applied in filename order to [R2025a](https://github.com/cyberbotics/webots/tree/c6793d8f7230a311c4bc2a3101d9f1a8bc0aa01b)
+(`c6793d8`, Apache 2.0). `./loiter build-renderer` fetches sparse sources and
+matching headers, compiles `glad`, `wren` and `webots` against the installed
+R2025a libraries, and installs to `.cache/webots-renderer/`, beside the
+untouched stock `./webots/`. Unchanged patches are not reapplied or recompiled.
+
+- **0001-static-mesh-memory**: merges vertices with identical position, normal,
+  UVs and colour ([`native/vertex_index.hpp`](native/vertex_index.hpp)),
+  triangles untouched; allocates shadow-volume buffers only for meshes that can
+  cast them; frees CPU-side vectors after GPU upload.
+- `native/experimental/shared-mesh-cache.patch`: one GPU mesh shared across
+  identical instances. Not applied; untested.
+
+To add a patch: edit `.cache/webots-source/` (the series is staged there), then
+`git -C .cache/webots-source diff -- src include > native/patches/NNNN-name.patch`,
+`./loiter build-renderer`, `./loiter check`, `./loiter check --world forest`,
+and note here what it fixes and how it was measured. Keep each patch clean
+enough to become an upstream pull request.
+
+`tests/test_vertex_index.cpp` proves hard normals and UV seams survive indexing
+and that a large mesh's attributes reconstruct byte-for-byte:
+`g++ -std=c++11 -O2 tests/test_vertex_index.cpp -o .cache/test_vertex_index && .cache/test_vertex_index`.
+
+## Research atlas
+
+[`research/drone-autonomy-atlas.html`](research/drone-autonomy-atlas.html):
+159 drone autonomy projects and 126 sourced relationships. Opens offline in a
+browser; source links need internet.
+
+## References and licenses
+
+[ArduPilot Webots integration](https://ardupilot.org/dev/docs/sitl-with-webots-python.html) ·
+[pinned example](https://github.com/ArduPilot/ardupilot/tree/dbe792162d06cab66c3475fd5556bf7a120f119e/libraries/SITL/examples/Webots_Python) ·
+[ArduPilot ROS 2](https://ardupilot.org/dev/docs/ros2-install.html) ·
+[GPS/non-GPS transitions](https://ardupilot.org/copter/docs/common-non-gps-to-gps.html)
+
+ArduPilot, Webots, Blender, Poly Haven and saved research material keep their
+own terms; setup saves ArduPilot's license beside its cache.

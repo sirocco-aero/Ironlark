@@ -1,0 +1,30 @@
+# Use the actual state estimator, overriding the upstream demo's sim AHRS.
+AHRS_EKF_TYPE 3
+EK3_ENABLE 1
+EK2_ENABLE 0
+EK3_SRC1_POSXY 3
+EK3_SRC1_VELXY 3
+EK3_SRC1_POSZ 1
+EK3_SRC1_VELZ 3
+EK3_SRC1_YAW 1
+
+# The Iris example lowers angle gains to 0.5. Keep Acro leveling within
+# those gains so the ordinary pre-arm configuration check remains valid.
+ACRO_BAL_ROLL 0.5
+ACRO_BAL_PITCH 0.5
+
+# Copter 4.7 requires nonzero roll/pitch integral gains. Run at half the
+# world's 500 Hz sensor rate to satisfy the IMU sampling requirement.
+ATC_RAT_RLL_I 0.05
+ATC_RAT_PIT_I 0.05
+SCHED_LOOP_RATE 250
+
+# This first integration check has GPS. External odometry and loss-of-GPS
+# transitions will be added only after sensor-derived localization is working.
+GPS1_TYPE 1
+SIM_GPS1_ENABLE 1
+
+# No physical receiver is attached in this software-only test.
+FS_THR_ENABLE 0
+FS_GCS_ENABLE 0
+LOG_DISARMED 1

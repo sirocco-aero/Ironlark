@@ -1,0 +1,63 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "../.cache/Webots_Python/protos/Iris.proto"
+
+WorldInfo {
+  title "Loiter — flight foundation"
+  basicTimeStep 2
+  FPS 30
+  randomSeed 7
+}
+Viewpoint {
+  orientation -0.174545 0.356882 0.917698 0.979312
+  position -7 -9 6
+  follow "Loiter Iris"
+}
+Background {
+  skyColor [ 0.65 0.78 0.9 ]
+}
+DirectionalLight {
+  direction -0.4 0.3 -1
+  intensity 1
+  ambientIntensity 0.5
+}
+Solid {
+  translation 0 0 -0.1
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.32 0.42 0.33
+        roughness 1
+        metalness 0
+      }
+      geometry Box { size 40 40 0.2 }
+    }
+  ]
+  name "ground"
+  boundingObject Box { size 40 40 0.2 }
+}
+# A visible home pad. Its top is flush with the ground; no navigation marker.
+Solid {
+  translation 0 0 0.001
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.9 0.65 0.15
+        roughness 1
+        metalness 0
+      }
+      geometry Cylinder { height 0.002 radius 0.8 }
+    }
+  ]
+  name "home pad"
+}
+DEF LOITER_DRONE Iris {
+  translation 0 0 0.09
+  name "Loiter Iris"
+  controller "flight_bridge"
+}
+Robot {
+  name "flight evaluator"
+  supervisor TRUE
+  controller "flight_observer"
+}

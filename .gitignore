@@ -1,12 +1,24 @@
 __pycache__/
 *.py[cod]
+.ruff_cache/
 .DS_Store
 .env
 .env.*
 !.env.example
+node_modules/
+
+# Local research sources and generated previews.
 research/evidence/
 research/DESIGN.md
-*.png
-*.py
-node_modules/
+research/*.py
 research/browser-checks.json
+*.png
+
+# Downloaded tools, assets, build products and diagnostics.
+/.cache/
+/.venv/
+/webots/
+/*.tar.bz2
+/*.tar
+/runs/
+/worlds/pine_forest/
