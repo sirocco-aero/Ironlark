@@ -17,6 +17,21 @@ and pipeline bottlenecks; don't cut asset quality.
 
 Rejected: Kenney Nature Kit (look).
 
+Open fidelity gaps against the source:
+
+- **River**: the source animates ripples and flow along the river (frame
+  drivers on noise and flow offsets) with volume absorption; ours is a static
+  flat colour. Plan: baked ripple normal maps, flow-aligned UVs, and a Webots
+  patch that scrolls UVs by simulation time in the shader.
+- **Real-time shadows** are off: Webots' stencil shadows cost ~7× frame time
+  and cannot shadow meshes over ~21,800 triangles. Tree shadows on the ground
+  are baked. Revisit with cascaded shadow maps once detail levels land, only
+  within a fixed frame budget.
+- **LiDAR vs foliage**: range sensors ignore `alphaCutoff`, so twig cards
+  would read as solid planes. Fix before LiDAR work.
+- Measure fidelity: render matching views in Cycles and Webots and score them
+  (FLIP/SSIM), per asset and per view.
+
 ### Candidates for later regions
 
 Not purchased, imported or tested in Webots.

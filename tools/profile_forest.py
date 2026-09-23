@@ -28,10 +28,15 @@ step = int(r.getBasicTimeStep())
 seconds = float(os.environ['LOITER_SECONDS'])
 views = []
 for name, pose in scene['cameras'].items():
-    view.getField('position').setSFVec3f(pose['eye'])
-    view.getField('orientation').setSFRotation(look_at(pose['eye'], pose['target']))
+    rotation = look_at(pose['eye'], pose['target'])
     sim0, wall0 = r.getTime(), time.monotonic()
+    count = 0
     while r.getTime() - sim0 < seconds:
+        # Re-pin the view so mouse navigation cannot change what is measured.
+        if count % 10 == 0:
+            view.getField('position').setSFVec3f(pose['eye'])
+            view.getField('orientation').setSFRotation(rotation)
+        count += 1
         if r.step(step) == -1:
             break
     wall = time.monotonic() - wall0

@@ -90,14 +90,15 @@ untouched stock `./webots/`. Unchanged patches are not reapplied or recompiled.
 
 Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 
-| Patch | Fixes | Forest load |
+| Patch | Fixes | Measured |
 | --- | --- | --- |
-| **0001-static-mesh-memory** | Merges identical vertices ([`native/vertex_index.hpp`](native/vertex_index.hpp)), triangles untouched; shadow-volume buffers only for meshes that can cast them; frees CPU vectors after upload. RAM 5.5 → ~4 GB. | 98 s |
-| **0002-shared-static-mesh** | Builds each GPU mesh once, not once per `USE` copy. | 79 s |
-| **0003-normals-overlay-off-at-load** | The normals debug overlay started enabled, so every mesh built and discarded one during load. | 49 s |
+| **0001-static-mesh-memory** | Merges identical vertices ([`native/vertex_index.hpp`](native/vertex_index.hpp)), triangles untouched; shadow-volume buffers only for meshes that can cast them; frees CPU vectors after upload. | RAM 5.5 → ~4 GB; load 98 s |
+| **0002-shared-static-mesh** | Builds each GPU mesh once, not once per `USE` copy. | load 79 s |
+| **0003-normals-overlay-off-at-load** | The normals debug overlay started enabled, so every mesh built and discarded one during load. | load 49 s |
+| **0004-pbr-alpha-cutoff** | `PBRAppearance.alphaCutoff` (glTF `MASK`): alpha-tested texels, not blended. The source's 53 materials are all alpha-hashed; blending was slower and could mis-sort foliage. Mip-scaled alpha keeps distant coverage. | frame 31 → 22 ms (shadows off) |
 
 To add a patch: edit `.cache/webots-source/` (the series is staged there), then
-`git -C .cache/webots-source diff -- src include > native/patches/NNNN-name.patch`,
+`git -C .cache/webots-source diff -- src include resources > native/patches/NNNN-name.patch`,
 `./loiter build-renderer`, `./loiter check`, `./loiter check --world forest`,
 and note here what it fixes and how it was measured. Keep each patch clean
 enough to become an upstream pull request.

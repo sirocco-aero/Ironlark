@@ -134,12 +134,15 @@ Fog {{
   visibilityRange 190
   fogType "EXPONENTIAL"
 }}
+# Tree shadows on the ground are baked into the terrain (canopy light).
+# Webots' real-time stencil shadows would only add rock and drone shadows,
+# at about seven times the frame cost.
 DirectionalLight {{
   direction 0.272788 -0.814025 -0.512786
   color 1 0.92 0.78
   intensity 2.8
   ambientIntensity 0.03
-  castShadows TRUE
+  castShadows FALSE
 }}
 Solid {{
   translation 0 0 0
@@ -257,6 +260,7 @@ def instance_node(**kw):
         shape = "USE " + SHARED_SHAPES[key]
     else:
         SHARED_SHAPES[key] = tag
+        # All 53 source materials are alpha-hashed: mask texels, never blend them.
         normal_field = f'normalMap ImageTexture {{ url "{normal}" }}' if normal else ""
         roughness_field = (
             f'roughnessMap ImageTexture {{ url "{roughness}" }}' if roughness else ""
@@ -268,6 +272,7 @@ def instance_node(**kw):
             {roughness_field}
             roughness 0.9
             metalness 0
+            alphaCutoff 0.5
           }}
           geometry Mesh {{ url "{mesh}" }}
           castShadows {"TRUE" if shadow else "FALSE"}

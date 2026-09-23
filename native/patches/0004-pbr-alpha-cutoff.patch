@@ -1,0 +1,279 @@
+diff --git a/include/wren/material.h b/include/wren/material.h
+index d818144..7d92c37 100644
+--- a/include/wren/material.h
++++ b/include/wren/material.h
+@@ -77,6 +77,8 @@ void wr_phong_material_set_color_per_vertex(WrMaterial *material, bool enabled);
+ WrMaterial *wr_pbr_material_new();
+ void wr_pbr_material_clear(WrMaterial *material);
+ void wr_pbr_material_set_transparency(WrMaterial *material, float transparency);
++/* Discard fragments whose base color alpha is below cutoff (glTF alphaMode MASK); 0 disables. */
++void wr_pbr_material_set_alpha_cutoff(WrMaterial *material, float cutoff);
+ void wr_pbr_material_set_background_color(WrMaterial *material, const float *background_color);
+ void wr_pbr_material_set_base_color(WrMaterial *material, const float *base_color);
+ void wr_pbr_material_set_emissive_color(WrMaterial *material, const float *emissive_color);
+diff --git a/resources/nodes/PBRAppearance.wrl b/resources/nodes/PBRAppearance.wrl
+index a1344eb..7a0a7cb 100644
+--- a/resources/nodes/PBRAppearance.wrl
++++ b/resources/nodes/PBRAppearance.wrl
+@@ -6,6 +6,7 @@ PBRAppearance {
+   w3dField SFColor  baseColor            1 1 1
+   field    SFNode   baseColorMap         NULL
+   w3dField SFFloat  transparency         0
++  field    SFFloat  alphaCutoff          0
+   w3dField SFFloat  roughness            0
+   field    SFNode   roughnessMap         NULL
+   w3dField SFFloat  metalness            1
+diff --git a/resources/wren/shaders/pbr.frag b/resources/wren/shaders/pbr.frag
+index cb4d00a..df41c3e 100644
+--- a/resources/wren/shaders/pbr.frag
++++ b/resources/wren/shaders/pbr.frag
+@@ -74,6 +74,7 @@ layout(std140) uniform PbrMaterial {
+   vec4 normalBrdfEmissiveBackgroundFlags;
+   vec4 penFlags;
+   vec4 cubeTextureFlags;
++  vec4 alphaCutoff;
+ }
+ material;
+ 
+@@ -259,6 +260,17 @@ void main() {
+     baseColor = vec4(baseColor.rgb * material.baseColorAndTransparency.rgb, baseColor.w);
+   }
+ 
++  // Alpha mask (glTF MASK): each texel is kept or discarded, never blended.
++  // Mipmaps average alpha and would thin distant foliage, so alpha is scaled
++  // by the sampled mip level to preserve coverage.
++  if (material.alphaCutoff.x > 0.0) {
++    vec2 texel = texUv * vec2(textureSize(inputTextures[0], 0));
++    float mip = max(0.0, 0.5 * log2(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel)))));
++    if (baseColor.w * (1.0 + 0.25 * mip) < material.alphaCutoff.x)
++      discard;
++    baseColor.w = 1.0 - material.baseColorAndTransparency.w;
++  }
++
+   // Mix with pen texture
+   if (material.penFlags.x > 0.0) {
+     vec4 penColor = texture(inputTextures[8], penTexUv);
+diff --git a/resources/wren/shaders/pbr_stencil_ambient_emissive.frag b/resources/wren/shaders/pbr_stencil_ambient_emissive.frag
+index 1e17474..436eb1f 100644
+--- a/resources/wren/shaders/pbr_stencil_ambient_emissive.frag
++++ b/resources/wren/shaders/pbr_stencil_ambient_emissive.frag
+@@ -26,6 +26,7 @@ layout(std140) uniform PbrMaterial {
+   vec4 normalBrdfEmissiveBackgroundFlags;
+   vec4 penFlags;
+   vec4 cubeTextureFlags;
++  vec4 alphaCutoff;
+ }
+ material;
+ 
+@@ -152,6 +153,17 @@ void main() {
+     baseColor = vec4(baseColor.rgb * material.baseColorAndTransparency.rgb, baseColor.w);
+   }
+ 
++  // Alpha mask (glTF MASK): each texel is kept or discarded, never blended.
++  // Mipmaps average alpha and would thin distant foliage, so alpha is scaled
++  // by the sampled mip level to preserve coverage.
++  if (material.alphaCutoff.x > 0.0) {
++    vec2 texel = texUv * vec2(textureSize(inputTextures[0], 0));
++    float mip = max(0.0, 0.5 * log2(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel)))));
++    if (baseColor.w * (1.0 + 0.25 * mip) < material.alphaCutoff.x)
++      discard;
++    baseColor.w = 1.0 - material.baseColorAndTransparency.w;
++  }
++
+   // Mix with pen texture
+   if (material.penFlags.x > 0.0) {
+     vec4 penColor = texture(inputTextures[8], penTexUv);
+diff --git a/resources/wren/shaders/pbr_stencil_diffuse_specular.frag b/resources/wren/shaders/pbr_stencil_diffuse_specular.frag
+index 57cd61d..2d2c41e 100644
+--- a/resources/wren/shaders/pbr_stencil_diffuse_specular.frag
++++ b/resources/wren/shaders/pbr_stencil_diffuse_specular.frag
+@@ -76,6 +76,7 @@ layout(std140) uniform PbrMaterial {
+   vec4 normalBrdfEmissiveBackgroundFlags;
+   vec4 penFlags;
+   vec4 cubeTextureFlags;
++  vec4 alphaCutoff;
+ }
+ material;
+ 
+@@ -223,6 +224,17 @@ void main() {
+     baseColor = vec4(baseColor.rgb * material.baseColorAndTransparency.rgb, baseColor.w);
+   }
+ 
++  // Alpha mask (glTF MASK): each texel is kept or discarded, never blended.
++  // Mipmaps average alpha and would thin distant foliage, so alpha is scaled
++  // by the sampled mip level to preserve coverage.
++  if (material.alphaCutoff.x > 0.0) {
++    vec2 texel = texUv * vec2(textureSize(inputTextures[0], 0));
++    float mip = max(0.0, 0.5 * log2(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel)))));
++    if (baseColor.w * (1.0 + 0.25 * mip) < material.alphaCutoff.x)
++      discard;
++    baseColor.w = 1.0 - material.baseColorAndTransparency.w;
++  }
++
+   // Mix with pen texture
+   if (material.penFlags.x > 0.0) {
+     vec4 penColor = texture(inputTextures[8], penTexUv);
+diff --git a/src/webots/nodes/WbPbrAppearance.cpp b/src/webots/nodes/WbPbrAppearance.cpp
+index 0f000ef..b8d00be 100644
+--- a/src/webots/nodes/WbPbrAppearance.cpp
++++ b/src/webots/nodes/WbPbrAppearance.cpp
+@@ -44,6 +44,7 @@ void WbPbrAppearance::init() {
+   mBaseColor = findSFColor("baseColor");
+   mBaseColorMap = findSFNode("baseColorMap");
+   mTransparency = findSFDouble("transparency");
++  mAlphaCutoff = findSFDouble("alphaCutoff");
+   mRoughness = findSFDouble("roughness");
+   mRoughnessMap = findSFNode("roughnessMap");
+   mMetalness = findSFDouble("metalness");
+@@ -83,6 +84,7 @@ WbPbrAppearance::WbPbrAppearance(const aiMaterial *material, const QString &file
+   float opacity = 1.0f;
+   material->Get(AI_MATKEY_OPACITY, opacity);
+   mTransparency = new WbSFDouble(1.0 - opacity);
++  mAlphaCutoff = new WbSFDouble(0.0);
+ 
+   float r = 1.0f;
+   if (material->Get(AI_MATKEY_SHININESS, r) == AI_SUCCESS)
+@@ -158,6 +160,7 @@ WbPbrAppearance::~WbPbrAppearance() {
+     delete mBaseColor;
+     delete mEmissiveColor;
+     delete mTransparency;
++    delete mAlphaCutoff;
+     delete mRoughness;
+     delete mMetalness;
+     delete mIblStrength;
+@@ -259,6 +262,7 @@ void WbPbrAppearance::postFinalize() {
+   connect(mBaseColor, &WbSFColor::changed, this, &WbPbrAppearance::updateBaseColor);
+   connect(mBaseColorMap, &WbSFNode::changed, this, &WbPbrAppearance::updateBaseColorMap);
+   connect(mTransparency, &WbSFDouble::changed, this, &WbPbrAppearance::updateTransparency);
++  connect(mAlphaCutoff, &WbSFDouble::changed, this, &WbPbrAppearance::updateAlphaCutoff);
+   connect(mRoughness, &WbSFDouble::changed, this, &WbPbrAppearance::updateRoughness);
+   connect(mRoughnessMap, &WbSFNode::changed, this, &WbPbrAppearance::updateRoughnessMap);
+   connect(mMetalness, &WbSFDouble::changed, this, &WbPbrAppearance::updateMetalness);
+@@ -414,6 +418,7 @@ WrMaterial *WbPbrAppearance::modifyWrenMaterial(WrMaterial *wrenMaterial) {
+                                      mMetalness->value(), backgroundLuminosity * mIblStrength->value(),
+                                      mNormalMapFactor->value(), mOcclusionMapStrength->value(), newEmissiveColor,
+                                      mEmissiveIntensity->value());
++  wr_pbr_material_set_alpha_cutoff(wrenMaterial, mAlphaCutoff->value());
+ 
+   return wrenMaterial;
+ }
+@@ -523,6 +528,13 @@ void WbPbrAppearance::updateTransparency() {
+     emit changed();
+ }
+ 
++void WbPbrAppearance::updateAlphaCutoff() {
++  if (WbFieldChecker::resetDoubleIfNotInRangeWithIncludedBounds(this, mAlphaCutoff, 0.0, 1.0, 0.0))
++    return;
++  if (isPostFinalizedCalled())
++    emit changed();
++}
++
+ void WbPbrAppearance::updateRoughness() {
+   if (WbFieldChecker::resetDoubleIfNotInRangeWithIncludedBounds(this, mRoughness, 0.0, 1.0, 0.0))
+     return;
+@@ -691,6 +703,7 @@ void WbPbrAppearance::exportShallowNode(const WbWriter &writer) const {
+ 
+ void WbPbrAppearance::sanitizeFields() {
+   WbFieldChecker::resetDoubleIfNotInRangeWithIncludedBounds(this, mTransparency, 0.0, 1.0, 0.0);
++  WbFieldChecker::resetDoubleIfNotInRangeWithIncludedBounds(this, mAlphaCutoff, 0.0, 1.0, 0.0);
+   WbFieldChecker::resetDoubleIfNotInRangeWithIncludedBounds(this, mRoughness, 0.0, 1.0, 0.0);
+   WbFieldChecker::resetDoubleIfNotInRangeWithIncludedBounds(this, mMetalness, 0.0, 1.0, 0.0);
+   WbFieldChecker::resetDoubleIfNegative(this, mIblStrength, 1.0);
+diff --git a/src/webots/nodes/WbPbrAppearance.hpp b/src/webots/nodes/WbPbrAppearance.hpp
+index eef8398..783e69e 100644
+--- a/src/webots/nodes/WbPbrAppearance.hpp
++++ b/src/webots/nodes/WbPbrAppearance.hpp
+@@ -88,6 +88,7 @@ private:
+   WbSFColor *mBaseColor;
+   WbSFNode *mBaseColorMap;
+   WbSFDouble *mTransparency;
++  WbSFDouble *mAlphaCutoff;
+   WbSFDouble *mRoughness;
+   WbSFNode *mRoughnessMap;
+   WbSFDouble *mMetalness;
+@@ -109,6 +110,7 @@ private slots:
+   void updateBaseColor();
+   void updateBaseColorMap();
+   void updateTransparency();
++  void updateAlphaCutoff();
+   void updateRoughness();
+   void updateRoughnessMap();
+   void updateMetalness();
+diff --git a/src/wren/GlslLayout.hpp b/src/wren/GlslLayout.hpp
+index 30185fb..22cf888 100644
+--- a/src/wren/GlslLayout.hpp
++++ b/src/wren/GlslLayout.hpp
+@@ -64,6 +64,7 @@ namespace wren {
+       glm::vec4 mNormalBrdfEmissiveBackgroundFlags;
+       glm::vec4 mPenFlags;
+       glm::vec4 mCubeTextureFlags;
++      glm::vec4 mAlphaCutoff;  // x: discard base color alpha below this (glTF MASK); 0 disables
+     };
+ 
+     struct DirectionalLight {
+diff --git a/src/wren/PbrMaterial.cpp b/src/wren/PbrMaterial.cpp
+index 8931d88..c6e2dc8 100644
+--- a/src/wren/PbrMaterial.cpp
++++ b/src/wren/PbrMaterial.cpp
+@@ -92,6 +92,7 @@ namespace wren {
+     material.mNormalBrdfEmissiveBackgroundFlags = glm::vec4(0.0f);
+     material.mPenFlags = glm::vec4(0.0f);
+     material.mCubeTextureFlags = glm::vec4(0.0f);
++    material.mAlphaCutoff = glm::vec4(0.0f);
+ 
+     for (auto &texture : mTextures)
+       texture = std::make_pair(nullptr, Texture::DEFAULT_USAGE_PARAMS);
+@@ -227,6 +228,7 @@ namespace wren {
+     material.mNormalBrdfEmissiveBackgroundFlags = glm::vec4(0.0f);
+     material.mPenFlags = glm::vec4(0.0f);
+     material.mCubeTextureFlags = glm::vec4(0.0f);
++    material.mAlphaCutoff = glm::vec4(0.0f);
+     updateMaterial(material);
+   }
+ 
+@@ -250,7 +252,21 @@ namespace wren {
+     updateTranslucency();
+   }
+ 
++  void PbrMaterial::setAlphaCutoff(float cutoff) {
++    GlslLayout::PbrMaterial material(mCacheData->mMaterial);
++    material.mAlphaCutoff = glm::vec4(cutoff, 0.0f, 0.0f, 0.0f);
++
++    updateMaterial(material);
++  }
++
+   void PbrMaterial::updateTranslucency() {
++    // Alpha-masked texels are either kept or discarded, so the texture's alpha
++    // channel does not make the material translucent; only its transparency does.
++    if (mCacheData->mMaterial.mAlphaCutoff.x > 0.0f) {
++      mIsTranslucent = mCacheData->mMaterial.mBaseColorAndTransparency.w > 0.0f;
++      return;
++    }
++
+     Material::updateTranslucency();
+ 
+     if (!mIsTranslucent)
+@@ -285,6 +301,11 @@ void wr_pbr_material_clear(WrMaterial *material) {
+   reinterpret_cast<wren::PbrMaterial *>(material->data)->clearMaterial();
+ }
+ 
++void wr_pbr_material_set_alpha_cutoff(WrMaterial *material, float cutoff) {
++  assert(material && material->type == WR_MATERIAL_PBR);
++  reinterpret_cast<wren::PbrMaterial *>(material->data)->setAlphaCutoff(cutoff);
++}
++
+ void wr_pbr_material_set_transparency(WrMaterial *material, float transparency) {
+   assert(material && material->type == WR_MATERIAL_PBR);
+   reinterpret_cast<wren::PbrMaterial *>(material->data)->setTransparency(transparency);
+diff --git a/src/wren/PbrMaterial.hpp b/src/wren/PbrMaterial.hpp
+index e675f83..3e6f138 100644
+--- a/src/wren/PbrMaterial.hpp
++++ b/src/wren/PbrMaterial.hpp
+@@ -37,6 +37,7 @@ namespace wren {
+     static void printCacheContents();
+ 
+     void setTransparency(float transparency) override;
++    void setAlphaCutoff(float cutoff);
+     void setBackgroundColor(const glm::vec3 &backgroundColor);
+     void setBaseColor(const glm::vec3 &baseColor);
+     void setEmissiveColor(const glm::vec3 &emissiveColor);

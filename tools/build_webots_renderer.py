@@ -29,6 +29,37 @@ def link(path, target):
         path.symlink_to(target, target_is_directory=target.is_dir())
 
 
+def overlay_resources(runtime, installed, source):
+    """Mirror stock resources as symlinks, serving files the series changed
+    (shaders, node definitions) from the patched source."""
+    changed = subprocess.check_output(
+        ["git", "-C", str(source), "diff", "--cached", "--name-only", "HEAD", "--", "resources"],
+        text=True,
+    ).split()
+    changed = {Path(name).relative_to("resources") for name in changed}
+    parents = {parent for name in changed for parent in name.parents if parent != Path(".")}
+    root = runtime / "resources"
+    if root.is_symlink():
+        root.unlink()
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir()
+
+    def mirror(folder):
+        for child in (installed / "resources" / folder).iterdir():
+            name = folder / child.name
+            if name in parents:
+                (root / name).mkdir()
+                mirror(name)
+            elif name in changed:
+                link(root / name, source / "resources" / name)
+            else:
+                link(root / name, child)
+
+    mirror(Path("."))
+    for name in changed:  # files the series adds
+        link(root / name, source / "resources" / name)
+
+
 def main():
     source = CACHE / "webots-source"
     installed = SIM / "webots"
@@ -83,7 +114,7 @@ def main():
     series = hashlib.sha256(b"".join(p.read_bytes() for p in patches)).hexdigest()
     stamp = source / ".loiter-patches"
     if not stamp.exists() or stamp.read_text().strip() != series:
-        call("git", "-C", source, "checkout", "HEAD", "--", "src", "include")
+        call("git", "-C", source, "checkout", "HEAD", "--", "src", "include", "resources")
         for patch in patches:
             call("git", "-C", source, "apply", "--index", patch)
         stamp.write_text(series + "\n")
@@ -157,8 +188,9 @@ def main():
     runtime = CACHE / "webots-renderer"
     runtime.mkdir(exist_ok=True)
     for path in installed.iterdir():
-        if path.name not in ("bin", "webots"):
+        if path.name not in ("bin", "webots", "resources"):
             link(runtime / path.name, path)
+    overlay_resources(runtime, installed, source)
     (runtime / "bin").mkdir(exist_ok=True)
     for path in (installed / "bin").iterdir():
         if path.name != "webots-bin":
