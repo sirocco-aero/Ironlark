@@ -127,7 +127,7 @@ DEF LOITER_VIEW Viewpoint {{
 Background {{
   skyColor [ 0.70 0.76 0.79 ]
   {sky_fields}
-  luminosity 0.6
+  luminosity 1
 }}
 Fog {{
   color 0.64 0.66 0.62
@@ -137,11 +137,17 @@ Fog {{
 # Tree shadows on the ground are baked into the terrain (canopy light).
 # Webots' real-time stencil shadows would only add rock and drone shadows,
 # at about seven times the frame cost.
+# The source's two suns: strength in W/m² as intensity, linear color in sRGB.
 DirectionalLight {{
   direction 0.272788 -0.814025 -0.512786
-  color 1 0.92 0.78
-  intensity 2.8
-  ambientIntensity 0.03
+  color 1 0.9276 0.7243
+  intensity 5
+  castShadows FALSE
+}}
+DirectionalLight {{
+  direction -0.148121 -0.845642 -0.512786
+  color 1 0.8651 0.6049
+  intensity 1
   castShadows FALSE
 }}
 Solid {{
@@ -529,7 +535,7 @@ def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes):
     view_pos = "4 -5 2.6"
     view_ori = " ".join(str(v) for v in look_at([4, -5, 2.6], [0, 0, 0.8]))
     sky_fields = "\n".join(
-        f'{face}Url [ "meshes/sky_{face}.png" ]\n{face}IrradianceUrl [ "meshes/sky_{face}.hdr" ]'
+        f'{face}Url [ "meshes/sky_{face}.hdr" ]\n{face}IrradianceUrl [ "meshes/sky_light_{face}.hdr" ]'
         for face in ("back", "bottom", "front", "left", "right", "top")
     )
     (out / "pine_forest.wbt").write_text(
@@ -566,9 +572,8 @@ def main():
     # -- textures --
     print("textures", flush=True)
     visual_trees = prepare_visual_trees(source, build, out)
-    for path in build.glob("sky_*"):
-        if path.suffix in (".png", ".hdr"):
-            shutil.copyfile(path, out / "meshes" / path.name)
+    for path in build.glob("sky_*.hdr"):
+        shutil.copyfile(path, out / "meshes" / path.name)
 
     # -- tree instances as Transforms --
     print("instances", flush=True)

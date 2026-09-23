@@ -115,6 +115,16 @@ def main():
     stamp = source / ".loiter-patches"
     if not stamp.exists() or stamp.read_text().strip() != series:
         call("git", "-C", source, "checkout", "HEAD", "--", "src", "include", "resources")
+        # Files the series adds survive the checkout; remove them so it reapplies.
+        for patch in patches:
+            summary = subprocess.check_output(
+                ["git", "-C", str(source), "apply", "--summary", str(patch)], text=True
+            )
+            for line in summary.splitlines():
+                if line.strip().startswith("create mode"):
+                    added = line.split()[-1]
+                    call("git", "-C", source, "rm", "-q", "--cached", "--ignore-unmatch", added)
+                    (source / added).unlink(missing_ok=True)
         for patch in patches:
             call("git", "-C", source, "apply", "--index", patch)
         stamp.write_text(series + "\n")

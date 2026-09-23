@@ -183,9 +183,9 @@ def build_world(skip_export=False):
                 logs / "floor-composite.log",
             )
         if any(
-            missing(f"sky_{face}.{ext}")
+            missing(f"{prefix}_{face}.hdr")
             for face in ("back", "bottom", "front", "left", "right", "top")
-            for ext in ("png", "hdr")
+            for prefix in ("sky", "sky_light")
         ):
             blender_stage("sky", "export_forest_sky.py")
     assemble = [

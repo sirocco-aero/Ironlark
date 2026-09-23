@@ -17,7 +17,17 @@ and pipeline bottlenecks; don't cut asset quality.
 
 Rejected: Kenney Nature Kit (look).
 
+Matched to the source: Filmic "Medium High Contrast" view, both suns (strength,
+color, direction), the camera-visible sky (HDRI × 0.2 with its rotation) and
+the lighting sky (Nishita × 0.7).
+
 Open fidelity gaps against the source:
+
+- **Fog**: a 209 × 209 × 29 m scattering volume (density 0.004, anisotropy
+  0.8) makes the golden haze and, through canopy shadows, the light shafts.
+  Needs a sun shadow map; use the source's own LOD proxies as shadow casters.
+- **Ground cover**: the source's full fern, grass, moss and rock layers.
+- **Textures**: switch to Poly Haven's official 1K per-asset textures.
 
 - **River**: the source animates ripples and flow along the river (frame
   drivers on noise and flow offsets) with volume absorption; ours is a static

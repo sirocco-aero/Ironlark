@@ -96,12 +96,17 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0002-shared-static-mesh** | Builds each GPU mesh once, not once per `USE` copy. | load 79 s |
 | **0003-normals-overlay-off-at-load** | The normals debug overlay started enabled, so every mesh built and discarded one during load. | load 49 s |
 | **0004-pbr-alpha-cutoff** | `PBRAppearance.alphaCutoff` (glTF `MASK`): alpha-tested texels, not blended. The source's 53 materials are all alpha-hashed; blending was slower and could mis-sort foliage. Mip-scaled alpha keeps distant coverage. | frame 31 → 22 ms (shadows off) |
+| **0005-filmic-tone-mapping** | Blender's Filmic "Medium High Contrast" as a 65³ table (`tools/bake_filmic_lut.py`) replaces `1 − e^(−x)` plus gamma. Matches Blender within 1.3/255 at the 99th percentile. | frame unchanged |
+| **0006-hdr-background** | `Background` accepts `.hdr` faces for the visible sky, kept as half-float linear radiance instead of 8-bit. | +12 MB VRAM |
+| **0007-pbr-light-intensity-once** | PBR diffuse light scaled with intensity squared; now linear, so intensity equals Blender sun strength. | — |
 
-To add a patch: edit `.cache/webots-source/` (the series is staged there), then
-`git -C .cache/webots-source diff -- src include resources > native/patches/NNNN-name.patch`,
+To add a patch: edit `.cache/webots-source/` (the series is staged there; `git add -N` new files), then
+`git -C .cache/webots-source diff --binary -- src include resources > native/patches/NNNN-name.patch`,
 `./loiter build-renderer`, `./loiter check`, `./loiter check --world forest`,
-and note here what it fixes and how it was measured. Keep each patch clean
-enough to become an upstream pull request.
+and note here what it fixes and how it was measured. To amend patch N, stage
+its files and regenerate it with `git diff --cached --binary HEAD -- <files>`
+(valid while no earlier patch touches them). Keep each patch clean enough to
+become an upstream pull request.
 
 `tools/profile_forest.py --out runs/<name>` reports load time, real-time factor,
 per-step cost and peak RAM/GPU for the forest as a viewer sees it.
