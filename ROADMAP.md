@@ -18,8 +18,9 @@ and pipeline bottlenecks; don't cut asset quality.
 Rejected: Kenney Nature Kit (look).
 
 Matched to the source: Filmic "Medium High Contrast" view, both suns (strength,
-color, direction), the camera-visible sky (HDRI × 0.2 with its rotation) and
-the lighting sky (Nishita × 0.7).
+color, direction), the camera-visible sky (HDRI × 0.2 with its rotation), the
+lighting sky (Nishita × 0.7), and HD (1K) object textures downsampled from the
+source's originals.
 
 Open fidelity gaps against the source:
 
@@ -27,7 +28,9 @@ Open fidelity gaps against the source:
   0.8) makes the golden haze and, through canopy shadows, the light shafts.
   Needs a sun shadow map; use the source's own LOD proxies as shadow casters.
 - **Ground cover**: the source's full fern, grass, moss and rock layers.
-- **Textures**: switch to Poly Haven's official 1K per-asset textures.
+- **Terrain**: four 4K baked tiles (60 m each). The source tiles its ground
+  materials under masks; matching that needs a Webots detail-map patch, and
+  would be sharper up close with far less VRAM.
 
 - **River**: the source animates ripples and flow along the river (frame
   drivers on noise and flow offsets) with volume absorption; ours is a static

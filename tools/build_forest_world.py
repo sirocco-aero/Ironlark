@@ -717,7 +717,26 @@ def main():
     for path in (out / "meshes").iterdir():
         if path.is_file() and "meshes/" + path.name not in referenced:
             path.unlink()
+    limit_textures(out / "meshes")
     print("wrote", out / "pine_forest.wbt", flush=True)
+
+
+# HD textures, matching Poly Haven's official 1K downsamples of the same originals.
+TEXTURE_LIMIT = 1024
+
+
+def limit_textures(folder):
+    """Downsample textures above the limit. Terrain tiles span 60 m each and are
+    rebuilt separately from the source's tiling ground materials."""
+    for path in folder.glob("*.png"):
+        if path.name.startswith("terrain_"):
+            continue
+        with Image.open(path) as image:
+            if max(image.size) <= TEXTURE_LIMIT:
+                continue
+            image.load()
+        image.thumbnail((TEXTURE_LIMIT, TEXTURE_LIMIT), Image.Resampling.LANCZOS)
+        image.save(path)
 
 
 if __name__ == "__main__":
