@@ -34,13 +34,13 @@ index 48ed56b..45ce18d 100644
 +  else {
 +    WbWrenMeshBuffers *buffers = WbGeometry::createMeshBuffers(estimateVertexCount(), estimateIndexCount());
 +    buildGeomIntoBuffers(buffers, WbMatrix4(), !mTriangleMesh->areTextureCoordinatesValid());
-+  
++
 +    mWrenMesh = wr_static_mesh_new(buffers->verticesCount(), buffers->indicesCount(), buffers->vertexBuffer(),
 +                                   buffers->normalBuffer(), buffers->texCoordBuffer(), buffers->unwrappedTexCoordBuffer(),
 +                                   buffers->indexBuffer(), createOutlineMesh);
-+  
++
 +    delete buffers;
-+  
++
 +    cached = wr_static_mesh_copy(mWrenMesh);
 +  }
  

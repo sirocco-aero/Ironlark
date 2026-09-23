@@ -88,12 +88,13 @@ matching headers, compiles `glad`, `wren` and `webots` against the installed
 R2025a libraries, and installs to `.cache/webots-renderer/`, beside the
 untouched stock `./webots/`. Unchanged patches are not reapplied or recompiled.
 
-- **0001-static-mesh-memory**: merges vertices with identical position, normal,
-  UVs and colour ([`native/vertex_index.hpp`](native/vertex_index.hpp)),
-  triangles untouched; allocates shadow-volume buffers only for meshes that can
-  cast them; frees CPU-side vectors after GPU upload.
-- `native/experimental/shared-mesh-cache.patch`: one GPU mesh shared across
-  identical instances. Not applied; untested.
+Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
+
+| Patch | Fixes | Forest load |
+| --- | --- | --- |
+| **0001-static-mesh-memory** | Merges identical vertices ([`native/vertex_index.hpp`](native/vertex_index.hpp)), triangles untouched; shadow-volume buffers only for meshes that can cast them; frees CPU vectors after upload. RAM 5.5 → ~4 GB. | 98 s |
+| **0002-shared-static-mesh** | Builds each GPU mesh once, not once per `USE` copy. | 79 s |
+| **0003-normals-overlay-off-at-load** | The normals debug overlay started enabled, so every mesh built and discarded one during load. | 49 s |
 
 To add a patch: edit `.cache/webots-source/` (the series is staged there), then
 `git -C .cache/webots-source diff -- src include > native/patches/NNNN-name.patch`,
@@ -101,6 +102,8 @@ To add a patch: edit `.cache/webots-source/` (the series is staged there), then
 and note here what it fixes and how it was measured. Keep each patch clean
 enough to become an upstream pull request.
 
+`tools/profile_forest.py --out runs/<name>` reports load time, real-time factor,
+per-step cost and peak RAM/GPU for the forest as a viewer sees it.
 `tests/test_vertex_index.cpp` proves hard normals and UV seams survive indexing
 and that a large mesh's attributes reconstruct byte-for-byte:
 `g++ -std=c++11 -O2 tests/test_vertex_index.cpp -o .cache/test_vertex_index && .cache/test_vertex_index`.
