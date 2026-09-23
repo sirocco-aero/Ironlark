@@ -60,11 +60,25 @@ def unpack(archive, target, opener, member=None):
     shutil.rmtree(partial, ignore_errors=True)
 
 
+BLENDER = CACHE / "blender/blender-4.2.9-linux-x64/blender"
+SOURCE = CACHE / "pine-forest/source"
+
+
+def blender_executable():
+    unpack(fetch("blender/blender.tar.xz"), BLENDER.parent, tarfile.open, member=BLENDER.parent.name)
+    return BLENDER
+
+
+def source_blend():
+    unpack(fetch("pine-forest/source.zip"), SOURCE, zipfile.ZipFile)
+    return SOURCE / "polyhaven_pine_fir_forest.blend"
+
+
 def build_world(skip_export=False):
     build = CACHE / "forest-build"
-    source = CACHE / "pine-forest/source"
+    source = SOURCE
     world = SIM / "worlds/pine_forest"
-    blender = CACHE / "blender/blender-4.2.9-linux-x64/blender"
+    blender = BLENDER
     logs = CACHE / "build-logs"
     build.mkdir(parents=True, exist_ok=True)
 
@@ -93,14 +107,7 @@ def build_world(skip_export=False):
         return any(not (build / name).is_file() for name in names)
 
     if not skip_export:
-        unpack(
-            fetch("blender/blender.tar.xz"),
-            blender.parent,
-            tarfile.open,
-            member=blender.parent.name,
-        )
-        unpack(fetch("pine-forest/source.zip"), source, zipfile.ZipFile)
-        for path in (blender, source / "polyhaven_pine_fir_forest.blend"):
+        for path in (blender_executable(), source_blend()):
             if not path.is_file():
                 raise RuntimeError(f"Missing build input: {path}")
         # Decode and resize one texture at a time. Blender is pointed at these
@@ -186,7 +193,7 @@ def build_world(skip_export=False):
             missing(f"{prefix}_{face}.hdr")
             for face in ("back", "bottom", "front", "left", "right", "top")
             for prefix in ("sky", "sky_light")
-        ):
+        ) or missing("sky_light_mean.json"):
             blender_stage("sky", "export_forest_sky.py")
     assemble = [
         sys.executable,

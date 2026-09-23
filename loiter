@@ -375,7 +375,8 @@ def flight(headless, editor=False, world="forest"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("setup", "doctor", "run", "check", "build-world", "build-renderer")
+        "command",
+        choices=("setup", "doctor", "run", "check", "build-world", "build-renderer", "render-reference"),
     )
     parser.add_argument(
         "--editor", action="store_true", help="show Webots' development UI (run only)"
@@ -404,6 +405,8 @@ def main():
         doctor()
     elif args.command == "build-renderer":
         run_tool("build_webots_renderer.py")
+    elif args.command == "render-reference":
+        run_tool("render_reference.py")
     elif args.command == "build-world":
         build_world(skip_export=args.skip_export)
     else:

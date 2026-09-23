@@ -15,9 +15,10 @@ from pathlib import Path
 
 import bpy
 import numpy as np
+from forest_view import ORIGIN
 
 REGION = (-68.0, 52.0, -100.0, 20.0)
-HOME = (37.1, -80.0)
+HOME = ORIGIN
 CLEAR_RADIUS = 9.0
 PAD_RADIUS = 2.5
 PAD_BLEND = 6.0

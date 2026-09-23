@@ -33,7 +33,8 @@ def overlay_resources(runtime, installed, source):
     """Mirror stock resources as symlinks, serving files the series changed
     (shaders, node definitions) from the patched source."""
     changed = subprocess.check_output(
-        ["git", "-C", str(source), "diff", "--cached", "--name-only", "HEAD", "--", "resources"],
+        # Working tree, not just the staged series: a patch in progress is live too.
+        ["git", "-C", str(source), "diff", "--name-only", "HEAD", "--", "resources"],
         text=True,
     ).split()
     changed = {Path(name).relative_to("resources") for name in changed}

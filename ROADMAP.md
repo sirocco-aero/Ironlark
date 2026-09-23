@@ -24,9 +24,9 @@ source's originals.
 
 Open fidelity gaps against the source:
 
-- **Fog**: a 209 × 209 × 29 m scattering volume (density 0.004, anisotropy
-  0.8) makes the golden haze and, through canopy shadows, the light shafts.
-  Needs a sun shadow map; use the source's own LOD proxies as shadow casters.
+- **Fog**: the source's scattering volume now renders (patch 0008), shadowed
+  by the canopy bake. Still to do: robot `Camera` devices, and calibration
+  against `./loiter render-reference` (needs a high-RAM machine).
 - **Ground cover**: the source's full fern, grass, moss and rock layers.
 - **Terrain**: four 4K baked tiles (60 m each). The source tiles its ground
   materials under masks; matching that needs a Webots detail-map patch, and

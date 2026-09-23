@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Render repeatable in-engine forest views on the current X display/GPU.
+"""Capture repeatable forest views exactly as the main 3D view shows them.
 
-Does not run or command a flight. Uses Webots Camera nodes (same WREN scene),
+Does not run or command a flight. Opens fullscreen and exports the main view,
 records process RSS and nvidia-smi evidence, and exits after three views.
 """
 
 import argparse
+import re
 import json
 import os
 from pathlib import Path
@@ -20,15 +21,15 @@ from pathlib import Path
 from controller import Supervisor
 sys.path.insert(0, os.environ['LOITER_OBSERVER'])
 from minimap import look_at
-r=Supervisor(); camera=r.getDevice('preview');camera.enable(100)
-node=r.getFromDef('PREVIEW_CAMERA')
+r=Supervisor()
+view=r.getFromDef('LOITER_VIEW'); view.getField('follow').setSFString('')
 scene=json.loads(Path(os.environ['LOITER_SCENE']).read_text())
 for name,pose in scene['cameras'].items():
-    node.getField('translation').setSFVec3f(pose['eye'])
-    node.getField('rotation').setSFRotation(look_at(pose['eye'],pose['target']))
+    view.getField('position').setSFVec3f(pose['eye'])
+    view.getField('orientation').setSFRotation(look_at(pose['eye'],pose['target']))
     start=time.monotonic()
-    for _ in range(6):r.step(100)
-    camera.saveImage(os.environ['LOITER_PREVIEW']+'/'+name+'.png',100)
+    for _ in range(10):r.step(int(r.getBasicTimeStep())*16)
+    r.exportImage(os.environ['LOITER_PREVIEW']+'/'+name+'.png',100)
     print('PREVIEW',name,'seconds',time.monotonic()-start,flush=True)
 r.simulationQuit(0)
 """
@@ -55,12 +56,10 @@ def main():
         .read_text()
         .replace("../.cache/", str(SIM / ".cache") + "/")
     )
-    world = world.replace('controller "flight_bridge"', 'controller "<none>"').replace(
-        'controller "flight_observer"', 'controller "<none>"'
-    )
-    world += """\nDEF PREVIEW_CAMERA Robot {
-      children [ Camera { name "preview" width 1280 height 720 fieldOfView 1.0
-        near 0.08 far 250 exposure 1.0 ambientOcclusionRadius 2 } ]
+    world = world.replace('controller "flight_bridge"', 'controller "<none>"')
+    # The minimap robot draws nothing without its controller; drop it from previews.
+    world = re.sub(r"Robot \{\s*children \[\s*Display \{[^}]*\}\s*\][^}]*\}", "", world)
+    world += """\nRobot {
       controller "forest_preview" supervisor TRUE
     }\n"""
     target = worlds / "preview.wbt"
@@ -76,8 +75,8 @@ def main():
     cmd = [
         str(args.webots_home.resolve() / "webots"),
         "--batch",
-        "--mode=fast",
-        "--minimize",
+        "--mode=realtime",
+        "--fullscreen",
         "--log-performance=" + str(out / "performance.log"),
         "--stdout",
         "--stderr",

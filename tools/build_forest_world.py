@@ -24,6 +24,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
+from forest_view import CAMERAS
+
 sys.path.insert(
     0, str(Path(__file__).resolve().parents[1] / "controllers/flight_observer")
 )
@@ -129,11 +131,7 @@ Background {{
   {sky_fields}
   luminosity 1
 }}
-Fog {{
-  color 0.64 0.66 0.62
-  visibilityRange 190
-  fogType "EXPONENTIAL"
-}}
+{fog}
 # Tree shadows on the ground are baked into the terrain (canopy light).
 # Webots' real-time stencil shadows would only add rock and drone shadows,
 # at about seven times the frame cost.
@@ -529,7 +527,7 @@ def instance_cover(build, out, cover_index):
     return nodes, total, set(mesh_urls.values())
 
 
-def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes):
+def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, fog):
     tree_solids = list(solids)
     tree_solids.extend(colliders)
     view_pos = "4 -5 2.6"
@@ -543,6 +541,7 @@ def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes):
             tree_solids="\n".join(tree_solids),
             terrain_shapes=terrain_shapes,
             sky_fields=sky_fields,
+            fog=fog,
             pad_y=pad_y,
             drone_y=pad_y + 0.11,
             view_ori=view_ori,
@@ -669,20 +668,10 @@ def main():
         "trees": [{"position": [t["pos"][0], -t["pos"][2]]} for t in trees],
         # Export rows run max-z first; the minimap draws row 0 at min-z.
         "terrain": {"heights": heights_grid["grid"]},
-        "cameras": {
-            "drone": {"eye": [4, 2.6, 5], "target": [0, 0.8, 0]},
-            "overview": {"eye": [-45, 55, -100], "target": [-45, 0, -40]},
-            "forest": {
-                "eye": [-13.944526, 0.922303, -32.4402],
-                "target": [-23.765966, 2.18279, -33.83680],
-            },
-        },
+        "cameras": CAMERAS,
         "home": [0, 0],
         "pad_top": home_z + 0.04,
     }
-    for camera in scene["cameras"].values():
-        camera["eye"] = enu(camera["eye"])
-        camera["target"] = enu(camera["target"])
     (out / "scene.json").write_text(json.dumps(scene))
 
     manifest.pop("budgets", None)
@@ -701,11 +690,13 @@ def main():
             "distant trunks are visual-only until navigation lands" % COLLIDER_RADIUS,
         }
     )
+    from forest_fog import fog_node
     from forest_terrain import build_terrain_tiles
 
     manifest["light_signature"] = light_signature(build, out)
     terrain_shapes = build_terrain_tiles(build, out, manifest["light_signature"])
-    write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes)
+    fog = fog_node(build, out, manifest["home_blender"])
+    write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, fog)
     (out / "visual_instances.json").write_text(
         json.dumps(VISUAL_INSTANCES, separators=(",", ":"))
     )

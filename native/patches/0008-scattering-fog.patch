@@ -1,0 +1,808 @@
+diff --git a/resources/nodes/Fog.wrl b/resources/nodes/Fog.wrl
+index ada980b..b26597f 100644
+--- a/resources/nodes/Fog.wrl
++++ b/resources/nodes/Fog.wrl
+@@ -1,8 +1,21 @@
+ # The Fog node provides a way to simulate atmospheric effects by blending objects with
+ # the color specified by the color field based on the distances of the various objects from the camera.
++# fogType "SCATTERING" instead simulates a lit participating medium: scattering coefficient
++# density * color per metre, a Henyey-Greenstein phase with the given anisotropy, lit by the
++# directional lights and ambientColor, optionally bounded by a box and shadowed by a top-down
++# sun occlusion map (R: visibility at the ground, G: ground height between sunOcclusionHeight).
+ 
+ Fog {
+-  w3dField SFColor                                           color           1 1 1
+-  w3dField SFString{"LINEAR", "EXPONENTIAL", "EXPONENTIAL2"} fogType         "LINEAR"
+-  w3dField SFFloat                                           visibilityRange 0
++  w3dField SFColor                                                         color              1 1 1
++  w3dField SFString{"LINEAR", "EXPONENTIAL", "EXPONENTIAL2", "SCATTERING"} fogType            "LINEAR"
++  w3dField SFFloat                                                         visibilityRange    0
++  field    SFFloat                                                         density            0
++  field    SFFloat                                                         anisotropy         0
++  field    SFVec3f                                                         boxCenter          0 0 0
++  field    SFVec3f                                                         boxSize            0 0 0
++  field    SFColor                                                         ambientColor       0 0 0
++  field    MFString                                                        sunOcclusionUrl    []
++  field    SFVec2f                                                         sunOcclusionMin    0 0
++  field    SFVec2f                                                         sunOcclusionMax    0 0
++  field    SFVec2f                                                         sunOcclusionHeight 0 0
+ }
+diff --git a/resources/wren/shaders/scattering_fog.frag b/resources/wren/shaders/scattering_fog.frag
+new file mode 100644
+index 0000000..3acf6a3
+--- /dev/null
++++ b/resources/wren/shaders/scattering_fog.frag
+@@ -0,0 +1,122 @@
++#version 330 core
++
++precision highp float;
++
++// Single-scattering fog in a box, lit by up to two directional lights and an
++// ambient term, like a homogeneous volume-scatter medium in a path tracer.
++// Sun visibility inside the medium comes from an optional top-down map baked
++// through the canopy: R = visibility at the ground, G = ground height.
++
++in vec2 texUv;
++
++layout(location = 0) out vec4 result;
++
++uniform sampler2D inputTextures[3];  // 0: HDR color, 1: depth, 2: sun occlusion
++
++layout(std140) uniform CameraTransforms {
++  mat4 view;
++  mat4 projection;
++  mat4 infiniteProjection;
++}
++cameraTransforms;
++
++uniform vec4 scattering;      // rgb: scattering coefficient per metre, a: anisotropy
++uniform vec4 ambient;         // rgb: isotropic ambient radiance
++uniform vec4 boxMin;          // xyz; w > 0 when the medium is bounded
++uniform vec4 boxMax;
++uniform vec4 sunDirection0;   // xyz: world direction towards the light, w: enabled
++uniform vec4 sunRadiance0;    // rgb: color * intensity
++uniform vec4 sunDirection1;
++uniform vec4 sunRadiance1;
++uniform vec4 occlusionRect;   // xy: world min, zw: world max; zero when absent
++uniform vec2 occlusionHeight; // ground height encoded by G = 0 and G = 1
++
++const float PI = 3.14159265359;
++const int STEPS = 24;
++const float MAX_DISTANCE = 400.0;
++
++float henyeyGreenstein(float cosTheta, float g) {
++  float d = 1.0 + g * g - 2.0 * g * cosTheta;
++  return (1.0 - g * g) / (4.0 * PI * d * sqrt(d));
++}
++
++// Interleaved gradient noise: decorrelates step offsets between neighbouring pixels.
++float dither(vec2 pixel) {
++  return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
++}
++
++vec2 occlusionUv(vec2 p) {
++  return (p - occlusionRect.xy) / (occlusionRect.zw - occlusionRect.xy);
++}
++
++float groundHeight(vec2 p) {
++  return mix(occlusionHeight.x, occlusionHeight.y, textureLod(inputTextures[2], occlusionUv(p), 0.0).g);
++}
++
++// Follow the sun ray from p down to the ground, where the canopy bake stored
++// how much sunlight gets through.
++float sunVisibility(vec3 p, vec3 toSun) {
++  if (occlusionRect.z <= occlusionRect.x || toSun.z <= 0.01)
++    return 1.0;
++  vec3 q = p - toSun * ((p.z - groundHeight(p.xy)) / toSun.z);
++  q = p - toSun * ((p.z - groundHeight(q.xy)) / toSun.z);
++  vec2 uv = occlusionUv(q.xy);
++  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
++    return 1.0;
++  return textureLod(inputTextures[2], uv, 0.0).r;
++}
++
++void main() {
++  vec3 color = textureLod(inputTextures[0], texUv, 0.0).rgb;
++  float depth = textureLod(inputTextures[1], texUv, 0.0).r;
++
++  // WREN renders with an infinite projection: window depth = 1 - near / (2 d).
++  mat4 p = cameraTransforms.infiniteProjection;
++  float near = -p[3][2];
++  float viewDepth = depth >= 1.0 ? MAX_DISTANCE : min(near / (2.0 * (1.0 - depth)), MAX_DISTANCE);
++  vec2 ndc = texUv * 2.0 - 1.0;
++  vec3 rayView = vec3(ndc.x / p[0][0], ndc.y / p[1][1], -1.0);
++  mat4 inverseView = inverse(cameraTransforms.view);
++  vec3 origin = inverseView[3].xyz;
++  vec3 ray = mat3(inverseView) * rayView;  // world, scaled so that one unit = one metre of view depth
++  float rayScale = length(ray);
++  vec3 direction = ray / rayScale;
++  float tEnd = viewDepth * rayScale;
++  float tStart = 0.0;
++
++  if (boxMin.w > 0.0) {
++    vec3 inverseDirection = 1.0 / direction;
++    vec3 t0 = (boxMin.xyz - origin) * inverseDirection;
++    vec3 t1 = (boxMax.xyz - origin) * inverseDirection;
++    vec3 tNear = min(t0, t1);
++    vec3 tFar = max(t0, t1);
++    tStart = max(max(tNear.x, tNear.y), max(tNear.z, 0.0));
++    tEnd = min(tEnd, min(min(tFar.x, tFar.y), tFar.z));
++  }
++
++  if (tEnd <= tStart) {
++    result = vec4(color, 1.0);
++    return;
++  }
++
++  vec3 sigma = scattering.rgb;  // scatter only: extinction equals scattering
++  float g = scattering.a;
++  vec3 phaseRadiance0 = sunDirection0.w * henyeyGreenstein(dot(direction, sunDirection0.xyz), g) * sunRadiance0.rgb;
++  vec3 phaseRadiance1 = sunDirection1.w * henyeyGreenstein(dot(direction, sunDirection1.xyz), g) * sunRadiance1.rgb;
++
++  float stepLength = (tEnd - tStart) / float(STEPS);
++  vec3 stepTransmittance = exp(-sigma * stepLength);
++  float offset = dither(gl_FragCoord.xy);
++  vec3 transmittance = vec3(1.0);
++  vec3 inScattered = vec3(0.0);
++  for (int i = 0; i < STEPS; ++i) {
++    vec3 position = origin + direction * (tStart + (float(i) + offset) * stepLength);
++    vec3 source = ambient.rgb + phaseRadiance0 * sunVisibility(position, sunDirection0.xyz) +
++                  phaseRadiance1 * sunVisibility(position, sunDirection1.xyz);
++    // Exact integral of a constant source over the step: (1 - T_step) * source.
++    inScattered += transmittance * (1.0 - stepTransmittance) * source;
++    transmittance *= stepTransmittance;
++  }
++
++  result = vec4(color * transmittance + inScattered, 1.0);
++}
+diff --git a/src/webots/Makefile b/src/webots/Makefile
+index 945f945..5faeb62 100644
+--- a/src/webots/Makefile
++++ b/src/webots/Makefile
+@@ -568,6 +568,7 @@ OTHER_SOURCES = \
+   WbWrenColorNoise.cpp \
+   WbWrenDepthOfField.cpp \
+   WbWrenGtao.cpp \
++  WbWrenScatteringFog.cpp \
+   WbWrenHdr.cpp \
+   WbWrenLabelOverlay.cpp \
+   WbWrenLensDistortion.cpp \
+diff --git a/src/webots/nodes/WbFog.cpp b/src/webots/nodes/WbFog.cpp
+index 6018449..ea94f0b 100644
+--- a/src/webots/nodes/WbFog.cpp
++++ b/src/webots/nodes/WbFog.cpp
+@@ -15,9 +15,13 @@
+ #include "WbFog.hpp"
+ 
+ #include "WbFieldChecker.hpp"
++#include "WbMFString.hpp"
+ #include "WbSFColor.hpp"
+ #include "WbSFDouble.hpp"
+ #include "WbSFString.hpp"
++#include "WbSFVector2.hpp"
++#include "WbSFVector3.hpp"
++#include "WbUrl.hpp"
+ #include "WbWorld.hpp"
+ #include "WbWrenRenderingContext.hpp"
+ 
+@@ -30,10 +34,62 @@ QList<WbFog *> WbFog::cFogList;
+ 
+ void WbFog::init() {
+   mWrenFogType = WR_SCENE_FOG_TYPE_LINEAR;
++  mIsScattering = false;
+ 
+   mColor = findSFColor("color");
+   mFogType = findSFString("fogType");
+   mVisibilityRange = findSFDouble("visibilityRange");
++  mDensity = findSFDouble("density");
++  mAnisotropy = findSFDouble("anisotropy");
++  mBoxCenter = findSFVector3("boxCenter");
++  mBoxSize = findSFVector3("boxSize");
++  mAmbientColor = findSFColor("ambientColor");
++  mSunOcclusionUrl = findMFString("sunOcclusionUrl");
++  mSunOcclusionMin = findSFVector2("sunOcclusionMin");
++  mSunOcclusionMax = findSFVector2("sunOcclusionMax");
++  mSunOcclusionHeight = findSFVector2("sunOcclusionHeight");
++}
++
++double WbFog::density() const {
++  return mDensity->value();
++}
++
++double WbFog::anisotropy() const {
++  return qBound(-0.99, mAnisotropy->value(), 0.99);
++}
++
++const WbRgb &WbFog::color() const {
++  return mColor->value();
++}
++
++const WbVector3 &WbFog::boxCenter() const {
++  return mBoxCenter->value();
++}
++
++const WbVector3 &WbFog::boxSize() const {
++  return mBoxSize->value();
++}
++
++const WbRgb &WbFog::ambientColor() const {
++  return mAmbientColor->value();
++}
++
++QString WbFog::sunOcclusionPath() const {
++  if (mSunOcclusionUrl->size() == 0)
++    return QString();
++  return WbUrl::computePath(this, "sunOcclusionUrl", mSunOcclusionUrl, 0);
++}
++
++const WbVector2 &WbFog::sunOcclusionMin() const {
++  return mSunOcclusionMin->value();
++}
++
++const WbVector2 &WbFog::sunOcclusionMax() const {
++  return mSunOcclusionMax->value();
++}
++
++const WbVector2 &WbFog::sunOcclusionHeight() const {
++  return mSunOcclusionHeight->value();
+ }
+ 
+ WbFog::WbFog(WbTokenizer *tokenizer) : WbBaseNode("Fog", tokenizer) {
+@@ -115,14 +171,17 @@ void WbFog::updateColor() {
+ 
+ void WbFog::updateFogType() {
+   const QString fogText(mFogType->value().toLower());
+-  if (fogText == QString("exponential"))
++  mIsScattering = fogText == QString("scattering");
++  if (mIsScattering)
++    mWrenFogType = WR_SCENE_FOG_TYPE_NONE;  // rendered by the viewpoint's scattering effect instead
++  else if (fogText == QString("exponential"))
+     mWrenFogType = WR_SCENE_FOG_TYPE_EXPONENTIAL;
+   else if (fogText == QString("exponential2"))
+     mWrenFogType = WR_SCENE_FOG_TYPE_EXPONENTIAL2;
+   else
+     mWrenFogType = WR_SCENE_FOG_TYPE_LINEAR;
+ 
+-  if (mWrenFogType == WR_SCENE_FOG_TYPE_LINEAR && fogText != QString("linear"))
++  if (!mIsScattering && mWrenFogType == WR_SCENE_FOG_TYPE_LINEAR && fogText != QString("linear"))
+     parsingWarn(tr("Unknown 'fogType': \"%1\". Set to \"LINEAR\"").arg(mFogType->value()));
+ 
+   if (areWrenObjectsInitialized()) {
+@@ -144,7 +203,7 @@ void WbFog::applyChangesToWren() {
+ 
+   WrSceneFogType fogType = mWrenFogType;
+   float density = 0.0f;
+-  if (mVisibilityRange->value() > 0.0)
++  if (mVisibilityRange->value() > 0.0 && !mIsScattering)
+     density = 1.0 / mVisibilityRange->value();
+   else
+     fogType = WR_SCENE_FOG_TYPE_NONE;
+diff --git a/src/webots/nodes/WbFog.hpp b/src/webots/nodes/WbFog.hpp
+index fc1a61b..24e947e 100644
+--- a/src/webots/nodes/WbFog.hpp
++++ b/src/webots/nodes/WbFog.hpp
+@@ -19,6 +19,10 @@
+ 
+ #include <wren/scene.h>
+ 
++class WbRgb;
++class WbVector2;
++class WbVector3;
++
+ // TODO: only the first Fog node should be taken into account
+ 
+ class WbFog : public WbBaseNode {
+@@ -42,6 +46,19 @@ public:
+ 
+   int mode() const { return mWrenFogType; }
+ 
++  // fogType "SCATTERING": a lit participating medium rendered as a post-processing effect
++  bool isScattering() const { return mIsScattering; }
++  double density() const;
++  double anisotropy() const;
++  const WbRgb &color() const;
++  const WbVector3 &boxCenter() const;
++  const WbVector3 &boxSize() const;
++  const WbRgb &ambientColor() const;
++  QString sunOcclusionPath() const;
++  const WbVector2 &sunOcclusionMin() const;
++  const WbVector2 &sunOcclusionMax() const;
++  const WbVector2 &sunOcclusionHeight() const;
++
+   QStringList fieldsToSynchronizeWithW3d() const override;
+ 
+ signals:
+@@ -64,9 +81,19 @@ private:
+   WbSFColor *mColor;
+   WbSFString *mFogType;
+   WbSFDouble *mVisibilityRange;
++  WbSFDouble *mDensity;
++  WbSFDouble *mAnisotropy;
++  WbSFVector3 *mBoxCenter;
++  WbSFVector3 *mBoxSize;
++  WbSFColor *mAmbientColor;
++  WbMFString *mSunOcclusionUrl;
++  WbSFVector2 *mSunOcclusionMin;
++  WbSFVector2 *mSunOcclusionMax;
++  WbSFVector2 *mSunOcclusionHeight;
+ 
+   // other variables
+   WrSceneFogType mWrenFogType;
++  bool mIsScattering;
+ 
+ private slots:
+   void updateColor();
+diff --git a/src/webots/nodes/WbViewpoint.cpp b/src/webots/nodes/WbViewpoint.cpp
+index b06a18a..749f8fe 100644
+--- a/src/webots/nodes/WbViewpoint.cpp
++++ b/src/webots/nodes/WbViewpoint.cpp
+@@ -36,6 +36,11 @@
+ #include "WbVector4.hpp"
+ #include "WbWorld.hpp"
+ #include "WbWrenBloom.hpp"
++#include "WbWrenScatteringFog.hpp"
++#include "WbFog.hpp"
++#include "WbVector3.hpp"
++#include "WbVector2.hpp"
++#include "WbDirectionalLight.hpp"
+ #include "WbWrenGtao.hpp"
+ #include "WbWrenHdr.hpp"
+ #include "WbWrenRenderingContext.hpp"
+@@ -121,6 +126,7 @@ void WbViewpoint::init() {
+   mWrenHdr = new WbWrenHdr();
+   mWrenGtao = new WbWrenGtao();
+   mWrenBloom = new WbWrenBloom();
++  mWrenScatteringFog = new WbWrenScatteringFog();
+   mInverseViewMatrix = NULL;
+ 
+   mNodeVisibilityEnabled = false;
+@@ -169,6 +175,7 @@ WbViewpoint::~WbViewpoint() {
+   delete mWrenHdr;
+   delete mWrenGtao;
+   delete mWrenBloom;
++  delete mWrenScatteringFog;
+   delete mFinalOrbitTargetPostion;
+ }
+ 
+@@ -1171,13 +1178,89 @@ void WbViewpoint::updatePostProcessingEffects() {
+     mWrenBloom->setThreshold(mBloomThreshold->value());
+   }
+ 
++  // The viewport's frame buffer may have been recreated: rebuild around its new depth texture.
++  if (mWrenScatteringFog)
++    mWrenScatteringFog->detachFromViewport();
++  updateScatteringFog();
++
+   emit refreshRequired();
+ }
+ 
++static float srgbToLinear(double c) {
++  return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
++}
++
++void WbViewpoint::updateScatteringFog() {
++  if (!mWrenScatteringFog)
++    return;
++  const WbFog *fog = WbFog::fogInstance();
++  if (!fog || !fog->isScattering()) {
++    if (mWrenScatteringFog->hasBeenSetup())
++      mWrenScatteringFog->detachFromViewport();
++    return;
++  }
++
++  // Webots colors are sRGB; the medium works in linear light.
++  WbWrenScatteringFog::Medium medium = {};
++  const WbRgb &albedo = fog->color();
++  const double density = fog->density();
++  medium.scattering[0] = density * srgbToLinear(albedo.red());
++  medium.scattering[1] = density * srgbToLinear(albedo.green());
++  medium.scattering[2] = density * srgbToLinear(albedo.blue());
++  medium.scattering[3] = fog->anisotropy();
++  const WbRgb &ambient = fog->ambientColor();
++  medium.ambient[0] = srgbToLinear(ambient.red());
++  medium.ambient[1] = srgbToLinear(ambient.green());
++  medium.ambient[2] = srgbToLinear(ambient.blue());
++
++  const WbVector3 &center = fog->boxCenter();
++  const WbVector3 &size = fog->boxSize();
++  for (int i = 0; i < 3; ++i) {
++    medium.boxMin[i] = center[i] - 0.5 * size[i];
++    medium.boxMax[i] = center[i] + 0.5 * size[i];
++  }
++  medium.boxMin[3] = size.x() > 0.0 && size.y() > 0.0 && size.z() > 0.0 ? 1.0f : 0.0f;
++
++  int sun = 0;
++  foreach (const WbLight *light, WbLight::lights()) {
++    const WbDirectionalLight *directional = dynamic_cast<const WbDirectionalLight *>(light);
++    if (!directional || !directional->isOn() || sun >= 2)
++      continue;
++    WbVector3 toLight = -directional->direction();
++    toLight.normalize();
++    const WbRgb &c = directional->color();
++    const double intensity = directional->intensity();
++    for (int i = 0; i < 3; ++i)
++      medium.sunDirection[sun][i] = toLight[i];
++    medium.sunDirection[sun][3] = 1.0f;
++    medium.sunRadiance[sun][0] = intensity * srgbToLinear(c.red());
++    medium.sunRadiance[sun][1] = intensity * srgbToLinear(c.green());
++    medium.sunRadiance[sun][2] = intensity * srgbToLinear(c.blue());
++    ++sun;
++  }
++
++  medium.occlusionPath = fog->sunOcclusionPath();
++  if (!medium.occlusionPath.isEmpty()) {
++    medium.occlusionRect[0] = fog->sunOcclusionMin().x();
++    medium.occlusionRect[1] = fog->sunOcclusionMin().y();
++    medium.occlusionRect[2] = fog->sunOcclusionMax().x();
++    medium.occlusionRect[3] = fog->sunOcclusionMax().y();
++    medium.occlusionHeight[0] = fog->sunOcclusionHeight().x();
++    medium.occlusionHeight[1] = fog->sunOcclusionHeight().y();
++  }
++
++  if (!mWrenScatteringFog->hasBeenSetup())
++    mWrenScatteringFog->setup(mWrenViewport);
++  mWrenScatteringFog->update(medium);
++}
++
+ void WbViewpoint::updatePostProcessingParameters() {
+   if (!areWrenObjectsInitialized())
+     return;
+ 
++  // Before the effects below, which return early when disabled.
++  updateScatteringFog();
++
+   if (mWrenHdr)
+     updateExposure();
+ 
+diff --git a/src/webots/nodes/WbViewpoint.hpp b/src/webots/nodes/WbViewpoint.hpp
+index 54b0e3d..3b5c56d 100644
+--- a/src/webots/nodes/WbViewpoint.hpp
++++ b/src/webots/nodes/WbViewpoint.hpp
+@@ -35,6 +35,7 @@ class WbSolid;
+ class WbVector2;
+ class WbVirtualRealityHeadset;
+ class WbWrenBloom;
++class WbWrenScatteringFog;
+ class WbWrenGtao;
+ class WbWrenSmaa;
+ class WbWrenHdr;
+@@ -153,6 +154,7 @@ public:
+   WbLensFlare *lensFlare() const;
+   void updatePostProcessingEffects();
+   void updatePostProcessingParameters();
++  void updateScatteringFog();
+ 
+ public slots:
+   void updateOptionalRendering(int optionalRendering);
+@@ -178,6 +180,7 @@ private:
+   WbWrenHdr *mWrenHdr;
+   WbWrenGtao *mWrenGtao;
+   WbWrenBloom *mWrenBloom;
++  WbWrenScatteringFog *mWrenScatteringFog;
+   const float *mInverseViewMatrix;
+ 
+   // to restore viewpoint
+diff --git a/src/webots/wren/WbWrenPostProcessingEffects.cpp b/src/webots/wren/WbWrenPostProcessingEffects.cpp
+index e8c9970..24748a7 100644
+--- a/src/webots/wren/WbWrenPostProcessingEffects.cpp
++++ b/src/webots/wren/WbWrenPostProcessingEffects.cpp
+@@ -629,6 +629,32 @@ WrPostProcessingEffect *WbWrenPostProcessingEffects::bloom(float width, float he
+   return bloomEffect;
+ }
+ 
++WrPostProcessingEffect *WbWrenPostProcessingEffects::scatteringFog(float width, float height,
++                                                                   WrTextureInternalFormat textureFormat,
++                                                                   WrTexture *depthTexture, WrTexture *occlusionTexture) {
++  WrPostProcessingEffect *fogEffect = wr_post_processing_effect_new();
++  wr_post_processing_effect_set_drawing_index(fogEffect, WbWrenRenderingContext::PP_SCATTERING_FOG);
++
++  WrPostProcessingEffectPass *fogPass = wr_post_processing_effect_pass_new();
++  wr_post_processing_effect_pass_set_name(fogPass, "scatteringFog");
++  wr_post_processing_effect_pass_set_program(fogPass, WbWrenShaders::scatteringFogShader());
++  wr_post_processing_effect_pass_set_output_size(fogPass, width, height);
++  wr_post_processing_effect_pass_set_alpha_blending(fogPass, false);
++  wr_post_processing_effect_pass_set_input_texture_count(fogPass, 3);
++  wr_post_processing_effect_pass_set_input_texture(fogPass, 1, depthTexture);
++  wr_post_processing_effect_pass_set_input_texture(fogPass, 2, occlusionTexture);
++  wr_post_processing_effect_pass_set_input_texture_interpolation(fogPass, 2, true);
++  for (int i = 0; i < 3; ++i)
++    wr_post_processing_effect_pass_set_input_texture_wrap_mode(fogPass, i, WR_TEXTURE_WRAP_MODE_CLAMP_TO_EDGE);
++  wr_post_processing_effect_pass_set_output_texture_count(fogPass, 1);
++  wr_post_processing_effect_pass_set_output_texture_format(fogPass, 0, textureFormat);
++  wr_post_processing_effect_append_pass(fogEffect, fogPass);
++
++  wr_post_processing_effect_set_result_program(fogEffect, WbWrenShaders::passThroughShader());
++
++  return fogEffect;
++}
++
+ WrPostProcessingEffect *WbWrenPostProcessingEffects::hdrResolve(float width, float height) {
+   WrPostProcessingEffect *hdrResolveEffect = wr_post_processing_effect_new();
+   wr_post_processing_effect_set_drawing_index(hdrResolveEffect, WbWrenRenderingContext::PP_HDR);
+diff --git a/src/webots/wren/WbWrenPostProcessingEffects.hpp b/src/webots/wren/WbWrenPostProcessingEffects.hpp
+index 2d32b3c..3d887b5 100644
+--- a/src/webots/wren/WbWrenPostProcessingEffects.hpp
++++ b/src/webots/wren/WbWrenPostProcessingEffects.hpp
+@@ -41,6 +41,8 @@ namespace WbWrenPostProcessingEffects {
+                                WrTexture *normalTexture, bool halfRes);
+   WrPostProcessingEffect *bloom(float width, float height, WrTextureInternalFormat textureFormat);
+   WrPostProcessingEffect *hdrResolve(float width, float height);
++  WrPostProcessingEffect *scatteringFog(float width, float height, WrTextureInternalFormat textureFormat,
++                                        WrTexture *depthTexture, WrTexture *occlusionTexture);
+   WrPostProcessingEffect *passThrough(float width, float height);
+ };  // namespace WbWrenPostProcessingEffects
+ 
+diff --git a/src/webots/wren/WbWrenRenderingContext.hpp b/src/webots/wren/WbWrenRenderingContext.hpp
+index 2744d05..34167a8 100644
+--- a/src/webots/wren/WbWrenRenderingContext.hpp
++++ b/src/webots/wren/WbWrenRenderingContext.hpp
+@@ -93,6 +93,7 @@ public:
+     PP_SPHERICAL_CAMERA_MERGE,
+     PP_LENS_DISTORTION,
+     PP_DEPTH_OF_FIELD,
++    PP_SCATTERING_FOG,
+     PP_BLOOM,
+     PP_LENS_FLARE,
+     PP_MOTION_BLUR,
+diff --git a/src/webots/wren/WbWrenScatteringFog.cpp b/src/webots/wren/WbWrenScatteringFog.cpp
+new file mode 100644
+index 0000000..93869a4
+--- /dev/null
++++ b/src/webots/wren/WbWrenScatteringFog.cpp
+@@ -0,0 +1,134 @@
++// Copyright 1996-2024 Cyberbotics Ltd.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#include "WbWrenScatteringFog.hpp"
++
++#include "WbWrenOpenGlContext.hpp"
++#include "WbWrenPostProcessingEffects.hpp"
++
++#include <wren/frame_buffer.h>
++#include <wren/post_processing_effect.h>
++#include <wren/texture.h>
++#include <wren/texture_2d.h>
++#include <wren/viewport.h>
++
++#include <QtGui/QImage>
++
++WbWrenScatteringFog::WbWrenScatteringFog() :
++  WbWrenAbstractPostProcessingEffect(),
++  mPass(NULL),
++  mOcclusionTexture(NULL),
++  mMedium() {
++}
++
++WbWrenScatteringFog::~WbWrenScatteringFog() {
++  detachFromViewport();
++  wr_texture_delete(WR_TEXTURE(mOcclusionTexture));
++}
++
++void WbWrenScatteringFog::loadOcclusion(const QString &path) {
++  QImage image;
++  if (!path.isEmpty())
++    image.load(path);
++  if (image.isNull()) {  // no map: a single fully visible texel
++    image = QImage(1, 1, QImage::Format_ARGB32);
++    image.fill(0xFFFFFFFF);
++  } else
++    image = image.convertToFormat(QImage::Format_ARGB32);
++
++  WbWrenOpenGlContext::makeWrenCurrent();
++  WrTexture2d *texture = wr_texture_2d_new();
++  wr_texture_set_size(WR_TEXTURE(texture), image.width(), image.height());
++  wr_texture_2d_set_data(texture, reinterpret_cast<const char *>(image.constBits()));
++  wr_texture_setup(WR_TEXTURE(texture));
++  WbWrenOpenGlContext::doneWren();
++
++  WrTexture2d *previous = mOcclusionTexture;
++  mOcclusionTexture = texture;
++  mOcclusionPath = path;
++  if (mHasBeenSetup)
++    setup(mWrenViewport);  // rebuild the pass around the new input texture
++  wr_texture_delete(WR_TEXTURE(previous));
++}
++
++void WbWrenScatteringFog::setup(WrViewport *viewport) {
++  if (mWrenPostProcessingEffect) {
++    if (mWrenViewport == viewport)
++      wr_viewport_remove_post_processing_effect(mWrenViewport, mWrenPostProcessingEffect);
++    wr_post_processing_effect_delete(mWrenPostProcessingEffect);
++    mWrenPostProcessingEffect = NULL;
++  }
++
++  mWrenViewport = viewport;
++  if (!mOcclusionTexture) {
++    mHasBeenSetup = false;
++    loadOcclusion(mOcclusionPath);
++  }
++  const float width = wr_viewport_get_width(mWrenViewport);
++  const float height = wr_viewport_get_height(mWrenViewport);
++  WrTexture *depthTexture = WR_TEXTURE(wr_frame_buffer_get_depth_texture(wr_viewport_get_frame_buffer(mWrenViewport)));
++
++  mWrenPostProcessingEffect = WbWrenPostProcessingEffects::scatteringFog(width, height, WR_TEXTURE_INTERNAL_FORMAT_RGB16F,
++                                                                         depthTexture, WR_TEXTURE(mOcclusionTexture));
++  mPass = wr_post_processing_effect_get_pass(mWrenPostProcessingEffect, "scatteringFog");
++
++  WbWrenOpenGlContext::makeWrenCurrent();
++  wr_viewport_add_post_processing_effect(mWrenViewport, mWrenPostProcessingEffect);
++  wr_post_processing_effect_setup(mWrenPostProcessingEffect);
++  WbWrenOpenGlContext::doneWren();
++
++  mHasBeenSetup = true;
++  applyParametersToWren();
++}
++
++void WbWrenScatteringFog::detachFromViewport() {
++  if (mWrenViewport && mWrenPostProcessingEffect) {
++    wr_viewport_remove_post_processing_effect(mWrenViewport, mWrenPostProcessingEffect);
++    wr_post_processing_effect_delete(mWrenPostProcessingEffect);
++  }
++  mWrenPostProcessingEffect = NULL;
++  mWrenViewport = NULL;
++  mPass = NULL;
++  mHasBeenSetup = false;
++}
++
++void WbWrenScatteringFog::update(const Medium &medium) {
++  mMedium = medium;
++  if (mMedium.occlusionPath != mOcclusionPath)
++    loadOcclusion(mMedium.occlusionPath);
++  applyParametersToWren();
++}
++
++void WbWrenScatteringFog::applyParametersToWren() {
++  if (!mPass)
++    return;
++
++  WbWrenOpenGlContext::makeWrenCurrent();
++  const struct {
++    const char *name;
++    const float *value;
++  } vectors[] = {{"scattering", mMedium.scattering},
++                 {"ambient", mMedium.ambient},
++                 {"boxMin", mMedium.boxMin},
++                 {"boxMax", mMedium.boxMax},
++                 {"sunDirection0", mMedium.sunDirection[0]},
++                 {"sunRadiance0", mMedium.sunRadiance[0]},
++                 {"sunDirection1", mMedium.sunDirection[1]},
++                 {"sunRadiance1", mMedium.sunRadiance[1]},
++                 {"occlusionRect", mMedium.occlusionRect},
++                 {"occlusionHeight", mMedium.occlusionHeight}};
++  for (const auto &v : vectors)
++    wr_post_processing_effect_pass_set_program_parameter(mPass, v.name, reinterpret_cast<const char *>(v.value));
++  WbWrenOpenGlContext::doneWren();
++}
+diff --git a/src/webots/wren/WbWrenScatteringFog.hpp b/src/webots/wren/WbWrenScatteringFog.hpp
+new file mode 100644
+index 0000000..27da713
+--- /dev/null
++++ b/src/webots/wren/WbWrenScatteringFog.hpp
+@@ -0,0 +1,60 @@
++// Copyright 1996-2024 Cyberbotics Ltd.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#ifndef WB_WREN_SCATTERING_FOG_HPP
++#define WB_WREN_SCATTERING_FOG_HPP
++
++#include "WbWrenAbstractPostProcessingEffect.hpp"
++
++#include <QtCore/QString>
++
++struct WrPostProcessingEffectPass;
++struct WrTexture2d;
++
++// Renders a Fog node of type "SCATTERING": single scattering in HDR, before bloom and tone mapping.
++class WbWrenScatteringFog : public WbWrenAbstractPostProcessingEffect {
++public:
++  WbWrenScatteringFog();
++  ~WbWrenScatteringFog() override;
++
++  void setup(WrViewport *viewport) override;
++  void detachFromViewport() override;
++
++  // All quantities linear and in world coordinates.
++  struct Medium {
++    float scattering[4];       // rgb: scattering coefficient per metre, a: anisotropy
++    float ambient[4];          // rgb: isotropic ambient radiance
++    float boxMin[4];           // w: 1 when bounded
++    float boxMax[4];
++    float sunDirection[2][4];  // towards the light; w: 1 when present
++    float sunRadiance[2][4];
++    float occlusionRect[4];    // world min xy, max xy of the occlusion map; zero when absent
++    float occlusionHeight[2];  // ground heights encoded by G = 0 and G = 1
++    QString occlusionPath;
++  };
++  void update(const Medium &medium);
++
++protected:
++  void applyParametersToWren() override;
++
++private:
++  void loadOcclusion(const QString &path);
++
++  WrPostProcessingEffectPass *mPass;
++  WrTexture2d *mOcclusionTexture;
++  QString mOcclusionPath;
++  Medium mMedium;
++};
++
++#endif
+diff --git a/src/webots/wren/WbWrenShaders.cpp b/src/webots/wren/WbWrenShaders.cpp
+index e47acea..9021e3f 100644
+--- a/src/webots/wren/WbWrenShaders.cpp
++++ b/src/webots/wren/WbWrenShaders.cpp
+@@ -80,6 +80,7 @@ enum SHADER {
+   SHADER_HANDLES_PICKING,
+   SHADER_HDR_CLEAR,
+   SHADER_HDR_RESOLVE,
++  SHADER_SCATTERING_FOG,
+   SHADER_IBL_DIFFUSE_IRRADIANCE_BAKE,
+   SHADER_IBL_SPECULAR_IRRADIANCE_BAKE,
+   SHADER_IBL_BRDF_BAKE,
+@@ -561,6 +562,31 @@ WrShaderProgram *WbWrenShaders::hdrClearShader() {
+   return gShaders[SHADER_HDR_CLEAR];
+ }
+ 
++WrShaderProgram *WbWrenShaders::scatteringFogShader() {
++  if (!gShaders[SHADER_SCATTERING_FOG]) {
++    WrShaderProgram *program = wr_shader_program_new();
++    gShaders[SHADER_SCATTERING_FOG] = program;
++
++    wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE0);  // HDR color
++    wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE1);  // depth
++    wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE2);  // sun occlusion
++    wr_shader_program_use_uniform_buffer(program, WR_GLSL_LAYOUT_UNIFORM_BUFFER_CAMERA_TRANSFORMS);
++
++    const float zero4[4] = {0.0f, 0.0f, 0.0f, 0.0f};
++    const float zero2[2] = {0.0f, 0.0f};
++    for (const char *name : {"scattering", "ambient", "boxMin", "boxMax", "sunDirection0", "sunRadiance0", "sunDirection1",
++                             "sunRadiance1", "occlusionRect"})
++      wr_shader_program_create_custom_uniform(program, name, WR_SHADER_PROGRAM_UNIFORM_TYPE_VEC4F,
++                                              reinterpret_cast<const char *>(zero4));
++    wr_shader_program_create_custom_uniform(program, "occlusionHeight", WR_SHADER_PROGRAM_UNIFORM_TYPE_VEC2F,
++                                            reinterpret_cast<const char *>(zero2));
++
++    buildShader(program, QFileInfo("gl:shaders/pass_through.vert"), QFileInfo("gl:shaders/scattering_fog.frag"));
++  }
++
++  return gShaders[SHADER_SCATTERING_FOG];
++}
++
+ WrShaderProgram *WbWrenShaders::hdrResolveShader() {
+   if (!gShaders[SHADER_HDR_RESOLVE]) {
+     gShaders[SHADER_HDR_RESOLVE] = wr_shader_program_new();
+diff --git a/src/webots/wren/WbWrenShaders.hpp b/src/webots/wren/WbWrenShaders.hpp
+index fd78194..8176a63 100644
+--- a/src/webots/wren/WbWrenShaders.hpp
++++ b/src/webots/wren/WbWrenShaders.hpp
+@@ -42,6 +42,7 @@ namespace WbWrenShaders {
+   WrShaderProgram *handlesPickingShader();
+   WrShaderProgram *hdrClearShader();
+   WrShaderProgram *hdrResolveShader();
++  WrShaderProgram *scatteringFogShader();
+   WrShaderProgram *iblDiffuseIrradianceBakingShader();
+   WrShaderProgram *iblSpecularIrradianceBakingShader();
+   WrShaderProgram *iblBrdfBakingShader();

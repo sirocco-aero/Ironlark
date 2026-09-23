@@ -7,8 +7,10 @@ the panoramas are then resampled into cube faces:
 
   sky_{face}.hdr        what the camera sees
   sky_light_{face}.hdr  what lights the scene (image-based lighting)
+  sky_light_mean.json   its mean radiance over the sphere (linear RGB)
 """
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
@@ -88,5 +90,11 @@ cube(panorama("camera", 2048), "sky", 512)
 for link in list(mix.inputs[0].links):
     world.node_tree.links.remove(link)
 mix.inputs[0].default_value = 0.0
-cube(panorama("light", 512), "sky_light", 128)
+light = panorama("light", 512)
+cube(light, "sky_light", 128)
+# Equirectangular rows cover equal latitude steps; weight by cos(latitude) for solid angle.
+latitude = (np.arange(light.shape[0]) + 0.5) / light.shape[0] * math.pi - math.pi / 2
+weights = np.cos(latitude)[:, None]
+mean = (light[..., :3] * weights[..., None]).sum((0, 1)) / (weights.sum() * light.shape[1])
+(out / "sky_light_mean.json").write_text(json.dumps([float(c) for c in mean]))
 print("SKY done", flush=True)
