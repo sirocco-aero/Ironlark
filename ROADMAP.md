@@ -22,7 +22,14 @@ color, direction), the camera-visible sky (HDRI × 0.2 with its rotation), the
 lighting sky (Nishita × 0.7), and HD (1K) object textures downsampled from the
 source's originals.
 
-Open fidelity gaps against the source:
+Open fidelity gaps against the source (measured: Webots is 1.4–2.3× brighter
+than Cycles lighting the same geometry with the source's lights):
+
+- **Shadows above the ground**: only the terrain carries the canopy's shade;
+  trees, trunks and cover are fully sunlit. Needs real-time sun shadow maps
+  (affordable now: 5.7 ms frames) with alpha-tested instanced casters.
+- **Sky occlusion**: every surface sees the whole sky; under the canopy the
+  source sees little of it.
 
 - **Fog**: the source's scattering volume now renders (patch 0008), shadowed
   by the canopy bake. Still to do: robot `Camera` devices, and calibration

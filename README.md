@@ -111,6 +111,10 @@ its files and regenerate it with `git diff --cached --binary HEAD -- <files>`
 (valid while no earlier patch touches them). Keep each patch clean enough to
 become an upstream pull request.
 
+`tools/render_lighting_reference.py` renders the built world in Cycles under the
+source's own suns, world, fog and Filmic view (4.6 GB; the full source needs more
+than ~26 GB); `tools/compare_views.py runs/lighting-reference runs/preview` scores
+`tools/render_forest.py` views against it.
 `tools/profile_forest.py --out runs/<name>` reports load time, real-time factor,
 per-step cost and peak RAM/GPU for the forest as a viewer sees it.
 `tests/test_vertex_index.cpp` proves hard normals and UV seams survive indexing

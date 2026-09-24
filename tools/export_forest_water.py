@@ -21,6 +21,17 @@ from export_floor_cover import prune
 from forest_mesh import write_material_obj
 
 
+def flow_attribute(mesh, name, loop_vertices):
+    """A scalar attribute of the river's Geometry Nodes, per loop."""
+    attribute = mesh.attributes[name]
+    size = len(attribute.data)
+    values = np.empty(size * (4 if attribute.data_type in ("FLOAT_COLOR", "BYTE_COLOR") else 1), dtype=np.float32)
+    key = "color" if attribute.data_type in ("FLOAT_COLOR", "BYTE_COLOR") else "value"
+    attribute.data.foreach_get(key, values)
+    values = values.reshape(size, -1)[:, 0]
+    return values[loop_vertices] if attribute.domain == "POINT" else values
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True)
@@ -59,8 +70,8 @@ def main():
         & (centers[:, 1] >= ymin - margin)
         & (centers[:, 1] <= ymax + margin)
     )
-    # Stable world-space UVs for a future baked flow material.
-    uv = vertices[lv, :2].copy()
+    # The source's flow coordinates: UV1 runs along the river, UV2 across it.
+    uv = np.stack([flow_attribute(mesh, name, lv) for name in ("UV1", "UV2")], axis=1)
     vertices[:, :2] -= HOME[:2]
     count = write_material_obj(
         out / "river.obj", vertices, lv, uv, loop_normals(mesh), triangles[keep]
