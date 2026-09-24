@@ -205,7 +205,6 @@ Robot {{
 }}
 """
 
-SHARED_SHAPES = {}
 VISUAL_INSTANCES = []
 COPIED_RESOURCES = {}
 
@@ -240,37 +239,11 @@ def light_signature(build, out):
     return digest.hexdigest()
 
 
-def instance_node(**kw):
-    """Share complete visual resources; transforms alone vary per instance."""
-    x, y, z = enu([kw["x"], kw["y"], kw["z"]])
-    ax, ay, az = enu([kw["ax"], kw["ay"], kw["az"]])
-    sx, sy, sz = kw["sx"], kw["sz"], kw["sy"]
-    mesh, tex = kw["mesh"], kw["tex"]
-    normal = kw.get("normal", "")
-    roughness = kw.get("roughness", "")
-    VISUAL_INSTANCES.append(
-        {
-            "mesh": mesh,
-            "texture": tex,
-            "translation": [x, y, z],
-            "rotation": [ax, ay, az, kw["ang"]],
-            "scale": [sx, sy, sz],
-        }
-    )
-    shadow = kw.get("shadow", False)
-    key = (mesh, tex, normal, roughness, shadow)
-    tag = "VISUAL_" + str(len(SHARED_SHAPES))
-    if key in SHARED_SHAPES:
-        shape = "USE " + SHARED_SHAPES[key]
-    else:
-        SHARED_SHAPES[key] = tag
-        # All 53 source materials are alpha-hashed: mask texels, never blend them.
-        normal_field = f'normalMap ImageTexture {{ url "{normal}" }}' if normal else ""
-        roughness_field = (
-            f'roughnessMap ImageTexture {{ url "{roughness}" }}' if roughness else ""
-        )
-        shape = f'''DEF {tag} Shape {{
-          appearance PBRAppearance {{
+def shape_fields(mesh, tex, normal="", roughness="", shadow=False):
+    # All 53 source materials are alpha-hashed: mask texels, never blend them.
+    normal_field = f'normalMap ImageTexture {{ url "{normal}" }}' if normal else ""
+    roughness_field = f'roughnessMap ImageTexture {{ url "{roughness}" }}' if roughness else ""
+    return f"""          appearance PBRAppearance {{
             baseColorMap ImageTexture {{ url "{tex}" }}
             {normal_field}
             {roughness_field}
@@ -279,14 +252,8 @@ def instance_node(**kw):
             alphaCutoff 0.5
           }}
           geometry Mesh {{ url "{mesh}" }}
-          castShadows {"TRUE" if shadow else "FALSE"}
-        }}'''
-    return f"""Transform {{
-      translation {x:.4f} {y:.4f} {z:.4f}
-      rotation {ax:.6f} {ay:.6f} {az:.6f} {kw["ang"]:.6f}
-      scale {sx:.5f} {sy:.5f} {sz:.5f}
-      children [ {shape} ]
-    }}"""
+          castShadows {"TRUE" if shadow else "FALSE"}"""
+
 
 
 COLLIDER = """Solid {{
@@ -461,11 +428,60 @@ def prepare_visual_trees(source, build, out):
     return meta["variants"]
 
 
-def instance_cover(build, out, cover_index):
-    """Copy each cover asset mesh once; place instances as Transforms.
+def axis_angle_matrix(axis, angle):
+    x, y, z = np.asarray(axis, dtype=np.float64) / np.linalg.norm(axis)
+    c, s, C = math.cos(angle), math.sin(angle), 1 - math.cos(angle)
+    return np.array(
+        [
+            [c + x * x * C, x * y * C - z * s, x * z * C + y * s],
+            [y * x * C + z * s, c + y * y * C, y * z * C - x * s],
+            [z * x * C - y * s, z * y * C + x * s, c + z * z * C],
+        ]
+    )
 
-    Returns (nodes, placed_tris, mesh_urls). Webots loads each unique
-    mesh once no matter how many Transforms reference it.
+
+def place_tree_part(parts, part, pos, aa, scale):
+    """Record one tree part's world transform, as its Transform node would have had."""
+    translation = enu(list(pos))
+    axis = enu(list(aa[:3]))
+    sx, sy, sz = scale[0], scale[2], scale[1]  # legacy (x, y-up, z) scale to ENU
+    VISUAL_INSTANCES.append(
+        {
+            "mesh": part["mesh_url"],
+            "texture": part["tex"],
+            "translation": list(translation),
+            "rotation": [*axis, aa[3]],
+            "scale": [sx, sy, sz],
+        }
+    )
+    matrix = axis_angle_matrix(axis, aa[3]) @ np.diag([sx, sy, sz])
+    key = (part["mesh_url"], part["tex"], part.get("normal", ""), part.get("roughness", ""))
+    parts.setdefault(key, []).append(np.hstack([matrix, np.array(translation)[:, None]]))
+
+
+def instanced_tree_shapes(parts, out):
+    """One instanced Shape per tree part. The source draws trees at full detail up to
+    its Lod1_distance (218-226 m), past the edge of this region, so no range is set."""
+    nodes = []
+    for i, ((mesh, tex, normal, roughness), rows) in enumerate(sorted(parts.items())):
+        url = f"meshes/instances_tree_{i}.bin"
+        np.asarray(rows, dtype="<f4").tofile(out / url)
+        nodes.append(
+            f"""Shape {{
+{shape_fields(mesh, tex, normal, roughness)}
+          instancesUrl [ "{url}" ]
+        }}"""
+        )
+    return nodes
+
+
+def instance_cover(build, out, cover_index):
+    """Place every source cover instance with GPU instancing.
+
+    Each asset becomes one transforms file and two instanced Shapes: lod0 up to
+    the source's lod0_distance, lod1 up to its lod1_distance, nothing beyond,
+    exactly as the source scatter does around its camera. Returns (nodes,
+    lod0 triangles placed, mesh urls).
     """
     assets = json.loads((build / "cover_assets.json").read_text())
     records = json.loads((build / "cover.json").read_text())
@@ -490,40 +506,46 @@ def instance_cover(build, out, cover_index):
                 img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
                 img.save(out / url)
             normal_maps[name] = url
+
+    groups = {}
+    for r in records:
+        groups.setdefault(r["asset"], []).append(r)
     nodes, total = [], 0
-    for i, r in enumerate(records):
-        if r["asset"] not in mesh_urls:
-            continue
-        s, (ax, ay, az, ang) = cover_placement(r["mat"])
-        x, y, z = r["pos"]
-        nodes.append(
-            instance_node(
-                x=x,
-                y=y,
-                z=z,
-                ax=ax,
-                ay=ay,
-                az=az,
-                ang=ang,
-                sx=s,
-                sy=s,
-                sz=s,
-                tex=cover_index[r["asset"]],
-                mesh=mesh_urls[r["asset"]],
-                normal=normal_maps.get(r["asset"], ""),
-                shadow=(
-                    assets[r["asset"]]["tris"] <= 21845
-                    and (
-                        "rock" in r["asset"]
-                        or "dead_tree" in r["asset"]
-                        or "tree_trunk" in r["asset"]
-                    )
-                ),
-                tag="C_%s_%d" % (re.sub(r"\W", "_", r["asset"]), i),
+    for asset, placements in sorted(groups.items()):
+        first = placements[0]
+        rows = []
+        for r in placements:
+            # The instance basis is the source's world matrix (the mesh keeps source axes).
+            basis = np.array(r["mat"], dtype=np.float64).reshape(3, 3)
+            origin = enu(r["pos"])
+            rows.append(np.hstack([basis, np.array(origin)[:, None]]))
+            s, (ax, ay, az, ang) = cover_placement(r["mat"])
+            # The canopy bake shades the ground through every lod0 placement.
+            VISUAL_INSTANCES.append(
+                {
+                    "mesh": mesh_urls[asset],
+                    "texture": cover_index[asset],
+                    "translation": list(origin),
+                    "rotation": [*enu([ax, ay, az]), ang],
+                    "scale": [s, s, s],
+                }
             )
-        )
-        total += assets[r["asset"]]["tris"]
-    print("cover instances", len(records), flush=True)
+        url = "meshes/instances_%s.bin" % re.sub(r"\W", "_", asset)
+        np.asarray(rows, dtype="<f4").tofile(out / url)
+        total += assets[asset]["tris"] * len(placements)
+        bands = [(asset, 0.0, first["lod0_distance"])]
+        if first["lod1"] != asset:
+            bands.append((first["lod1"], first["lod0_distance"], first["lod1_distance"]))
+        else:
+            bands = [(asset, 0.0, first["lod1_distance"])]
+        for name, near, far in bands:
+            nodes.append(
+                f"""Shape {{
+{shape_fields(mesh_urls[name], cover_index[name], normal_maps.get(name, ""))}
+          instancesUrl [ "{url}" ]
+          visibilityRange {near:.3f} {far:.3f}
+        }}"""
+            )
     return nodes, total, set(mesh_urls.values())
 
 
@@ -593,6 +615,7 @@ def main():
         )
     home_z = manifest["home_ground_z"]
     solids = []
+    tree_parts = {}
     colliders = []
     tri_total = 0
     for i, t in enumerate(trees):
@@ -601,26 +624,7 @@ def main():
         sx, sy, sz = t["scale"]
         ax, ay, az, angle = t["aa"]
         for part in visual_trees[variant]:
-            solids.append(
-                instance_node(
-                    x=pos[0],
-                    y=pos[1],
-                    z=pos[2],
-                    ax=ax,
-                    ay=ay,
-                    az=az,
-                    ang=angle,
-                    sx=sx,
-                    sy=sy,
-                    sz=sz,
-                    tex=part["tex"],
-                    normal=part.get("normal", ""),
-                    roughness=part.get("roughness", ""),
-                    mesh=part["mesh_url"],
-                    # Canopy light is ray-traced through the actual alpha masks.
-                    shadow=False,
-                )
-            )
+            place_tree_part(tree_parts, part, pos, (ax, ay, az, angle), (sx, sy, sz))
             tri_total += part["tris"]
         dist = math.hypot(pos[0], pos[2])
         if dist < COLLIDER_RADIUS:
@@ -641,6 +645,7 @@ def main():
                     i=len(colliders),
                 )
             )
+    solids.extend(instanced_tree_shapes(tree_parts, out))
     print(
         "trees", len(trees), "tris", tri_total, "colliders", len(colliders), flush=True
     )

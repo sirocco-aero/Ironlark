@@ -29,7 +29,7 @@ extracted to `./webots/` (or set `WEBOTS_HOME`).
 | `doctor` | Checks every prerequisite. |
 | `build-world` | Downloads Blender 4.2.9 and the [Poly Haven Pine Forest](https://polyhaven.com/collections/pine_forest) scene (checksummed), exports it stage by stage, and assembles `worlds/pine_forest/`. Resumable; `--skip-export` only reassembles. |
 | `build-renderer` | Builds patched Webots into `.cache/webots-renderer/`. See [Webots patches](#webots-patches). |
-| `render-reference` | Cycles renders of the source scene at the preview cameras, into `runs/reference/`: the ground truth for looks. Needs far more RAM than the simulator; needs no built world. |
+| `render-reference` | Cycles renders of the source scene at the preview cameras, into `runs/reference/`: the ground truth for looks. Needs more than ~26 GB RAM (15 GB + zram was not enough); needs no built world. |
 | `run` | Flies over the forest in a fullscreen window, then exits. `--world empty` for the bare test area; `--editor` for Webots' UI. |
 | `check` | The same flight on a virtual display, empty world by default. Exits nonzero on failure. |
 
@@ -101,6 +101,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0006-hdr-background** | `Background` accepts `.hdr` faces for the visible sky, kept as half-float linear radiance instead of 8-bit. | +12 MB VRAM |
 | **0007-pbr-light-intensity-once** | PBR diffuse light scaled with intensity squared; now linear, so intensity equals Blender sun strength. | — |
 | **0008-scattering-fog** | `Fog { fogType "SCATTERING" }`: single-scattering medium in HDR (density, color, Henyey–Greenstein anisotropy, box), lit by the directional lights and an ambient term; sun visibility from a top-down occlusion map, so canopy shafts come from the baked canopy light. Main view only; `Camera` devices not yet. | ~1–2 ms |
+| **0009-instancing-and-visibility-range** | `Shape.instancesUrl`: one shape drawn at every transform in a binary file, culled per instance and drawn with one instanced call. `Shape.visibilityRange`: draw only within a camera-distance band, per instance when instanced. The forest's 55,277 cover placements and all trees use it, with the source's own lod0/lod1 distances. | load 42 → 20 s, frame 25 → 5.7 ms, RAM 3.7 → 2.3 GB, 16,814 → 185 geometries |
 
 To add a patch: edit `.cache/webots-source/` (the series is staged there; `git add -N` new files), then
 `git -C .cache/webots-source diff --binary -- src include resources > native/patches/NNNN-name.patch`,

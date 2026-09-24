@@ -158,7 +158,9 @@ def build_world(skip_export=False):
             blender_stage("cover-layout", "export_cover_layout.py")
         assets_path = build / "cover_assets.json"
         assets = json.loads(assets_path.read_text()) if assets_path.exists() else {}
-        names = {r["asset"] for r in json.loads((build / "cover.json").read_text())}
+        names = {
+            r[key] for r in json.loads((build / "cover.json").read_text()) for key in ("asset", "lod1")
+        }
         if names - assets.keys() or any(
             missing(asset["file"]) for asset in assets.values()
         ):

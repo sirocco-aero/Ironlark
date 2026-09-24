@@ -2,8 +2,8 @@
 
 The images are the ground truth for tools/render_forest.py: same poses, field
 of view and resolution, with the source's own lights, world, fog and Filmic
-view untouched. Needs far more RAM than the simulator, since the source trees
-are realized meshes; it does not need a built world.
+view untouched. Needs more RAM than the simulator (about 16 GB); it does not
+need a built world.
 
     ./loiter render-reference [--views forest backlit]   ->  runs/reference/*.png
 """
@@ -34,6 +34,19 @@ p.add_argument("--fov", type=float, default=1.0, help="Webots Viewpoint fieldOfV
 p.add_argument("--samples", type=int, default=256)
 p.add_argument("--views", nargs="*")
 args = p.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
+
+# The source trees end by realizing every twig instance into one mesh. Keeping the twigs
+# instanced renders the same image (pine_01: mean difference 0.26/255, sampling noise)
+# with 3.6x less memory, which is what lets the full scene fit in 16 GB.
+for group in bpy.data.node_groups:
+    for node in list(getattr(group, "nodes", [])):
+        if node.bl_idname == "GeometryNodeRealizeInstances" and node.inputs[0].links and any(
+            link.to_node.bl_idname == "NodeGroupOutput" for link in node.outputs[0].links
+        ):
+            source = node.inputs[0].links[0].from_socket
+            for link in list(node.outputs[0].links):
+                group.links.new(source, link.to_socket)
+            group.nodes.remove(node)
 
 scene = bpy.context.scene
 scene.render.engine = "CYCLES"

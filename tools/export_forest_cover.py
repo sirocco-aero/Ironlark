@@ -21,7 +21,7 @@ def main():
     out = Path(args.out).resolve()
     source = out.parent / "pine-forest/source/polyhaven_pine_fir_forest.blend"
     records = json.loads((out / "cover.json").read_text())
-    names = sorted({r["asset"] for r in records})
+    names = sorted({r[key] for r in records for key in ("asset", "lod1")})
     assets = {}
     for name in names:
         # Release source image/mesh buffers between assets as well as scenes.

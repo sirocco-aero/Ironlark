@@ -26,8 +26,11 @@ Open fidelity gaps against the source:
 
 - **Fog**: the source's scattering volume now renders (patch 0008), shadowed
   by the canopy bake. Still to do: robot `Camera` devices, and calibration
-  against `./loiter render-reference` (needs a high-RAM machine).
-- **Ground cover**: the source's full fern, grass, moss and rock layers.
+  against `./loiter render-reference`, which needs more than ~26 GB RAM even
+  with the trees' twigs kept instanced.
+- **Ground cover**: done. All 55,277 source placements, instanced, with the
+  source's camera-distance LODs (patch 0009). The export used to lose most of
+  them: the source picks LODs by distance to a camera it never loaded.
 - **Terrain**: four 4K baked tiles (60 m each). The source tiles its ground
   materials under masks; matching that needs a Webots detail-map patch, and
   would be sharper up close with far less VRAM.

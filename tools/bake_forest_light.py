@@ -8,7 +8,7 @@ import argparse,json,math,sys
 from pathlib import Path
 import bpy
 import numpy as np
-from mathutils import Matrix,Vector
+from mathutils import Matrix,Quaternion,Vector
 
 p=argparse.ArgumentParser();p.add_argument('--world',required=True);p.add_argument('--out',required=True)
 a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);world=Path(a.world).resolve();out=Path(a.out).resolve()
@@ -44,11 +44,38 @@ def mesh(url,texture):
  bpy.data.objects.remove(obj,do_unlink=True);meshes[key]=data
  return data
 
+def instancer():
+ """One Geometry Nodes tree instancing a prototype on points: Cycles then holds
+ each mesh once and each placement as an instance, not as a separate object."""
+ g=bpy.data.node_groups.new('instancer','GeometryNodeTree')
+ g.interface.new_socket('Geometry',in_out='INPUT',socket_type='NodeSocketGeometry')
+ g.interface.new_socket('Prototype',in_out='INPUT',socket_type='NodeSocketObject')
+ g.interface.new_socket('Geometry',in_out='OUTPUT',socket_type='NodeSocketGeometry')
+ ns,ls=g.nodes,g.links
+ gi,go=ns.new('NodeGroupInput'),ns.new('NodeGroupOutput')
+ info=ns.new('GeometryNodeObjectInfo');info.transform_space='ORIGINAL';info.inputs['As Instance'].default_value=True
+ place=ns.new('GeometryNodeInstanceOnPoints')
+ rot=ns.new('GeometryNodeInputNamedAttribute');rot.data_type='QUATERNION';rot.inputs['Name'].default_value='rot'
+ scl=ns.new('GeometryNodeInputNamedAttribute');scl.data_type='FLOAT_VECTOR';scl.inputs['Name'].default_value='scl'
+ ls.new(gi.outputs['Geometry'],place.inputs['Points']);ls.new(gi.outputs['Prototype'],info.inputs['Object'])
+ ls.new(info.outputs['Geometry'],place.inputs['Instance']);ls.new(rot.outputs['Attribute'],place.inputs['Rotation'])
+ ls.new(scl.outputs['Attribute'],place.inputs['Scale']);ls.new(place.outputs['Instances'],go.inputs['Geometry'])
+ return g
+
 records=json.loads((world/'visual_instances.json').read_text())
-for i,r in enumerate(records):
- ob=bpy.data.objects.new('instance',mesh(r['mesh'],r['texture']));scene.collection.objects.link(ob)
- ob.location=r['translation'];ob.rotation_mode='AXIS_ANGLE';axis=r['rotation'];ob.rotation_axis_angle=(axis[3],*axis[:3]);ob.scale=r['scale']
- if i%3000==0:print('LIGHT_INSTANCES',i,flush=True)
+groups={}
+for r in records:groups.setdefault((r['mesh'],r['texture']),[]).append(r)
+tree=instancer();prototype_socket=tree.interface.items_tree['Prototype'].identifier
+for (url,texture),placed in groups.items():
+ prototype=bpy.data.objects.new('prototype',mesh(url,texture))  # referenced, never linked to the scene
+ points=bpy.data.meshes.new('placements');points.vertices.add(len(placed))
+ points.vertices.foreach_set('co',[c for r in placed for c in r['translation']])
+ quats=[Quaternion(r['rotation'][:3],r['rotation'][3]) for r in placed]
+ points.attributes.new('rot','QUATERNION','POINT').data.foreach_set('value',[c for q in quats for c in q])
+ points.attributes.new('scl','FLOAT_VECTOR','POINT').data.foreach_set('vector',[c for r in placed for c in r['scale']])
+ ob=bpy.data.objects.new('instances',points);scene.collection.objects.link(ob)
+ modifier=ob.modifiers.new('instancer','NODES');modifier.node_group=tree;modifier[prototype_socket]=prototype
+print('LIGHT_INSTANCES',len(records),'in',len(groups),'instancers',flush=True)
 terrain=[]
 for x in range(2):
  for y in range(2):
