@@ -42,10 +42,11 @@ than Cycles lighting the same geometry with the source's lights):
   materials under masks; matching that needs a Webots detail-map patch, and
   would be sharper up close with far less VRAM.
 
-- **River**: the source animates ripples and flow along the river (frame
-  drivers on noise and flow offsets) with volume absorption; ours is a static
-  flat colour. Plan: baked ripple normal maps, flow-aligned UVs, and a Webots
-  patch that scrolls UVs by simulation time in the shader.
+- **River**: the source's is clear water (IOR 1.333, roughness 0) with foam
+  streaks flowing along the river. Patch 0010 renders both, and the export now
+  keeps the flow coordinates, but it stays opaque until reflections exist
+  (screen-space reflections): at grazing angles clear water mirrors the banks
+  and trees, and Webots can only reflect sky.
 - **Real-time shadows** are off: Webots' stencil shadows cost ~7× frame time
   and cannot shadow meshes over ~21,800 triangles. Tree shadows on the ground
   are baked. Revisit with cascaded shadow maps once detail levels land, only
