@@ -125,6 +125,10 @@ DEF LOITER_VIEW Viewpoint {{
   fieldOfView 1.0
   exposure 1.0
   ambientOcclusionRadius 2
+  # The viewer stays over the detailed region and above the ground.
+  boundsMin -100 -15 -20
+  boundsMax 10 95 70
+  groundClearance 0.5
 }}
 Background {{
   skyColor [ 0.70 0.76 0.79 ]
