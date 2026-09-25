@@ -124,7 +124,9 @@ DEF LOITER_VIEW Viewpoint {{
   position {view_pos}
   follow "Loiter Iris"
   fieldOfView 1.0
-  exposure 1.0
+  # The source's view: Filmic "Medium High Contrast" at exposure +1 (x2), and no bloom (Cycles has none).
+  exposure 2.0
+  bloomThreshold -1
   ambientOcclusionRadius 2
   # The viewer stays over the exported region and above the ground.
   boundsMin {bounds_min}

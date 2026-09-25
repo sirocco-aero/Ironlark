@@ -195,7 +195,7 @@ def build_world(skip_export=False):
             missing(f"{prefix}_{face}.hdr")
             for face in ("back", "bottom", "front", "left", "right", "top")
             for prefix in ("sky", "sky_light")
-        ) or missing("sky_light_mean.json", "sky_horizon.json"):
+        ) or missing("sky_light_mean.json", "sky_horizon.json", "sky_phase_radiance.json"):
             blender_stage("sky", "export_forest_sky.py")
     assemble = [
         sys.executable,

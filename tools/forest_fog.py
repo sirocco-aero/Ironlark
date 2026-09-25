@@ -159,6 +159,10 @@ def fog_node(build, out, home):
     if horizon_path.exists():
         values = ", ".join(" ".join(f"{c:.4f}" for c in v) for v in json.loads(horizon_path.read_text()))
         horizon = f"\n  horizonRadiance [ {values} ]"
+    phase_path = build / "sky_phase_radiance.json"
+    if phase_path.exists():
+        values = ", ".join(" ".join(f"{c:.5f}" for c in v) for v in json.loads(phase_path.read_text()))
+        horizon += f"\n  ambientRadiance [ {values} ]"
     center = (FOG_CENTER[0] - home[0], FOG_CENTER[1] - home[1], FOG_CENTER[2])
     color = srgb(FOG_COLOR)
     return f"""Fog {{

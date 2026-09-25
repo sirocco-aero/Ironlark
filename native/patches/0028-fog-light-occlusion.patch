@@ -1,0 +1,281 @@
+diff --git a/resources/nodes/Fog.wrl b/resources/nodes/Fog.wrl
+index 161b4a2..2de5f26 100644
+--- a/resources/nodes/Fog.wrl
++++ b/resources/nodes/Fog.wrl
+@@ -8,6 +8,9 @@
+ # sun occlusion map (R: visibility at the ground, G: ground height between sunOcclusionHeight).
+ # horizonRadiance: linear sky radiance just above the horizon at evenly spaced azimuths from +x,
+ # counterclockwise; far haze converges to it, so it meets the sky at the horizon without a line.
++# ambientRadiance: the sky light the medium scatters along each view direction (the sky integrated
++# against its phase), 9 elevations (-90 to 90 degrees) by 8 azimuths (from +x, counterclockwise);
++# in place of ambientColor, which scatters the same in every direction.
+ 
+ Fog {
+   w3dField SFColor                                                         color              1 1 1
+@@ -24,4 +27,5 @@ Fog {
+   field    SFVec2f                                                         sunOcclusionMax    0 0
+   field    SFVec2f                                                         sunOcclusionHeight 0 0
+   field    MFVec3f                                                         horizonRadiance    []
++  field    MFVec3f                                                         ambientRadiance    []
+ }
+diff --git a/resources/wren/shaders/scattering_fog.frag b/resources/wren/shaders/scattering_fog.frag
+index f180a1f..6d93f60 100644
+--- a/resources/wren/shaders/scattering_fog.frag
++++ b/resources/wren/shaders/scattering_fog.frag
+@@ -30,6 +30,22 @@ uniform vec4 sunDirection1;
+ uniform vec4 sunRadiance1;
+ uniform vec4 occlusionRect;   // xy: world min, zw: world max; zero when absent
+ uniform vec2 occlusionHeight; // ground height encoded by G = 0 and G = 1
++// Baked light visibility layers (Background.lightOcclusion*, see pbr.frag): when present, they
++// light the medium in place of the sun occlusion map.
++uniform sampler2DArray lightOcclusion;
++layout(std140) uniform Shadows {
++  mat4 lightViewProjection[3];
++  vec4 splits;
++  vec4 texelSizes;
++  vec4 params;
++  vec4 occlusionRect;
++  vec4 occlusionParams;
++  vec4 occlusionHeights[2];
++}
++shadows;
++
++uniform vec4 ambientTable[72];  // scattered sky light, 9 elevations (-90..90) x 8 azimuths; w: 1 when given
++
+ uniform vec4 horizon[16];     // rgb: radiance just above the horizon, azimuth i * 22.5 deg; w: 1 when given
+ 
+ const float PI = 3.14159265359;
+@@ -50,6 +66,19 @@ vec3 horizonRadiance(vec3 direction, vec3 fallback) {
+ 
+ // Full inside the box; outside, decaying exponentially with the distance to it (boxFalloff),
+ // so the medium has no hard faces: from above, near-level rays gather haze towards the horizon.
++// Sky light scattered along a view direction: the table, bilinear; without it, the isotropic ambient.
++vec3 ambientRadiance(vec3 direction) {
++  if (ambientTable[0].w <= 0.0)
++    return ambient.rgb;
++  float e = clamp((asin(clamp(direction.z, -1.0, 1.0)) / PI + 0.5) * 8.0, 0.0, 8.0);
++  float a = mod(atan(direction.y, direction.x) / (2.0 * PI) * 8.0 + 8.0, 8.0);
++  int e0 = min(int(e), 7), a0 = int(a) % 8, a1 = (a0 + 1) % 8;
++  float fe = e - float(e0), fa = fract(a);
++  vec3 low = mix(ambientTable[e0 * 8 + a0].rgb, ambientTable[e0 * 8 + a1].rgb, fa);
++  vec3 high = mix(ambientTable[(e0 + 1) * 8 + a0].rgb, ambientTable[(e0 + 1) * 8 + a1].rgb, fa);
++  return mix(low, high, fe);
++}
++
+ float density(vec3 p) {
+   if (boxMin.w <= 0.0 || boxMax.w <= 0.0)
+     return 1.0;
+@@ -77,6 +106,32 @@ float groundHeight(vec2 p) {
+ 
+ // Follow the sun ray from p down to the ground, where the canopy bake stored
+ // how much sunlight gets through.
++// As bakedVisibility() in pbr.frag, at p: R sky, G second sun, B main sun, A overhead.
++vec4 bakedVisibility(vec3 p) {
++  int count = int(shadows.occlusionParams.x);
++  if (count <= 0)
++    return vec4(1.0);
++  vec2 uv = (p.xy - shadows.occlusionRect.xy) / (shadows.occlusionRect.zw - shadows.occlusionRect.xy);
++  if (shadows.occlusionParams.w > 0.0)
++    uv = 1.0 - abs(mod(uv, 2.0) - 1.0);
++  else if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
++    return vec4(1.0);
++  float ground = textureLod(lightOcclusion, vec3(uv, float(count)), 0.0).r;
++  float height = p.z - mix(shadows.occlusionParams.y, shadows.occlusionParams.z, ground);
++  if (height <= shadows.occlusionHeights[0][0])
++    return textureLod(lightOcclusion, vec3(uv, 0.0), 0.0);
++  for (int k = 1; k < count; ++k) {
++    float top = shadows.occlusionHeights[k / 4][k % 4];
++    if (height < top) {
++      float bottom = shadows.occlusionHeights[(k - 1) / 4][(k - 1) % 4];
++      return mix(textureLod(lightOcclusion, vec3(uv, float(k - 1)), 0.0), textureLod(lightOcclusion, vec3(uv, float(k)), 0.0),
++                 (height - bottom) / (top - bottom));
++    }
++  }
++  float last = shadows.occlusionHeights[(count - 1) / 4][(count - 1) % 4];
++  return mix(textureLod(lightOcclusion, vec3(uv, float(count - 1)), 0.0), vec4(1.0), clamp((height - last) / 10.0, 0.0, 1.0));
++}
++
+ float sunVisibility(vec3 p, vec3 toSun) {
+   if (occlusionRect.z <= occlusionRect.x || toSun.z <= 0.01)
+     return 1.0;
+@@ -130,21 +185,27 @@ void main() {
+   // Near the viewer, steps sample the canopy's sun occlusion; farther, out to the horizon,
+   // a few unoccluded steps: haze thickens to the horizon instead of stopping at a distance.
+   float tNear = min(tEnd, max(tStart, MAX_DISTANCE * rayScale));
++  vec3 skyIn = ambientRadiance(direction);
+   float stepLength = (tNear - tStart) / float(STEPS);
+   float offset = dither(gl_FragCoord.xy);
+   vec3 transmittance = vec3(1.0);
+   vec3 inScattered = vec3(0.0);
+   for (int i = 0; i < STEPS; ++i) {
+     vec3 position = origin + direction * (tStart + (float(i) + offset) * stepLength);
+-    vec3 source = ambient.rgb + phaseRadiance0 * sunVisibility(position, sunDirection0.xyz) +
+-                  phaseRadiance1 * sunVisibility(position, sunDirection1.xyz);
++    vec3 source;
++    if (shadows.occlusionParams.x > 0.0) {  // sun 0 casts the shadow maps (B), sun 1 does not (G)
++      vec4 visible = bakedVisibility(position);
++      source = skyIn * visible.r + phaseRadiance0 * visible.b + phaseRadiance1 * visible.g;
++    } else
++      source = skyIn + phaseRadiance0 * sunVisibility(position, sunDirection0.xyz) +
++               phaseRadiance1 * sunVisibility(position, sunDirection1.xyz);
+     // Exact integral of a constant source over the step: (1 - T_step) * source.
+     vec3 stepTransmittance = exp(-sigma * density(position) * stepLength);
+     inScattered += transmittance * (1.0 - stepTransmittance) * source;
+     transmittance *= stepTransmittance;
+   }
+   float farStep = (tEnd - tNear) / float(FAR_STEPS);
+-  vec3 farSource = horizonRadiance(direction, ambient.rgb + phaseRadiance0 + phaseRadiance1);
++  vec3 farSource = horizonRadiance(direction, skyIn + phaseRadiance0 + phaseRadiance1);
+   for (int i = 0; i < FAR_STEPS && farStep > 0.0; ++i) {
+     vec3 stepTransmittance = exp(-sigma * density(origin + direction * (tNear + (float(i) + offset) * farStep)) * farStep);
+     inScattered += transmittance * (1.0 - stepTransmittance) * farSource;
+diff --git a/src/webots/nodes/WbFog.cpp b/src/webots/nodes/WbFog.cpp
+index cac09ba..22334e7 100644
+--- a/src/webots/nodes/WbFog.cpp
++++ b/src/webots/nodes/WbFog.cpp
+@@ -51,6 +51,7 @@ void WbFog::init() {
+   mSunOcclusionMax = findSFVector2("sunOcclusionMax");
+   mSunOcclusionHeight = findSFVector2("sunOcclusionHeight");
+   mHorizonRadiance = findMFVector3("horizonRadiance");
++  mAmbientRadiance = findMFVector3("ambientRadiance");
+ }
+ 
+ double WbFog::density() const {
+@@ -85,6 +86,14 @@ const WbVector3 &WbFog::horizonRadiance(int index) const {
+   return mHorizonRadiance->item(index);
+ }
+ 
++int WbFog::ambientRadianceCount() const {
++  return mAmbientRadiance->size();
++}
++
++const WbVector3 &WbFog::ambientRadiance(int index) const {
++  return mAmbientRadiance->item(index);
++}
++
+ const WbRgb &WbFog::ambientColor() const {
+   return mAmbientColor->value();
+ }
+diff --git a/src/webots/nodes/WbFog.hpp b/src/webots/nodes/WbFog.hpp
+index 261c5fb..387cbbb 100644
+--- a/src/webots/nodes/WbFog.hpp
++++ b/src/webots/nodes/WbFog.hpp
+@@ -62,6 +62,8 @@ public:
+   const WbVector2 &sunOcclusionHeight() const;
+   int horizonCount() const;
+   const WbVector3 &horizonRadiance(int index) const;
++  int ambientRadianceCount() const;
++  const WbVector3 &ambientRadiance(int index) const;
+ 
+   QStringList fieldsToSynchronizeWithW3d() const override;
+ 
+@@ -96,6 +98,7 @@ private:
+   WbSFVector2 *mSunOcclusionMax;
+   WbSFVector2 *mSunOcclusionHeight;
+   WbMFVector3 *mHorizonRadiance;
++  WbMFVector3 *mAmbientRadiance;
+ 
+   // other variables
+   WrSceneFogType mWrenFogType;
+diff --git a/src/webots/nodes/WbViewpoint.cpp b/src/webots/nodes/WbViewpoint.cpp
+index cf4065f..21e07e1 100644
+--- a/src/webots/nodes/WbViewpoint.cpp
++++ b/src/webots/nodes/WbViewpoint.cpp
+@@ -1289,6 +1289,14 @@ void WbViewpoint::updateScatteringFog() {
+   medium.boxMin[3] = bounded ? 1.0f : 0.0f;
+   medium.boxMax[3] = fog->boxFalloff();
+ 
++  // Scattered sky light per view direction: the 9 x 8 table as given.
++  if (fog->ambientRadianceCount() == 72)
++    for (int i = 0; i < 72; ++i) {
++      for (int c = 0; c < 3; ++c)
++        medium.ambientTable[i][c] = fog->ambientRadiance(i)[c];
++      medium.ambientTable[i][3] = 1.0f;
++    }
++
+   // The horizon's radiance, resampled to 16 azimuths.
+   const int horizonCount = fog->horizonCount();
+   for (int i = 0; i < 16; ++i) {
+diff --git a/src/webots/wren/WbWrenScatteringFog.cpp b/src/webots/wren/WbWrenScatteringFog.cpp
+index 7abb89c..8611563 100644
+--- a/src/webots/wren/WbWrenScatteringFog.cpp
++++ b/src/webots/wren/WbWrenScatteringFog.cpp
+@@ -134,5 +134,8 @@ void WbWrenScatteringFog::applyParametersToWren() {
+   for (int i = 0; i < 16; ++i)
+     wr_post_processing_effect_pass_set_program_parameter(mPass, WbWrenShaders::horizonUniformName(i),
+                                                          reinterpret_cast<const char *>(mMedium.horizon[i]));
++  for (int i = 0; i < 72; ++i)
++    wr_post_processing_effect_pass_set_program_parameter(mPass, WbWrenShaders::ambientTableUniformName(i),
++                                                         reinterpret_cast<const char *>(mMedium.ambientTable[i]));
+   WbWrenOpenGlContext::doneWren();
+ }
+diff --git a/src/webots/wren/WbWrenScatteringFog.hpp b/src/webots/wren/WbWrenScatteringFog.hpp
+index e82a1a9..3321cf3 100644
+--- a/src/webots/wren/WbWrenScatteringFog.hpp
++++ b/src/webots/wren/WbWrenScatteringFog.hpp
+@@ -42,6 +42,7 @@ public:
+     float occlusionRect[4];    // world min xy, max xy of the occlusion map; zero when absent
+     float occlusionHeight[2];  // ground heights encoded by G = 0 and G = 1
+     float horizon[16][4];      // radiance at the horizon, azimuth i * 22.5 deg from +x; w: 1 when given
++    float ambientTable[72][4];  // scattered sky light, 9 elevations x 8 azimuths; w: 1 when given
+     QString occlusionPath;
+   };
+   void update(const Medium &medium);
+diff --git a/src/webots/wren/WbWrenShaders.cpp b/src/webots/wren/WbWrenShaders.cpp
+index 701711b..d46380f 100644
+--- a/src/webots/wren/WbWrenShaders.cpp
++++ b/src/webots/wren/WbWrenShaders.cpp
+@@ -20,6 +20,8 @@
+ #include <wren/glsl_layout.h>
+ #include <wren/shader_program.h>
+ 
++#include <string>
++#include <vector>
+ #include <QtCore/QByteArray>
+ #include <QtCore/QFileInfo>
+ #include <QtCore/QTime>
+@@ -573,6 +575,14 @@ const char *WbWrenShaders::horizonUniformName(int index) {
+   return names[index];
+ }
+ 
++const char *WbWrenShaders::ambientTableUniformName(int index) {
++  static std::vector<std::string> names;
++  if (names.empty())
++    for (int i = 0; i < 72; ++i)
++      names.push_back("ambientTable[" + std::to_string(i) + "]");
++  return names[index].c_str();
++}
++
+ WrShaderProgram *WbWrenShaders::scatteringFogShader() {
+   if (!gShaders[SHADER_SCATTERING_FOG]) {
+     WrShaderProgram *program = wr_shader_program_new();
+@@ -582,6 +592,7 @@ WrShaderProgram *WbWrenShaders::scatteringFogShader() {
+     wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE1);  // depth
+     wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE2);  // sun occlusion
+     wr_shader_program_use_uniform_buffer(program, WR_GLSL_LAYOUT_UNIFORM_BUFFER_CAMERA_TRANSFORMS);
++    wr_shader_program_use_uniform_buffer(program, WR_GLSL_LAYOUT_UNIFORM_BUFFER_SHADOWS);  // light occlusion
+ 
+     const float zero4[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+     const float zero2[2] = {0.0f, 0.0f};
+@@ -594,6 +605,9 @@ WrShaderProgram *WbWrenShaders::scatteringFogShader() {
+     for (int i = 0; i < 16; ++i)
+       wr_shader_program_create_custom_uniform(program, horizonUniformName(i), WR_SHADER_PROGRAM_UNIFORM_TYPE_VEC4F,
+                                               reinterpret_cast<const char *>(zero4));
++    for (int i = 0; i < 72; ++i)
++      wr_shader_program_create_custom_uniform(program, ambientTableUniformName(i), WR_SHADER_PROGRAM_UNIFORM_TYPE_VEC4F,
++                                              reinterpret_cast<const char *>(zero4));
+ 
+     buildShader(program, QFileInfo("gl:shaders/pass_through.vert"), QFileInfo("gl:shaders/scattering_fog.frag"));
+   }
+diff --git a/src/webots/wren/WbWrenShaders.hpp b/src/webots/wren/WbWrenShaders.hpp
+index 05b03c7..c925c1b 100644
+--- a/src/webots/wren/WbWrenShaders.hpp
++++ b/src/webots/wren/WbWrenShaders.hpp
+@@ -44,6 +44,7 @@ namespace WbWrenShaders {
+   WrShaderProgram *hdrResolveShader();
+   WrShaderProgram *scatteringFogShader();
+   const char *horizonUniformName(int index);  // scattering fog's horizon[index]
++  const char *ambientTableUniformName(int index);  // scattering fog's ambientTable[index]
+   WrShaderProgram *iblDiffuseIrradianceBakingShader();
+   WrShaderProgram *iblSpecularIrradianceBakingShader();
+   WrShaderProgram *iblBrdfBakingShader();

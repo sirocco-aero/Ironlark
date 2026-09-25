@@ -96,7 +96,9 @@ for x,y,ob in terrain:
 # Light visibility layers (Webots Background.lightOcclusion*, patch 0026): at heights above the
 # ground, how much of the sky (R), the second sun (G), the main sun (B) and the sky overhead (A:
 # a 30 degree cone, for smooth reflections seen from above) reaches a surface facing up, through
-# the real foliage. R: diffuse light under a uniform white sky; G, B, A: the SHADOW pass of that
+# the real foliage. R: diffuse light from the source's lighting sky (the Nishita sky, x0.7, as
+# tools/export_forest_sky.py exports it) over that of an open plane: under a sunset sky the canopy
+# hides the bright low sky first, so a uniform sky overstated it. G, B, A: the SHADOW pass of that
 # sun alone (1 lit, 0 shadowed).
 LAYERS=[0.0,3.0,8.0,16.0,28.0];RES=512
 second=bpy.data.objects.new('second sun',bpy.data.lights.new('second sun','SUN'));scene.collection.objects.link(second)
@@ -105,16 +107,34 @@ second.rotation_euler=Vector((-.148121,-.845642,-.512786)).to_track_quat('-Z','Y
 overhead=bpy.data.objects.new('overhead',bpy.data.lights.new('overhead','SUN'));scene.collection.objects.link(overhead)
 overhead.data.angle=math.radians(30);overhead.data.energy=0  # straight down: default orientation
 background=scene.world.node_tree.nodes['Background'];background.inputs[0].default_value=(1,1,1,1)
+source=out.parent/'pine-forest/source/polyhaven_pine_fir_forest.blend'
+with bpy.data.libraries.load(str(source),link=False) as (_,data):data.worlds=['belfast_sunset_puresky']
+sky_world=data.worlds[0];mix=next(n for n in sky_world.node_tree.nodes if n.type=='MIX_SHADER')
+for link in list(mix.inputs[0].links):sky_world.node_tree.links.remove(link)
+mix.inputs[0].default_value=0.0  # every ray sees the lighting sky
+dark_world=scene.world
+def luminance(px):return px[...,0]*.2126+px[...,1]*.7152+px[...,2]*.0722
 layer_img=bpy.data.images.new('layer visibility',width=RES,height=RES,float_buffer=True);layer_img.colorspace_settings.name='Non-Color'
 target.image=layer_img
 def bake(ob,kind,samples):
  scene.cycles.samples=samples
  for selected in bpy.context.selected_objects:selected.select_set(False)
  ob.select_set(True);bpy.context.view_layer.objects.active=ob
- if kind=='sky':bpy.ops.object.bake(type='DIFFUSE',pass_filter={'DIRECT'})
+ if kind=='sky':
+  energies=[(lamp,lamp.data.energy) for lamp in (sun,second,overhead)]
+  for lamp,_ in energies:lamp.data.energy=0
+  scene.world=sky_world;bpy.ops.object.bake(type='DIFFUSE',pass_filter={'DIRECT'});scene.world=dark_world
+  for lamp,energy in energies:lamp.data.energy=energy
  else:bpy.ops.object.bake(type='SHADOW')
  px=np.empty(RES*RES*4,dtype=np.float32);layer_img.pixels.foreach_get(px)
- return px.reshape(RES,RES,4)[::-1,:,0].copy()
+ px=px.reshape(RES,RES,4)[::-1]
+ return (luminance(px) if kind=='sky' else px[...,0]).copy()
+# The lighting sky on an open, level plane far above everything: what R divides by.
+bpy.ops.mesh.primitive_plane_add(size=10,location=(0,0,5000));open_plane=bpy.context.object
+open_plane.data.materials.append(materials[''])
+open_sky=float(bake(open_plane,'sky',64).mean())
+bpy.data.objects.remove(open_plane,do_unlink=True)
+print('LIGHT_OPEN_SKY',open_sky,flush=True)
 for x,y,ob in terrain:
  result=np.zeros((len(LAYERS),RES,RES,4),np.float32)
  for k,height in enumerate(LAYERS):
@@ -122,8 +142,8 @@ for x,y,ob in terrain:
   if height>0:
    data=ob.data.copy();data.transform(Matrix.Translation((0,0,height)))
    layer=bpy.data.objects.new(f'layer_{height}',data);scene.collection.objects.link(layer)
-  background.inputs[1].default_value=1;sun.data.energy=0;second.data.energy=0
-  result[k,:,:,0]=bake(layer,'sky',32)
+  background.inputs[1].default_value=0;sun.data.energy=0;second.data.energy=0
+  result[k,:,:,0]=bake(layer,'sky',32)/open_sky
   background.inputs[1].default_value=0;second.data.energy=1
   result[k,:,:,1]=bake(layer,'shadow',8)
   second.data.energy=0;sun.data.energy=1
