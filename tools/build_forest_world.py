@@ -745,6 +745,11 @@ def main():
     for path in build.glob("sky_*.hdr"):
         shutil.copyfile(path, out / "meshes" / path.name)
 
+    from forest_terrain import inner_rect
+
+    forest_backdrop.BOUNDS = inner_rect(build)
+    print("mirrored about", [round(b, 3) for b in forest_backdrop.BOUNDS], flush=True)
+
     # -- tree instances as Transforms --
     print("instances", flush=True)
     authored = json.loads((build / "authored_trees.json").read_text())
@@ -860,7 +865,7 @@ def main():
     from forest_terrain import build_terrain_tiles
 
     manifest["light_signature"] = light_signature(build, out)
-    terrain_shapes, backdrop_shapes = build_terrain_tiles(build, out)
+    terrain_shapes, backdrop_shapes = build_terrain_tiles(build, out, forest_backdrop.BOUNDS)
     backdrop_shapes.append(river_backdrop(out))
     fog = fog_node(build, out, manifest["home_blender"])
     write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, "\n".join(backdrop_shapes), fog)

@@ -75,6 +75,12 @@ def fog_node(build, out, home):
   sunOcclusionHeight {heights[0]:.4f} {heights[1]:.4f}"""
     else:
         occlusion = ""
+    # Far haze meets the visible sky at the horizon (exported with the sky).
+    horizon_path = build / "sky_horizon.json"
+    horizon = ""
+    if horizon_path.exists():
+        values = ", ".join(" ".join(f"{c:.4f}" for c in v) for v in json.loads(horizon_path.read_text()))
+        horizon = f"\n  horizonRadiance [ {values} ]"
     center = (FOG_CENTER[0] - home[0], FOG_CENTER[1] - home[1], FOG_CENTER[2])
     color = srgb(FOG_COLOR)
     return f"""Fog {{
@@ -85,5 +91,5 @@ def fog_node(build, out, home):
   boxCenter {center[0]:.4f} {center[1]:.4f} {center[2]:.4f}
   boxSize 0 0 {FOG_SIZE[2]:.4f}
   boxFalloff {FOG_FALLOFF}
-  ambientColor {' '.join(f'{srgb(c):.4f}' for c in ambient)}{occlusion}
+  ambientColor {' '.join(f'{srgb(c):.4f}' for c in ambient)}{occlusion}{horizon}
 }}"""

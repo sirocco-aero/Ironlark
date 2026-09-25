@@ -15,8 +15,11 @@ import numpy as np
 from forest_view import ORIGIN, REGION, VIEW_MARGIN
 
 # The region in world coordinates, and the part the viewer is fenced into.
-BOUNDS = (REGION[0] - ORIGIN[0], REGION[1] - ORIGIN[0], REGION[2] - ORIGIN[1], REGION[3] - ORIGIN[1])
-FENCE = (BOUNDS[0] + VIEW_MARGIN, BOUNDS[1] - VIEW_MARGIN, BOUNDS[2] + VIEW_MARGIN, BOUNDS[3] - VIEW_MARGIN)
+AREA = (REGION[0] - ORIGIN[0], REGION[1] - ORIGIN[0], REGION[2] - ORIGIN[1], REGION[3] - ORIGIN[1])
+FENCE = (AREA[0] + VIEW_MARGIN, AREA[1] - VIEW_MARGIN, AREA[2] + VIEW_MARGIN, AREA[3] - VIEW_MARGIN)
+# What is mirrored: the rectangle the terrain fully covers (forest_terrain.inner_rect),
+# set by the world builder; the terrain's ragged edges are clipped to it.
+BOUNDS = AREA
 RINGS = 1
 
 

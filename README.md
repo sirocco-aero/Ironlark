@@ -112,6 +112,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0017-impostors** | `Shape.impostor`: instances drawn as quads showing the three captured views (8 × 8 hemi-octahedral atlas) nearest the camera's direction, lit from captured mean normals, with per-texel depth for the depth buffer and shadows. Trees past 150 m use them. | backdrop 59 → 20 ms per step (12 ms without backdrop); impostors ≈ full trees within 4% |
 | **0018-fog-horizon** | `Fog.boxFalloff`: density fades to zero over that distance inside the box's bounded faces, so the fog layer's top is soft. Past the 400 m marched with canopy shadow, a few unshadowed steps carry the haze to the horizon. From above, the layer's top showed as a hard line against the sky. | — |
 | **0019-white-foam** | `flowFoam` foam is white and opaque, and its bump blends with the flat normal by the Bump node's strength, as in the source. Foam had only bumped normals: dark streaks with dark rims. | — |
+| **0020-horizon-haze** | `Fog.horizonRadiance`: the visible sky just above the horizon, by azimuth; far haze converges to it, so haze below the horizon meets the sky above it. It converged to the medium's ambient light, bluer and darker, and a hard line showed from altitude. | — |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,

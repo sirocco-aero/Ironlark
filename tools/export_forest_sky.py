@@ -8,6 +8,7 @@ the panoramas are then resampled into cube faces:
   sky_{face}.hdr        what the camera sees
   sky_light_{face}.hdr  what lights the scene (image-based lighting)
   sky_light_mean.json   its mean radiance over the sphere (linear RGB)
+  sky_horizon.json      the visible sky just above the horizon, 16 azimuths (linear RGB)
 """
 import argparse
 import json
@@ -78,6 +79,22 @@ def face_directions(name, size):
     return d / np.linalg.norm(d, axis=-1, keepdims=True)
 
 
+def write_hdr(path, rgb):
+    """Radiance RGBE, rows from the top, values as given: Blender's own save applies the
+    display transform, which left the sky sRGB-encoded (2.4x too bright at 0.18)."""
+    rgb = np.maximum(rgb.astype(np.float64), 0)
+    peak = rgb.max(axis=-1)
+    mantissa, exponent = np.frexp(peak)
+    scale = np.where(peak > 1e-32, mantissa * 256 / np.maximum(peak, 1e-300), 0)
+    rgbe = np.zeros(rgb.shape[:2] + (4,), np.uint8)
+    rgbe[..., :3] = np.clip(rgb * scale[..., None], 0, 255).astype(np.uint8)
+    rgbe[..., 3] = np.where(peak > 1e-32, exponent + 128, 0)
+    height, width = rgb.shape[:2]
+    with open(path, "wb") as stream:
+        stream.write(f"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {height} +X {width}\n".encode())
+        stream.write(rgbe.tobytes())
+
+
 def cube(pixels, prefix, size):
     height, width = pixels.shape[:2]
     for name in WEBOTS_FACES:
@@ -90,17 +107,27 @@ def cube(pixels, prefix, size):
         ix1, iy1 = (ix + 1) % width, np.minimum(iy + 1, height - 1)
         color = ((pixels[iy, ix] * (1 - fx) + pixels[iy, ix1] * fx) * (1 - fy)
                  + (pixels[iy1, ix] * (1 - fx) + pixels[iy1, ix1] * fx) * fy)
-        color[..., 3] = 1
-        face = bpy.data.images.new(name, width=size, height=size, float_buffer=True)
-        face.pixels.foreach_set(color[::-1].astype(np.float32).ravel())  # Blender rows run bottom up
-        face.file_format = "HDR"
-        face.filepath_raw = str(out / f"{prefix}_{name}.hdr")
-        face.save()
-        bpy.data.images.remove(face)
+        write_hdr(out / f"{prefix}_{name}.hdr", color[..., :3])
+
+
+def horizon(pixels, count=16, low=0.5, high=1.5):
+    """Mean radiance between low and high degrees above the horizon, at count azimuths
+    from +x counterclockwise (Fog.horizonRadiance)."""
+    height, width = pixels.shape[:2]
+    rows = slice(int((low / 180 + 0.5) * height), int((high / 180 + 0.5) * height) + 1)  # rows from the bottom
+    band = pixels[rows, :, :3].mean(0)
+    samples = []
+    for i in range(count):
+        column = int(((0.5 - i / count) * width) % width)
+        around = [(column + k) % width for k in range(-width // (4 * count), width // (4 * count) + 1)]
+        samples.append(band[around].mean(0).tolist())
+    return samples
 
 
 mix = next(n for n in world.node_tree.nodes if n.type == "MIX_SHADER")
-cube(panorama("camera", 2048), "sky", 512)
+camera_sky = panorama("camera", 2048)
+cube(camera_sky, "sky", 512)
+(out / "sky_horizon.json").write_text(json.dumps(horizon(camera_sky)))
 # Lighting rays see the first mix input, the Nishita sky.
 for link in list(mix.inputs[0].links):
     world.node_tree.links.remove(link)

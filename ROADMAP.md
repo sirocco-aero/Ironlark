@@ -20,22 +20,23 @@ Rejected: Kenney Nature Kit (look).
 Matched to the source: Filmic "Medium High Contrast" view, both suns (strength,
 color, direction), the camera-visible sky (HDRI × 0.2 with its rotation), the
 lighting sky (Nishita × 0.7), and HD (1K) object textures downsampled from the
-source's originals.
+source's originals. Both skies are written as linear radiance; Blender's own HDR
+save had stored them display-encoded (2.4× too bright at mid-grey).
 
 The world has no visible end. The viewer is fenced inside the exported source
 terrain (203 × 200 m, patch 0012). Beyond it, the region mirrored across each
-edge: ground and river truly mirrored (continuous at the seams), trees and cover
+edge of the rectangle the terrain fully covers (its edges are ragged by up to 3 m): ground and river truly mirrored (continuous at the seams), trees and cover
 at their mirrored places but turned, so none faces its twin
 (`tools/forest_backdrop.py`). Trees past 150 m are impostors captured from the
 trees as drawn (`tools/bake_impostors.py`, patch 0017). The fog is a layer, so it
 has no walls (patch 0014).
 
 Open fidelity gaps against the source (Cycles lighting the same geometry with the
-source's lights: 1.0–2.3× brighter at the pinned views):
+source's lights: 0.85–1.9× as bright at the pinned views):
 
 - **Sky occlusion**: every surface sees the whole sky; under the canopy the
   source sees little of it. With the second sun (strength 1 of 6) unshadowed,
-  shaded ground stays too bright (2.2× at the drone's view).
+  shaded ground stays too bright (the drone's view is 1.9×).
 - **Fog**: robot `Camera` devices lack it; calibrate against
   `./loiter render-reference` (needs more than ~26 GB RAM).
 - **Terrain**: four 4K baked tiles (~100 m each). The source tiles its ground
