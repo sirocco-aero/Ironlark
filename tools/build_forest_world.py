@@ -919,6 +919,7 @@ def main():
     limit_textures(out / "meshes")
     bleed_alpha(out / "meshes")
     bleed_normals(out)
+    compress_textures(build, out)
     print("wrote", out / "pine_forest.wbt", flush=True)
 
 
@@ -998,6 +999,62 @@ def drop_back_copies(path):
     if dropped:
         path.write_text("".join(kept))
     return dropped
+
+
+def write_bc7_dds(image, path):
+    """DDS (DX10 header, BC7) with a box-filtered mip chain, as Webots would generate."""
+    import struct
+
+    import etcpak
+
+    rgba = image.convert("RGBA")
+    alpha = rgba.getchannel("A").getextrema()[0] < 250
+    levels, level = [], rgba
+    while True:
+        w, h = level.size
+        block = level if w % 4 == 0 and h % 4 == 0 else level.resize((max(4, w), max(4, h)), Image.Resampling.BOX)
+        levels.append(etcpak.compress_bc7(np.ascontiguousarray(np.asarray(block)).tobytes(), *block.size))
+        if w == 1 and h == 1:
+            break
+        level = level.resize((max(1, w // 2), max(1, h // 2)), Image.Resampling.BOX)
+    width, height = rgba.size
+    header = struct.pack("<4s7I44x", b"DDS ", 124, 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | 0x80000, height, width,
+                         len(levels[0]), 0, len(levels))
+    header += struct.pack("<2I4s5I", 32, 0x4 | (0x1 if alpha else 0), b"DX10", 0, 0, 0, 0, 0)
+    header += struct.pack("<5I", 0x1000 | 0x400000 | 0x8, 0, 0, 0, 0)
+    header += struct.pack("<5I", 98, 3, 0, 1, 0)  # BC7_UNORM, 2D texture, one of it
+    path.write_bytes(header + b"".join(levels))
+
+
+# BC7 is visually lossless on these textures (41-47 dB) but not on the terrain's fine
+# noise (22-32 dB with this encoder): the terrain stays uncompressed.
+def compress_textures(build, out):
+    """Webots patch 0024 loads BC7 DDS: a quarter of the RGBA8 memory, no CPU copy kept.
+    Each power-of-two PNG the world uses becomes a DDS beside it (the PNG stays for the
+    Blender tools), cached by content in the build folder."""
+    path = out / "pine_forest.wbt"
+    world = path.read_text()
+    cache = build / "bc7"
+    cache.mkdir(exist_ok=True)
+    saved = 0
+    for url in sorted(set(re.findall(r'url "(meshes/[^"]+\.png)"', world))):
+        if Path(url).name.startswith("terrain_"):
+            continue
+        source = out / url
+        with Image.open(source) as image:
+            w, h = image.size
+            if w & (w - 1) or h & (h - 1) or min(w, h) < 64:
+                continue
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()[:24]
+            cached = cache / f"{digest}.dds"
+            if not cached.exists():
+                write_bc7_dds(image, cached)
+        dds = source.with_suffix(".dds")
+        shutil.copyfile(cached, dds)
+        world = world.replace(f'url "{url}"', f'url "{url[:-4]}.dds"')
+        saved += w * h * 4 * 4 // 3 - dds.stat().st_size
+    path.write_text(world)
+    print("compressed textures: saves", saved // 2**20, "MB of graphics memory", flush=True)
 
 
 def bleed_alpha(folder):

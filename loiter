@@ -65,6 +65,7 @@ def setup():
         str(ROOT / ".venv/bin/python"),
         "numpy==2.2.6",
         "Pillow==12.3.0",
+        "etcpak==0.9.15",
     )
     print("Setup complete. Run ./loiter doctor, then ./loiter run.")
 

@@ -116,6 +116,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0021-fog-falloff-outside** | `boxFalloff` now thins density outside the box, exponentially, instead of inside it: the source's fog stays whole, and from above near-level rays gather haze towards the horizon. | — |
 | **0022-instance-cells** | Instances sorted into 64 m cells; whole cells are culled by frustum and distance band before any instance is tested. The backdrop holds 1.5M tree copies before thinning. | — |
 | **0023-impostor-early-depth** | Impostor quads sit at the front of their capture sphere, so texel depths only push fragments back, declared with `depth_greater`: the GPU rejects hidden fragments before shading again. | impostors 7.1 → 4.2 ms |
+| **0024-compressed-textures** | `ImageTexture` reads BC7 DDS (DX10 header, mip levels included): a quarter of RGBA8's memory, no CPU copy kept. Cached copies of a compressed texture never regenerate mipmaps (that made the driver decompress them: a 13 s stall). The build compresses every texture but the terrain (`etcpak`; 41–47 dB on those, 22–32 dB on the terrain's fine noise). | GPU 2830 → 2376 MB, RAM 2199 → 1865 MB, frame 23.4 → 22.5 ms |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,

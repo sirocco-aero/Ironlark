@@ -172,7 +172,8 @@ for found in re.finditer(r"instancesUrl", text):
     block = text[start:text.index("\n        }", found.start())]
     def field(name):
         match = re.search(name + r' ImageTexture \{ url "([^"]+)"', block)
-        return args.world / match[1] if match else None
+        # Compressed textures keep their PNG beside them (tools/build_forest_world.py).
+        return args.world / match[1].replace(".dds", ".png") if match else None
 
     if "impostor TRUE" in block:
         continue  # the reference draws the trees themselves at every distance
