@@ -106,6 +106,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0011-cascaded-shadow-maps** | Directional lights cast through three cascaded shadow maps (2048², 100 m), not stencil volumes: any mesh size, alpha masks included, instanced casters culled per cascade at the viewer's LOD. Far cascades are reused until the view leaves them; the near one redraws every frame. | frame 5.7 → 12.3 ms; brightness vs Cycles 1.4–2.3× → 1.15–1.96× |
 | **0012-viewpoint-bounds** | `Viewpoint.boundsMin/boundsMax` and `groundClearance` (a physics ray down to the solid below): mouse navigation and scripts slide along the limits instead of leaving the world. | — |
 | **0013-navigation-distance** | Panning and zooming scale with the distance to what is under the cursor; without a pick Webots used the distance to the world origin, so navigation near it crawled. Now a physics ray finds it (floor 2 m). Instanced shapes no longer draw, stacked at the origin, in passes that cannot place instances (picking caught those phantoms). | — |
+| **0014-fog-layer** | A zero `boxSize` axis leaves the scattering fog unbounded along it; `boxSize 0 0 h` is a horizontal layer. The source's 209 m fog box showed its walls as hard lines from the world's edge. | — |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,
