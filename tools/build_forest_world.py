@@ -134,7 +134,7 @@ DEF LOITER_VIEW Viewpoint {{
 Background {{
   skyColor [ 0.70 0.76 0.79 ]
   {sky_fields}
-  luminosity 1
+  luminosity 1{light_occlusion}
 }}
 {fog}
 # The source's two suns: strength in W/m² as intensity, linear color in sRGB.
@@ -727,7 +727,7 @@ def river_backdrop(out):
     }"""
 
 
-def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, backdrop_shapes, fog):
+def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, backdrop_shapes, fog, light_occlusion=""):
     tree_solids = list(solids)
     tree_solids.extend(colliders)
     view_pos = "4 -5 2.6"
@@ -742,6 +742,7 @@ def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, backdro
             terrain_shapes=terrain_shapes,
             backdrop_shapes=backdrop_shapes,
             sky_fields=sky_fields,
+            light_occlusion=light_occlusion,
             fog=fog,
             bounds_min=f"{REGION[0] - ORIGIN[0] + VIEW_MARGIN:.1f} {REGION[2] - ORIGIN[1] + VIEW_MARGIN:.1f} -50",
             bounds_max=f"{REGION[1] - ORIGIN[0] - VIEW_MARGIN:.1f} {REGION[3] - ORIGIN[1] - VIEW_MARGIN:.1f} {VIEW_CEILING}",
@@ -903,7 +904,11 @@ def main():
     terrain_shapes, backdrop_shapes = build_terrain_tiles(build, out, forest_backdrop.BOUNDS)
     backdrop_shapes.append(river_backdrop(out))
     fog = fog_node(build, out, manifest["home_blender"])
-    write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, "\n".join(backdrop_shapes), fog)
+    from forest_fog import light_occlusion_fields
+
+    light_occlusion = light_occlusion_fields(build, out, manifest["home_blender"], forest_backdrop.BOUNDS)
+    write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, "\n".join(backdrop_shapes), fog,
+                light_occlusion)
     two_sided_materials(out)
     (out / "visual_instances.json").write_text(
         json.dumps(VISUAL_INSTANCES, separators=(",", ":"))
@@ -930,9 +935,10 @@ TEXTURE_LIMIT = 1024
 def limit_textures(folder):
     """Downsample textures above the limit. Terrain tiles span 60 m each and are
     rebuilt separately from the source's tiling ground materials; impostor atlases
-    hold 64 views, each sized to the screen at the impostor distance."""
+    hold 64 views, each sized to the screen at the impostor distance; the light occlusion
+    layers stack five 0.2 m maps."""
     for path in folder.glob("*.png"):
-        if path.name.startswith(("terrain_", "impostor_")):
+        if path.name.startswith(("terrain_", "impostor_", "light_occlusion")):
             continue
         with Image.open(path) as image:
             if max(image.size) <= TEXTURE_LIMIT:

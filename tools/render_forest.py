@@ -40,6 +40,8 @@ def main():
     p.add_argument("--out", required=True)
     p.add_argument("--timeout", type=int, default=240)
     p.add_argument("--webots-home", type=Path, default=SIM / "webots")
+    p.add_argument("--lights", choices=["all", "sky", "main", "secondary"], default="all",
+                   help="one light only, fog off (as tools/render_lighting_reference.py --lights)")
     args = p.parse_args()
     out = Path(args.out).resolve()
     worlds = out / "worlds"
@@ -62,6 +64,15 @@ def main():
     world += """\nRobot {
       controller "forest_preview" supervisor TRUE
     }\n"""
+    if args.lights != "all":
+        world = re.sub(r"\nFog \{.*?\n\}", "", world, flags=re.S)
+        suns = list(re.finditer(r"DirectionalLight \{.*?\n\}", world, flags=re.S))
+        for sun, name in reversed(list(zip(suns, ("main", "secondary")))):
+            if name != args.lights:
+                block = re.sub(r"intensity [\d.]+", "intensity 0", sun.group(0))
+                world = world[:sun.start()] + block + world[sun.end():]
+        if args.lights != "sky":
+            world = world.replace("luminosity 1", "luminosity 0", 1)
     target = worlds / "preview.wbt"
     target.write_text(world)
     env = os.environ.copy()

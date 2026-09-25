@@ -23,6 +23,83 @@ def srgb(linear):
     return 12.92 * linear if linear <= 0.0031308 else 1.055 * linear ** (1 / 2.4) - 0.055
 
 
+def stitch(tiles):
+    """Four baked terrain tiles (bake rows run from high v to low v) as one map, rows
+    increasing with world y."""
+    size = next(iter(tiles.values())).shape[0]
+    stitched = np.zeros((2 * size, 2 * size) + next(iter(tiles.values())).shape[2:], np.float32)
+    for (x, y), tile in tiles.items():
+        stitched[y * size:(y + 1) * size, x * size:(x + 1) * size] = tile[::-1]
+    return stitched
+
+
+def ground_heights(build, home, size):
+    """World rectangle of the terrain bakes, and the ground height over it on a size x size
+    grid (rows from its minimum y)."""
+    xmin, ymin, xmax, ymax = json.loads((build / "terrain_meta.json").read_text())["planar"]
+    world_min = (xmin - home[0], ymin - home[1])
+    world_max = (xmax - home[0], ymax - home[1])
+    # heights.json: legacy (x, z) grid in world x and -y, rows from max z (min y).
+    grid = json.loads((build / "heights.json").read_text())
+    heights = np.array(grid["grid"], np.float32)
+    grid_x = np.linspace(grid["x"][0], grid["x"][1], heights.shape[1])
+    grid_y = np.linspace(-grid["z"][1], -grid["z"][0], heights.shape[0])
+    columns = np.interp(np.linspace(world_min[0], world_max[0], size), grid_x, np.arange(len(grid_x)))
+    rows = np.interp(np.linspace(world_min[1], world_max[1], size), grid_y, np.arange(len(grid_y)))
+    c0, r0 = np.floor(columns).astype(int), np.floor(rows).astype(int)
+    c1, r1 = np.minimum(c0 + 1, len(grid_x) - 1), np.minimum(r0 + 1, len(grid_y) - 1)
+    fc, fr = (columns - c0)[None, :], (rows - r0)[:, None]
+    ground = ((heights[np.ix_(r0, c0)] * (1 - fc) + heights[np.ix_(r0, c1)] * fc) * (1 - fr)
+              + (heights[np.ix_(r1, c0)] * (1 - fc) + heights[np.ix_(r1, c1)] * fc) * fr)
+    return world_min, world_max, ground
+
+
+def fill_holes(layer):
+    """Texels no terrain triangle covers stay black in a bake: give them their neighbours'
+    values, so no surface reads as fully shadowed there."""
+    from build_forest_world import dilate
+
+    hole = ~(layer > 0).any(axis=2)
+    return dilate(layer, (~hole).astype(np.float32), steps=24) if hole.any() else layer
+
+
+def light_occlusion_fields(build, out, home, bounds):
+    """Background fields for the baked light visibility layers (Webots patch 0026):
+    R sky, G second sun, B main sun, A sky overhead, then one more layer holding the ground
+    height in R; stacked top to bottom, each with its top row at the maximum y. Cropped to bounds (xmin, xmax, ymin, ymax), the
+    rectangle the backdrop mirrors about, and mirrored as it is. Empty before the bake."""
+    if not all((build / f"terrain_{x}_{y}_layers.npy").exists() for x in range(2) for y in range(2)):
+        return ""
+    meta = json.loads((build / "light_layers.json").read_text())
+    tiles = {(x, y): np.load(build / f"terrain_{x}_{y}_layers.npy") for x in range(2) for y in range(2)}
+    if any(tile.shape[-1] != 4 for tile in tiles.values()):
+        return ""  # an older bake without the overhead channel: rebaked after this assembly
+    layers = [fill_holes(stitch({k: v[i] for k, v in tiles.items()})) for i in range(len(meta["heights"]))]
+    size = layers[0].shape[0]
+    world_min, world_max, ground = ground_heights(build, home, size)
+    low, high = float(ground.min()), float(ground.max())
+    alpha = (ground - low) / max(high - low, 1e-6)
+    # Crop to the mirrored rectangle (to the texel: 0.2 m).
+    scale = np.array([size / (world_max[0] - world_min[0]), size / (world_max[1] - world_min[1])])
+    c0, c1 = [int(round((b - world_min[0]) * scale[0])) for b in bounds[:2]]
+    r0, r1 = [int(round((b - world_min[1]) * scale[1])) for b in bounds[2:]]
+    c0, r0 = max(c0, 0), max(r0, 0)
+    world_min = (world_min[0] + c0 / scale[0], world_min[1] + r0 / scale[1])
+    world_max = (world_min[0] + (min(c1, size) - c0) / scale[0], world_min[1] + (min(r1, size) - r0) / scale[1])
+    crop = (slice(r0, r1), slice(c0, c1))
+    ground = np.dstack([alpha, alpha, alpha, np.ones_like(alpha)])
+    image = np.concatenate([layer[crop][::-1] for layer in layers + [ground]])
+    Image.fromarray(np.round(np.clip(image, 0, 1) * 255).astype(np.uint8), "RGBA").save(out / "meshes/light_occlusion.png")
+    heights = " ".join(f"{h:g}" for h in meta["heights"])
+    return f"""
+  lightOcclusionUrl [ "meshes/light_occlusion.png" ]
+  lightOcclusionMin {world_min[0]:.4f} {world_min[1]:.4f}
+  lightOcclusionMax {world_max[0]:.4f} {world_max[1]:.4f}
+  lightOcclusionGround {low:.4f} {high:.4f}
+  lightOcclusionHeights [ {heights} ]
+  lightOcclusionMirrored TRUE"""
+
+
 def sun_occlusion(build, out, home):
     """Stitch the canopy bakes into one top-down map in world coordinates.
 
