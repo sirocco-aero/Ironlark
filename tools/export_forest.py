@@ -15,9 +15,9 @@ from pathlib import Path
 
 import bpy
 import numpy as np
-from forest_view import ORIGIN
+sys.path.insert(0, str(Path(__file__).parent))  # Blender does not add the script's folder
+from forest_view import ORIGIN, REGION  # noqa: E402
 
-REGION = (-68.0, 52.0, -100.0, 20.0)
 HOME = ORIGIN
 CLEAR_RADIUS = 9.0
 PAD_RADIUS = 2.5

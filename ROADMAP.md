@@ -22,10 +22,11 @@ color, direction), the camera-visible sky (HDRI × 0.2 with its rotation), the
 lighting sky (Nishita × 0.7), and HD (1K) object textures downsampled from the
 source's originals.
 
-The world has no visible end: the viewer is fenced into the playable region
-(above the ground, inside its bounds, sliding along the limits), and beyond
-the fence the rest of the source's terrain and forest continues at its own
-low detail into the fog and the sky's horizon.
+The world has no visible end. The viewer is fenced inside the exported area,
+above the ground (patch 0012), and the export now covers the whole source
+terrain (203 × 200 m). The source ends 20 m south of home, so beyond its edges
+comes a backdrop: the terrain mirrored across each edge (continuous at the
+seams) and distant forest drawn as impostors, fading into fog and horizon.
 
 Open fidelity gaps against the source (measured: Webots is 1.15–1.96× brighter
 than Cycles lighting the same geometry with the source's lights; 1.4–2.3×

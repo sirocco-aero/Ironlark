@@ -3,6 +3,14 @@
 # Source (Blender) position of the world origin: the drone's home pad.
 ORIGIN = (37.1, -80.0)
 
+# Exported source area (xmin, xmax, ymin, ymax in source coordinates): the whole
+# source terrain (terrain_main is 202.9 x 200 m about the source origin).
+REGION = (-101.5, 101.5, -100.0, 100.0)
+
+# The viewer stays this far inside the exported area, above the ground, below the ceiling.
+VIEW_MARGIN = 5.0
+VIEW_CEILING = 70.0
+
 # Preview cameras in world (ENU) coordinates.
 CAMERAS = {
     "drone": {"eye": [4, -5, 2.6], "target": [0, 0, 0.8]},

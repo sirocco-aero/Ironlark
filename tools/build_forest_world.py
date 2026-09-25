@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
-from forest_view import CAMERAS
+from forest_view import CAMERAS, ORIGIN, REGION, VIEW_CEILING, VIEW_MARGIN
 
 sys.path.insert(
     0, str(Path(__file__).resolve().parents[1] / "controllers/flight_observer")
@@ -125,9 +125,9 @@ DEF LOITER_VIEW Viewpoint {{
   fieldOfView 1.0
   exposure 1.0
   ambientOcclusionRadius 2
-  # The viewer stays over the detailed region and above the ground.
-  boundsMin -100 -15 -20
-  boundsMax 10 95 70
+  # The viewer stays over the exported region and above the ground.
+  boundsMin {bounds_min}
+  boundsMax {bounds_max}
   groundClearance 0.5
 }}
 Background {{
@@ -569,6 +569,8 @@ def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, fog):
             terrain_shapes=terrain_shapes,
             sky_fields=sky_fields,
             fog=fog,
+            bounds_min=f"{REGION[0] - ORIGIN[0] + VIEW_MARGIN:.1f} {REGION[2] - ORIGIN[1] + VIEW_MARGIN:.1f} -50",
+            bounds_max=f"{REGION[1] - ORIGIN[0] - VIEW_MARGIN:.1f} {REGION[3] - ORIGIN[1] - VIEW_MARGIN:.1f} {VIEW_CEILING}",
             pad_y=pad_y,
             drone_y=pad_y + 0.11,
             view_ori=view_ori,

@@ -59,8 +59,18 @@ def sun_occlusion(build, out, home):
 
 
 def fog_node(build, out, home):
-    world_min, world_max, heights = sun_occlusion(build, out, home)
     ambient = json.loads((build / "sky_light_mean.json").read_text())
+    # The first assembly precedes the canopy bake; the lit reassembly adds the occlusion.
+    baked = all((build / f"terrain_{x}_{y}_light.npy").exists() for x in range(2) for y in range(2))
+    if baked:
+        world_min, world_max, heights = sun_occlusion(build, out, home)
+        occlusion = f"""
+  sunOcclusionUrl [ "meshes/sun_occlusion.png" ]
+  sunOcclusionMin {world_min[0]:.4f} {world_min[1]:.4f}
+  sunOcclusionMax {world_max[0]:.4f} {world_max[1]:.4f}
+  sunOcclusionHeight {heights[0]:.4f} {heights[1]:.4f}"""
+    else:
+        occlusion = ""
     center = (FOG_CENTER[0] - home[0], FOG_CENTER[1] - home[1], FOG_CENTER[2])
     color = srgb(FOG_COLOR)
     return f"""Fog {{
@@ -70,9 +80,5 @@ def fog_node(build, out, home):
   anisotropy {FOG_ANISOTROPY}
   boxCenter {center[0]:.4f} {center[1]:.4f} {center[2]:.4f}
   boxSize {FOG_SIZE[0]:.4f} {FOG_SIZE[1]:.4f} {FOG_SIZE[2]:.4f}
-  ambientColor {' '.join(f'{srgb(c):.4f}' for c in ambient)}
-  sunOcclusionUrl [ "meshes/sun_occlusion.png" ]
-  sunOcclusionMin {world_min[0]:.4f} {world_min[1]:.4f}
-  sunOcclusionMax {world_max[0]:.4f} {world_max[1]:.4f}
-  sunOcclusionHeight {heights[0]:.4f} {heights[1]:.4f}
+  ambientColor {' '.join(f'{srgb(c):.4f}' for c in ambient)}{occlusion}
 }}"""
