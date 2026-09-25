@@ -1,0 +1,31 @@
+diff --git a/resources/wren/shaders/shadow_depth.frag b/resources/wren/shaders/shadow_depth.frag
+index bb4e5a6..706f353 100644
+--- a/resources/wren/shaders/shadow_depth.frag
++++ b/resources/wren/shaders/shadow_depth.frag
+@@ -1,6 +1,9 @@
+ #version 330 core
+ 
+-// Alpha-masked texels cast no shadow, exactly as they draw no color (PBRAppearance.alphaCutoff).
++// Alpha-masked materials cast shadow in proportion to their coverage: each shadow texel keeps the
++// surface with probability equal to its (mipmapped) alpha, so filtered lookups let light through
++// foliage as the real needles do. A hard cutoff, boosted at coarse mip levels as the color pass is,
++// made whole crowns opaque to the sun. The pattern is fixed per texel: cascades are texel-snapped.
+ 
+ in vec2 texUv;
+ 
+@@ -23,9 +26,14 @@ material;
+ 
+ void main() {
+   if (alphaMasked && material.alphaCutoff.x > 0.0 && material.baseColorRoughnessMetalnessOcclusionMapFlags.x > 0.0) {
++    // Coverage: the mask at the cutoff where texels are resolved; minified, where a shadow texel
++    // spans several texture texels, their mean alpha.
++    float alpha = texture(inputTextures[0], texUv).a;
+     vec2 texel = texUv * vec2(textureSize(inputTextures[0], 0));
+     float mip = max(0.0, 0.5 * log2(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel)))));
+-    if (texture(inputTextures[0], texUv).a * (1.0 + 0.25 * mip) < material.alphaCutoff.x)
++    float coverage = mix(step(material.alphaCutoff.x, alpha), alpha, smoothstep(0.5, 2.0, mip));
++    float threshold = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
++    if (coverage <= threshold)
+       discard;
+   }
+ }

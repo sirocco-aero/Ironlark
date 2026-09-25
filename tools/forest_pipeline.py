@@ -195,7 +195,7 @@ def build_world(skip_export=False):
             missing(f"{prefix}_{face}.hdr")
             for face in ("back", "bottom", "front", "left", "right", "top")
             for prefix in ("sky", "sky_light")
-        ) or missing("sky_light_mean.json", "sky_horizon.json"):
+        ) or missing("sky_light_mean.json", "sky_horizon.json", "sky_phase_radiance.json"):
             blender_stage("sky", "export_forest_sky.py")
     assemble = [
         sys.executable,
@@ -219,7 +219,7 @@ def build_world(skip_export=False):
             and json.loads(stamp.read_text()).get("signature") == signature
         )
         if not current or any(
-            missing(f"terrain_{x}_{y}_light.npy") for x in range(2) for y in range(2)
+            missing(f"terrain_{x}_{y}_light.npy", f"terrain_{x}_{y}_layers.npy") for x in range(2) for y in range(2)
         ):
             blender_stage("canopy-light", "bake_forest_light.py", "--world", str(world))
             stamp.write_text(json.dumps({"signature": signature}))

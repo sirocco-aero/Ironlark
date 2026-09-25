@@ -41,6 +41,9 @@ p.add_argument("--height", type=int, default=861)
 p.add_argument("--fov", type=float, default=1.0)
 p.add_argument("--samples", type=int, default=128)
 p.add_argument("--views", nargs="*")
+p.add_argument("--no-fog", action="store_true", help="without the source's fog volume")
+p.add_argument("--lights", choices=["all", "sky", "main", "secondary"], default="all",
+               help="light the scene with one of the source's lights only (fog off), to compare components")
 args = p.parse_args(sys.argv[sys.argv.index("--") + 1:])
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -54,8 +57,21 @@ for obj in data.objects:
     scene.collection.objects.link(obj)
     obj.location -= Vector((*ORIGIN, 0))
 scene.world = data.worlds[0]
+if args.no_fog and args.lights == "all":
+    scene.collection.objects.unlink(next(o for o in data.objects if o.name == "fog"))
+if args.lights != "all":
+    # One light alone, fog off: the camera still sees the visible sky (HDRI), lighting only
+    # comes from the chosen source.
+    scene.collection.objects.unlink(next(o for o in data.objects if o.name == "fog"))
+    for sun in data.objects:
+        if sun.type == "LIGHT" and sun.name != f"sun_{args.lights}":
+            sun.data.energy = 0
+    if args.lights != "sky":
+        nodes = scene.world.node_tree.nodes
+        next(n for n in nodes if n.type == "BACKGROUND" and n.name == "Background").inputs["Strength"].default_value = 0
 scene.view_settings.view_transform = "Filmic"
 scene.view_settings.look = "Medium High Contrast"
+scene.view_settings.exposure = 1.0  # the source's main_scene
 scene.render.engine = "CYCLES"
 scene.cycles.samples = args.samples
 scene.cycles.use_denoising = True
@@ -81,8 +97,9 @@ def material(name, base=None, normal=None, roughness=None, alpha_cutoff=None, ba
     bsdf = nodes["Principled BSDF"]
     bsdf.inputs["Metallic"].default_value = 0
     bsdf.inputs["Roughness"].default_value = rough_value
-    if base_color:
-        bsdf.inputs["Base Color"].default_value = (*base_color, 1)
+    if base_color:  # Webots reads PBRAppearance.baseColor as sRGB
+        bsdf.inputs["Base Color"].default_value = (*[c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+                                                     for c in base_color], 1)
     if base:
         tex = nodes.new("ShaderNodeTexImage")
         tex.image = image(base)

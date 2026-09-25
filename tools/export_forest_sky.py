@@ -9,6 +9,7 @@ the panoramas are then resampled into cube faces:
   sky_light_{face}.hdr  what lights the scene (image-based lighting)
   sky_light_mean.json   its mean radiance over the sphere (linear RGB)
   sky_horizon.json      the visible sky just above the horizon, 16 azimuths (linear RGB)
+  sky_phase_radiance.json  sky light the fog scatters along each view direction (9 x 8 grid)
 """
 import argparse
 import json
@@ -139,4 +140,31 @@ latitude = (np.arange(light.shape[0]) + 0.5) / light.shape[0] * math.pi - math.p
 weights = np.cos(latitude)[:, None]
 mean = (light[..., :3] * weights[..., None]).sum((0, 1)) / (weights.sum() * light.shape[1])
 (out / "sky_light_mean.json").write_text(json.dumps([float(c) for c in mean]))
+
+
+def phase_radiance(pixels, anisotropy, elevations=9, azimuths=8):
+    """Sky light a forward-scattering medium sends along each view direction: the integral of
+    L(w) * HG(w . d) over the sphere, for d on an elevation (-90..90) by azimuth (from +x,
+    counterclockwise) grid. Below the horizon the lighting sky is black, as the ground it stands
+    for is dark."""
+    height, width = pixels.shape[:2]
+    lat = (np.arange(height) + 0.5) / height * math.pi - math.pi / 2  # rows from the bottom
+    lon = (0.5 - (np.arange(width) + 0.5) / width) * 2 * math.pi       # u = -atan2(y, x) / 2pi + 1/2
+    lat, lon = np.meshgrid(lat, lon, indexing="ij")
+    w = np.stack([np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)], -1)
+    solid = np.cos(lat) * (math.pi / height) * (2 * math.pi / width)
+    radiance = pixels[..., :3] * solid[..., None]
+    g = anisotropy
+    table = []
+    for e in np.linspace(-math.pi / 2, math.pi / 2, elevations):
+        for a in np.arange(azimuths) * 2 * math.pi / azimuths:
+            d = np.array([math.cos(e) * math.cos(a), math.cos(e) * math.sin(a), math.sin(e)])
+            c = w @ d
+            phase = (1 - g * g) / (4 * math.pi * (1 + g * g - 2 * g * c) ** 1.5)
+            table.append((radiance * phase[..., None]).sum((0, 1)).tolist())
+    return table
+
+
+# The source's fog: Volume Scatter, anisotropy 0.8 (tools/forest_fog.py).
+(out / "sky_phase_radiance.json").write_text(json.dumps(phase_radiance(light, 0.8)))
 print("SKY done", flush=True)

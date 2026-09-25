@@ -20,8 +20,11 @@ Rejected: Kenney Nature Kit (look).
 Matched to the source: Filmic "Medium High Contrast" view, both suns (strength,
 color, direction), the camera-visible sky (HDRI × 0.2 with its rotation), the
 lighting sky (Nishita × 0.7), and HD (1K) object textures downsampled from the
-source's originals. Both skies are written as linear radiance; Blender's own HDR
-save had stored them display-encoded (2.4× too bright at mid-grey).
+source's originals, the source's exposure (+1) and no bloom. Both skies are written
+as linear radiance; Blender's own HDR save had stored them display-encoded (2.4×
+too bright at mid-grey). Light under the canopy comes from baked visibility
+layers traced through the real foliage (`tools/bake_forest_light.py`, patches
+0026–0028).
 
 The world has no visible end. The viewer is fenced inside the exported source
 terrain (203 × 200 m, patch 0012). Beyond it, the region mirrored across each
@@ -36,11 +39,11 @@ with a soft top (patches 0014, 0021) whose far haze meets the sky at the
 horizon (patch 0020). Rendering: 23 ms per step (19 without the far rings).
 
 Open fidelity gaps against the source (Cycles lighting the same geometry with the
-source's lights: 0.85–1.9× as bright at the pinned views):
+source's lights, `tools/render_lighting_reference.py` and `tools/compare_views.py`:
+0.79–1.20× as bright at the pinned views):
 
-- **Sky occlusion**: every surface sees the whole sky; under the canopy the
-  source sees little of it. With the second sun (strength 1 of 6) unshadowed,
-  shaded ground stays too bright (the drone's view is 1.9×).
+- **Bounced light**: Webots has none; under the canopy Cycles' sunlight bounces
+  off leaves and ground. Sun shafts in the haze are also weaker.
 - **Fog**: robot `Camera` devices lack it; calibrate against
   `./loiter render-reference` (needs more than ~26 GB RAM).
 - **Terrain**: four 4K baked tiles (~100 m each). The source tiles its ground
@@ -56,9 +59,8 @@ source's lights: 0.85–1.9× as bright at the pinned views):
 - **LiDAR vs foliage**: range sensors ignore `alphaCutoff`, so twig cards
   would read as solid planes. Fix before LiDAR work.
 
-Known bugs: with `ambientOcclusionRadius 0` the forest view can render only sky
-(a small test world renders fine; the viewpoint's position is right); cause not
-yet found.
+Known bugs: with ambient occlusion off (`ambientOcclusionRadius 0` or the GTAO
+preference) most trees do not draw; cause not yet found.
 
 ### Candidates for later regions
 
@@ -102,10 +104,10 @@ later, each when a capability needs it.
 
 ### 1. Finish the forest's looks
 
-In order: shade under the canopy (sky occlusion; the second sun shadowed),
-river reflections (then clear water), terrain detail maps, fog in `Camera`
-devices. Loose ends: the `ambientOcclusionRadius 0` bug; foliage shimmer if
-opt-in multisampling (patch 0025) proves worth a cheaper form.
+In order: river reflections (then clear water), terrain detail maps, fog in
+`Camera` devices. Loose ends: with ambient occlusion off (`ambientOcclusionRadius
+0` or the GTAO preference) most trees do not draw; foliage shimmer if opt-in
+multisampling (patch 0025) proves worth a cheaper form.
 
 ### 2. Sensor rig and ROS 2
 

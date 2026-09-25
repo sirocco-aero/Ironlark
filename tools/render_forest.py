@@ -40,6 +40,12 @@ def main():
     p.add_argument("--out", required=True)
     p.add_argument("--timeout", type=int, default=240)
     p.add_argument("--webots-home", type=Path, default=SIM / "webots")
+    p.add_argument("--no-fog", action="store_true", help="without the scattering fog")
+    p.add_argument("--fog-density", type=float, help="override the fog's density (0: a medium that does nothing)")
+    p.add_argument("--exposure", type=float, help="override the view's exposure")
+    p.add_argument("--bloom-threshold", type=float, help="override the view's bloom threshold (-1: off)")
+    p.add_argument("--lights", choices=["all", "sky", "main", "secondary"], default="all",
+                   help="one light only, fog off (as tools/render_lighting_reference.py --lights)")
     args = p.parse_args()
     out = Path(args.out).resolve()
     worlds = out / "worlds"
@@ -62,6 +68,22 @@ def main():
     world += """\nRobot {
       controller "forest_preview" supervisor TRUE
     }\n"""
+    if args.lights != "all" or args.no_fog:
+        world = re.sub(r"\nFog \{.*?\n\}", "", world, flags=re.S)
+    if args.lights != "all":
+        suns = list(re.finditer(r"DirectionalLight \{.*?\n\}", world, flags=re.S))
+        for sun, name in reversed(list(zip(suns, ("main", "secondary")))):
+            if name != args.lights:
+                block = re.sub(r"intensity [\d.]+", "intensity 0", sun.group(0))
+                world = world[:sun.start()] + block + world[sun.end():]
+        if args.lights != "sky":
+            world = world.replace("luminosity 1", "luminosity 0", 1)
+    if args.bloom_threshold is not None:
+        world = world.replace("  ambientOcclusionRadius", f"  bloomThreshold {args.bloom_threshold}\n  ambientOcclusionRadius", 1)
+    if args.exposure is not None:
+        world = re.sub(r"\n  exposure [\d.]+", f"\n  exposure {args.exposure}", world, count=1)
+    if args.fog_density is not None:
+        world = re.sub(r"(\nFog \{.*?\n  density )[\d.e-]+", lambda m: m.group(1) + str(args.fog_density), world, flags=re.S)
     target = worlds / "preview.wbt"
     target.write_text(world)
     env = os.environ.copy()
