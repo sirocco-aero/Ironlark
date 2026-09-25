@@ -93,19 +93,30 @@ scale, materials, lighting, terrain seams and collision.
   frame rate.
 - Presentation is the world itself: fullscreen, configured in files.
 
-## Next: perception in a connected world
+## Now: the simulator as a test bench
 
-Goal: a drone that produces useful, time-consistent observations of a small
-connected world. The takeoff check stays the regression gate.
+Goal: a simulator the drone's autonomy can be developed and judged in: the
+source's looks, a drone carrying real sensors, and time-consistent data out
+through ROS 2. The takeoff check stays the regression gate. New scenes come
+later, each when a capability needs it.
 
-### 1. Sensor rig and ROS 2
+### 1. Finish the forest's looks
+
+In order: shade under the canopy (sky occlusion; the second sun shadowed),
+river reflections (then clear water), terrain detail maps, fog in `Camera`
+devices. Loose ends: the `ambientOcclusionRadius 0` bug; foliage shimmer if
+opt-in multisampling (patch 0025) proves worth a cheaper form.
+
+### 2. Sensor rig and ROS 2
 
 Start with 3D LiDAR, IMU and RGB camera. LiDAR and IMU drive first
 localization; the camera serves viewing now and object understanding later.
 First localization must not depend on cave lighting.
 
-- A Loiter vehicle PROTO around the Iris, with sensor poses and settings in
-  versioned config.
+- A Loiter vehicle PROTO around the Iris flight model, with sensor poses and
+  settings in versioned config, and a look to match the forest (the stock Iris
+  looks crude).
+- LiDAR honours `alphaCutoff`: foliage cards must not read as solid planes.
 - ROS 2 Humble with a bridge publishing `/clock`, IMU, point clouds, images,
   camera calibration and transforms. Webots' Python controller and the ROS
   environment stay independently reproducible.
@@ -120,7 +131,12 @@ reads at the right distance and orientation; camera and LiDAR agree; replay
 keeps timestamps and transforms; the flight check, with sensing on, reports its
 added cost.
 
-### 2. Outdoor-to-cave region
+## Later: regions
+
+Added one at a time as the drone's capabilities need them; candidates under
+[Candidates for later regions](#candidates-for-later-regions).
+
+### Outdoor-to-cave region
 
 From [the world](#world): an outdoor home, rocks,
 vegetation and an accessible entrance to a real cave section. The drone departs
@@ -137,7 +153,9 @@ outdoors; it never spawns inside.
 **Done when** the drone takes off outdoors and correctly senses entrance,
 terrain, vegetation and cave walls. Autonomous cave travel is not yet claimed.
 
-### Then: GPS-free flight
+## Next: autonomy
+
+### GPS-free flight
 
 Evaluate LiDAR-inertial odometry on the recordings. Feed pose, velocity,
 uncertainty and health to ArduPilot's external-navigation input. Hover and make
