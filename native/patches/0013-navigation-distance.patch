@@ -1,0 +1,201 @@
+diff --git a/src/webots/gui/WbView3D.cpp b/src/webots/gui/WbView3D.cpp
+index bd10ab5..b95b2dd 100644
+--- a/src/webots/gui/WbView3D.cpp
++++ b/src/webots/gui/WbView3D.cpp
+@@ -60,6 +60,7 @@
+ #include "WbTranslateRotateManipulator.hpp"
+ #include "WbVersion.hpp"
+ #include "WbVideoRecorder.hpp"
++#include "WbRay.hpp"
+ #include "WbViewpoint.hpp"
+ #include "WbVisualBoundingSphere.hpp"
+ #include "WbWheelEvent.hpp"
+@@ -2024,15 +2025,8 @@ void WbView3D::mouseMoveEvent(QMouseEvent *event) {
+     // Case 3: CLICK only -> move the camera
+     Qt::MouseButtons buttons = event->buttons();
+ 
+-    // For zoom and translation, we need the distance to the clicked object, if any.
+-    double distanceToPickPosition;
+-    if (mPicker->selectedId() != -1)
+-      distanceToPickPosition = (viewpoint->position()->value() - viewpoint->rotationCenter()).length();
+-    else
+-      distanceToPickPosition = viewpoint->position()->value().length();
+-
+-    if (distanceToPickPosition < 0.001)
+-      distanceToPickPosition = 0.001;
++    // Zoom and translation move the point under the cursor with it.
++    const double distanceToPickPosition = navigationDistance(position);
+ 
+     double scale = distanceToPickPosition * 2 * tan(viewpoint->fieldOfView()->value() / 2) / std::max(width(), height());
+ 
+@@ -2264,6 +2258,23 @@ WbRobot *WbView3D::getCurrentRobot() const {
+   return NULL;
+ }
+ 
++// Distance that scales panning and zooming: to the picked object, else to the solid under the
++// cursor (a physics ray), else a default. It used to fall back to the viewpoint's distance to
++// the world origin, which made navigation near the origin crawl. A floor keeps it responsive.
++double WbView3D::navigationDistance(const QPoint &cursor) const {
++  static const double DEFAULT_DISTANCE = 20.0, MINIMUM_DISTANCE = 2.0;
++  WbViewpoint *const viewpoint = mWorld->viewpoint();
++  double distance = -1.0;
++  if (mPicker->selectedId() != -1)
++    distance = (viewpoint->position()->value() - viewpoint->rotationCenter()).length();
++  else if (cursor.x() >= 0 && cursor.y() >= 0 && cursor.x() < width() && cursor.y() < height()) {
++    WbRay ray;
++    viewpoint->viewpointRay(cursor.x(), cursor.y(), ray);
++    distance = viewpoint->castRay(ray.origin(), ray.direction(), 1000.0);
++  }
++  return std::max(distance < 0.0 ? DEFAULT_DISTANCE : distance, MINIMUM_DISTANCE);
++}
++
+ void WbView3D::wheelEvent(QWheelEvent *event) {
+   if (!mWorld)
+     return;
+@@ -2300,18 +2311,7 @@ void WbView3D::wheelEvent(QWheelEvent *event) {
+         viewpoint->incOrthographicViewHeight();
+     }
+ 
+-    double distanceToPickPosition;
+-    const QPoint mousePosition = mapFromGlobal(QCursor::pos());
+-    if (mousePosition.x() < 0 || mousePosition.y() < 0 || mousePosition.x() >= width() || mousePosition.y() >= height())
+-      distanceToPickPosition = viewpoint->position()->value().length();
+-    else {
+-      if (mPicker->selectedId() != -1)
+-        distanceToPickPosition = (viewpoint->position()->value() - viewpoint->rotationCenter()).length();
+-      else
+-        distanceToPickPosition = viewpoint->position()->value().length();
+-      if (distanceToPickPosition < 0.001)
+-        distanceToPickPosition = 0.001;
+-    }
++    const double distanceToPickPosition = navigationDistance(mapFromGlobal(QCursor::pos()));
+ 
+     const double scaleFactor = 0.1 * (event->angleDelta().y() < 0.0 ? -1 : 1) * distanceToPickPosition;
+     const WbVector3 zDisplacement(scaleFactor * viewpoint->orientation()->value().direction());
+diff --git a/src/webots/gui/WbView3D.hpp b/src/webots/gui/WbView3D.hpp
+index 90c5940..a3bc1a1 100644
+--- a/src/webots/gui/WbView3D.hpp
++++ b/src/webots/gui/WbView3D.hpp
+@@ -111,6 +111,7 @@ protected:
+   void keyReleaseEvent(QKeyEvent *event) override;
+   void keyPressEvent(QKeyEvent *event) override;
+   void wheelEvent(QWheelEvent *event) override;
++  double navigationDistance(const QPoint &cursor) const;
+   void focusInEvent(QFocusEvent *event) override;
+   void focusOutEvent(QFocusEvent *event) override;
+ 
+diff --git a/src/webots/nodes/WbViewpoint.cpp b/src/webots/nodes/WbViewpoint.cpp
+index 48bbd76..f324037 100644
+--- a/src/webots/nodes/WbViewpoint.cpp
++++ b/src/webots/nodes/WbViewpoint.cpp
+@@ -604,23 +604,35 @@ void WbViewpoint::updateOrientation() {
+ }
+ 
+ namespace {
+-  struct GroundProbe {
+-    dGeomID ray;
+-    double top;  // highest contact found
++  struct RayProbe {
++    double nearest;  // distance along the ray to the nearest contact
+   };
+ 
+-  void probeGround(void *data, dGeomID ray, dGeomID geom) {
++  void probeRay(void *data, dGeomID ray, dGeomID geom) {
+     if (dGeomIsSpace(geom)) {
+-      dSpaceCollide2(ray, geom, data, &probeGround);
++      dSpaceCollide2(ray, geom, data, &probeRay);
+       return;
+     }
+-    GroundProbe *probe = static_cast<GroundProbe *>(data);
++    RayProbe *probe = static_cast<RayProbe *>(data);
+     dContactGeom contact;
+     if (dCollide(ray, geom, 1, &contact, sizeof(dContactGeom)) > 0)
+-      probe->top = std::max(probe->top, static_cast<double>(contact.pos[2]));
++      probe->nearest = std::min(probe->nearest, static_cast<double>(contact.depth));
+   }
+ }  // namespace
+ 
++double WbViewpoint::castRay(const WbVector3 &origin, const WbVector3 &direction, double length) const {
++  WbOdeContext *ode = WbOdeContext::instance();
++  if (!ode || !ode->space() || direction.isNull())
++    return -1.0;
++  const WbVector3 unit = direction.normalized();
++  dGeomID ray = dCreateRay(NULL, length);
++  dGeomRaySet(ray, origin.x(), origin.y(), origin.z(), unit.x(), unit.y(), unit.z());
++  RayProbe probe = {INFINITY};
++  dSpaceCollide2(ray, reinterpret_cast<dGeomID>(ode->space()), &probe, &probeRay);
++  dGeomDestroy(ray);
++  return std::isfinite(probe.nearest) ? probe.nearest : -1.0;
++}
++
+ // Keeps the viewpoint inside its bounds and above the solid below it, so navigation slides
+ // along those limits instead of leaving the world.
+ WbVector3 WbViewpoint::constrainedPosition(const WbVector3 &position) const {
+@@ -631,17 +643,12 @@ WbVector3 WbViewpoint::constrainedPosition(const WbVector3 &position) const {
+       p[i] = qBound(low[i], p[i], high[i]);
+ 
+   const double clearance = mGroundClearance->value();
+-  WbOdeContext *ode = WbOdeContext::instance();
+-  if (clearance > 0.0 && ode && ode->space()) {
+-    // Cast from high above straight down; the highest hit is the ground (or object) below.
++  if (clearance > 0.0) {
++    // Cast from high above straight down: the first hit is the ground (or object) below.
+     const double from = p.z() + 1000.0;
+-    dGeomID ray = dCreateRay(NULL, 2000.0);
+-    dGeomRaySet(ray, p.x(), p.y(), from, 0.0, 0.0, -1.0);
+-    GroundProbe probe = {ray, -INFINITY};
+-    dSpaceCollide2(ray, reinterpret_cast<dGeomID>(ode->space()), &probe, &probeGround);
+-    dGeomDestroy(ray);
+-    if (std::isfinite(probe.top))
+-      p.setZ(std::max(p.z(), probe.top + clearance));
++    const double distance = castRay(WbVector3(p.x(), p.y(), from), WbVector3(0.0, 0.0, -1.0), 2000.0);
++    if (distance >= 0.0)
++      p.setZ(std::max(p.z(), from - distance + clearance));
+   }
+   return p;
+ }
+diff --git a/src/webots/nodes/WbViewpoint.hpp b/src/webots/nodes/WbViewpoint.hpp
+index 262a077..37fb4ee 100644
+--- a/src/webots/nodes/WbViewpoint.hpp
++++ b/src/webots/nodes/WbViewpoint.hpp
+@@ -185,6 +185,12 @@ private:
+   WbSFVector3 *mBoundsMax;
+   WbSFDouble *mGroundClearance;
+   WbVector3 constrainedPosition(const WbVector3 &position) const;
++
++public:
++  // Distance along a ray to the nearest solid (physics geometry), or -1 when nothing is hit.
++  double castRay(const WbVector3 &origin, const WbVector3 &direction, double length) const;
++
++private:
+   const float *mInverseViewMatrix;
+ 
+   // to restore viewpoint
+diff --git a/src/wren/Renderable.cpp b/src/wren/Renderable.cpp
+index 42ef287..5c16f9d 100644
+--- a/src/wren/Renderable.cpp
++++ b/src/wren/Renderable.cpp
+@@ -90,17 +90,17 @@ namespace wren {
+     if (!mEffectiveMaterial)
+       return;
+ 
+-    // Override programs (picking, depth, stencil...) have no instanced variant.
+-    if (program && isInstanced())
+-      return;
+-
+     assert(mMesh);
+ 
++    const ShaderProgram *effectiveProgram = program ? program : mEffectiveMaterial->effectiveProgram();
++    // Programs that cannot place instances (picking, segmentation, range sensors...) would draw
++    // every instance stacked at the renderable's origin: skip them.
++    if (isInstanced() && (!effectiveProgram || glGetUniformLocation(effectiveProgram->glName(), "instanceTransforms") == -1))
++      return;
++
+     // Only bind material program if no override program has been specified
+     mEffectiveMaterial->bind(!program);
+ 
+-    const ShaderProgram *effectiveProgram = program ? program : mEffectiveMaterial->effectiveProgram();
+-
+     setupAndRender(effectiveProgram);
+   }
+ 
