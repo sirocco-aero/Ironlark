@@ -163,13 +163,15 @@ Solid {{
   translation 0 0 0
   children [
     Shape {{
-      # The source's river_flow is clear water (transmission 1, flowFoam 1 via patch
-      # 0010). Kept opaque until reflections exist: at grazing angles clear water
-      # mirrors the banks and trees, and without them it reflects only bright sky.
+      # The source's river_flow is clear water (transmission 1) with flowing foam
+      # (patch 0010). The foam flows; the water stays opaque until reflections exist:
+      # at grazing angles clear water mirrors the banks and trees, and without them it
+      # reflects only bright sky.
       appearance PBRAppearance {{
         baseColor 0.10 0.23 0.26
         roughness 0.15
         metalness 0
+        flowFoam 1
       }}
       geometry Mesh {{ url "meshes/river.obj" }}
     }}
@@ -686,6 +688,7 @@ def river_backdrop(out):
         baseColor 0.10 0.23 0.26
         roughness 0.15
         metalness 0
+        flowFoam 1
       }
       geometry Mesh { url "meshes/river.obj" }
       instancesUrl [ "meshes/instances_backdrop.bin" ]

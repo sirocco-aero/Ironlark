@@ -1,0 +1,161 @@
+diff --git a/resources/nodes/Fog.wrl b/resources/nodes/Fog.wrl
+index 5264a72..b57962b 100644
+--- a/resources/nodes/Fog.wrl
++++ b/resources/nodes/Fog.wrl
+@@ -3,7 +3,8 @@
+ # fogType "SCATTERING" instead simulates a lit participating medium: scattering coefficient
+ # density * color per metre, a Henyey-Greenstein phase with the given anisotropy, lit by the
+ # directional lights and ambientColor, optionally bounded by a box (a zero size leaves that axis
+-# unbounded, so boxSize 0 0 h is a horizontal layer) and shadowed by a top-down
++# unbounded, so boxSize 0 0 h is a horizontal layer; density fades to zero over boxFalloff metres
++# inside its bounded faces) and shadowed by a top-down
+ # sun occlusion map (R: visibility at the ground, G: ground height between sunOcclusionHeight).
+ 
+ Fog {
+@@ -14,6 +15,7 @@ Fog {
+   field    SFFloat                                                         anisotropy         0
+   field    SFVec3f                                                         boxCenter          0 0 0
+   field    SFVec3f                                                         boxSize            0 0 0
++  field    SFFloat                                                         boxFalloff         0
+   field    SFColor                                                         ambientColor       0 0 0
+   field    MFString                                                        sunOcclusionUrl    []
+   field    SFVec2f                                                         sunOcclusionMin    0 0
+diff --git a/resources/wren/shaders/scattering_fog.frag b/resources/wren/shaders/scattering_fog.frag
+index 3acf6a3..0eb0a4b 100644
+--- a/resources/wren/shaders/scattering_fog.frag
++++ b/resources/wren/shaders/scattering_fog.frag
+@@ -23,7 +23,7 @@ cameraTransforms;
+ uniform vec4 scattering;      // rgb: scattering coefficient per metre, a: anisotropy
+ uniform vec4 ambient;         // rgb: isotropic ambient radiance
+ uniform vec4 boxMin;          // xyz; w > 0 when the medium is bounded
+-uniform vec4 boxMax;
++uniform vec4 boxMax;          // w: density fades to zero over this distance inside bounded faces
+ uniform vec4 sunDirection0;   // xyz: world direction towards the light, w: enabled
+ uniform vec4 sunRadiance0;    // rgb: color * intensity
+ uniform vec4 sunDirection1;
+@@ -33,7 +33,16 @@ uniform vec2 occlusionHeight; // ground height encoded by G = 0 and G = 1
+ 
+ const float PI = 3.14159265359;
+ const int STEPS = 24;
+-const float MAX_DISTANCE = 400.0;
++const float MAX_DISTANCE = 400.0;  // marched with sun occlusion
++const int FAR_STEPS = 8;
++const float HORIZON = 20000.0;     // beyond MAX_DISTANCE, unoccluded: haze out to the horizon
++
++float density(vec3 p) {
++  if (boxMin.w <= 0.0 || boxMax.w <= 0.0)
++    return 1.0;
++  vec3 inside = min(p - boxMin.xyz, boxMax.xyz - p);
++  return smoothstep(0.0, boxMax.w, min(min(inside.x, inside.y), inside.z));
++}
+ 
+ float henyeyGreenstein(float cosTheta, float g) {
+   float d = 1.0 + g * g - 2.0 * g * cosTheta;
+@@ -73,7 +82,7 @@ void main() {
+   // WREN renders with an infinite projection: window depth = 1 - near / (2 d).
+   mat4 p = cameraTransforms.infiniteProjection;
+   float near = -p[3][2];
+-  float viewDepth = depth >= 1.0 ? MAX_DISTANCE : min(near / (2.0 * (1.0 - depth)), MAX_DISTANCE);
++  float viewDepth = depth >= 1.0 ? HORIZON : min(near / (2.0 * (1.0 - depth)), HORIZON);
+   vec2 ndc = texUv * 2.0 - 1.0;
+   vec3 rayView = vec3(ndc.x / p[0][0], ndc.y / p[1][1], -1.0);
+   mat4 inverseView = inverse(cameraTransforms.view);
+@@ -104,8 +113,10 @@ void main() {
+   vec3 phaseRadiance0 = sunDirection0.w * henyeyGreenstein(dot(direction, sunDirection0.xyz), g) * sunRadiance0.rgb;
+   vec3 phaseRadiance1 = sunDirection1.w * henyeyGreenstein(dot(direction, sunDirection1.xyz), g) * sunRadiance1.rgb;
+ 
+-  float stepLength = (tEnd - tStart) / float(STEPS);
+-  vec3 stepTransmittance = exp(-sigma * stepLength);
++  // Near the viewer, steps sample the canopy's sun occlusion; farther, out to the horizon,
++  // a few unoccluded steps: haze thickens to the horizon instead of stopping at a distance.
++  float tNear = min(tEnd, max(tStart, MAX_DISTANCE * rayScale));
++  float stepLength = (tNear - tStart) / float(STEPS);
+   float offset = dither(gl_FragCoord.xy);
+   vec3 transmittance = vec3(1.0);
+   vec3 inScattered = vec3(0.0);
+@@ -114,9 +125,17 @@ void main() {
+     vec3 source = ambient.rgb + phaseRadiance0 * sunVisibility(position, sunDirection0.xyz) +
+                   phaseRadiance1 * sunVisibility(position, sunDirection1.xyz);
+     // Exact integral of a constant source over the step: (1 - T_step) * source.
++    vec3 stepTransmittance = exp(-sigma * density(position) * stepLength);
+     inScattered += transmittance * (1.0 - stepTransmittance) * source;
+     transmittance *= stepTransmittance;
+   }
++  float farStep = (tEnd - tNear) / float(FAR_STEPS);
++  vec3 farSource = ambient.rgb + phaseRadiance0 + phaseRadiance1;
++  for (int i = 0; i < FAR_STEPS && farStep > 0.0; ++i) {
++    vec3 stepTransmittance = exp(-sigma * density(origin + direction * (tNear + (float(i) + offset) * farStep)) * farStep);
++    inScattered += transmittance * (1.0 - stepTransmittance) * farSource;
++    transmittance *= stepTransmittance;
++  }
+ 
+   result = vec4(color * transmittance + inScattered, 1.0);
+ }
+diff --git a/src/webots/nodes/WbFog.cpp b/src/webots/nodes/WbFog.cpp
+index ea94f0b..7ca4703 100644
+--- a/src/webots/nodes/WbFog.cpp
++++ b/src/webots/nodes/WbFog.cpp
+@@ -43,6 +43,7 @@ void WbFog::init() {
+   mAnisotropy = findSFDouble("anisotropy");
+   mBoxCenter = findSFVector3("boxCenter");
+   mBoxSize = findSFVector3("boxSize");
++  mBoxFalloff = findSFDouble("boxFalloff");
+   mAmbientColor = findSFColor("ambientColor");
+   mSunOcclusionUrl = findMFString("sunOcclusionUrl");
+   mSunOcclusionMin = findSFVector2("sunOcclusionMin");
+@@ -70,6 +71,10 @@ const WbVector3 &WbFog::boxSize() const {
+   return mBoxSize->value();
+ }
+ 
++double WbFog::boxFalloff() const {
++  return qMax(0.0, mBoxFalloff->value());
++}
++
+ const WbRgb &WbFog::ambientColor() const {
+   return mAmbientColor->value();
+ }
+diff --git a/src/webots/nodes/WbFog.hpp b/src/webots/nodes/WbFog.hpp
+index 24e947e..9ab8348 100644
+--- a/src/webots/nodes/WbFog.hpp
++++ b/src/webots/nodes/WbFog.hpp
+@@ -53,6 +53,7 @@ public:
+   const WbRgb &color() const;
+   const WbVector3 &boxCenter() const;
+   const WbVector3 &boxSize() const;
++  double boxFalloff() const;
+   const WbRgb &ambientColor() const;
+   QString sunOcclusionPath() const;
+   const WbVector2 &sunOcclusionMin() const;
+@@ -85,6 +86,7 @@ private:
+   WbSFDouble *mAnisotropy;
+   WbSFVector3 *mBoxCenter;
+   WbSFVector3 *mBoxSize;
++  WbSFDouble *mBoxFalloff;
+   WbSFColor *mAmbientColor;
+   WbMFString *mSunOcclusionUrl;
+   WbSFVector2 *mSunOcclusionMin;
+diff --git a/src/webots/nodes/WbViewpoint.cpp b/src/webots/nodes/WbViewpoint.cpp
+index a3e0057..011c3c6 100644
+--- a/src/webots/nodes/WbViewpoint.cpp
++++ b/src/webots/nodes/WbViewpoint.cpp
+@@ -1287,6 +1287,7 @@ void WbViewpoint::updateScatteringFog() {
+     medium.boxMax[i] = center[i] + half;
+   }
+   medium.boxMin[3] = bounded ? 1.0f : 0.0f;
++  medium.boxMax[3] = fog->boxFalloff();
+ 
+   int sun = 0;
+   foreach (const WbLight *light, WbLight::lights()) {
+diff --git a/src/webots/wren/WbWrenScatteringFog.hpp b/src/webots/wren/WbWrenScatteringFog.hpp
+index 27da713..165383a 100644
+--- a/src/webots/wren/WbWrenScatteringFog.hpp
++++ b/src/webots/wren/WbWrenScatteringFog.hpp
+@@ -36,7 +36,7 @@ public:
+     float scattering[4];       // rgb: scattering coefficient per metre, a: anisotropy
+     float ambient[4];          // rgb: isotropic ambient radiance
+     float boxMin[4];           // w: 1 when bounded
+-    float boxMax[4];
++    float boxMax[4];           // w: falloff distance inside bounded faces
+     float sunDirection[2][4];  // towards the light; w: 1 when present
+     float sunRadiance[2][4];
+     float occlusionRect[4];    // world min xy, max xy of the occlusion map; zero when absent

@@ -41,16 +41,21 @@ source's lights: 1.0–2.3× brighter at the pinned views):
 - **Terrain**: four 4K baked tiles (~100 m each). The source tiles its ground
   materials under masks; matching that needs a Webots detail-map patch, and
   would be sharper up close with far less VRAM.
-- **River**: the source's is clear water with flowing foam (patch 0010 renders
-  both). Opaque until reflections exist (screen-space reflections): clear water
-  at grazing angles mirrors the banks and trees; Webots can only reflect sky.
+- **River**: the source's is clear water with flowing white foam. The foam flows
+  (patches 0010, 0019); the water stays opaque until reflections exist
+  (screen-space reflections): clear water at grazing angles mirrors the banks and
+  trees; Webots can only reflect sky.
+- **Foliage shimmer**: needles thinner than a pixel flip in and out as the view
+  moves (22% of pixels for a 2 cm step). Needs multisampling with
+  alpha-to-coverage for masked materials.
 - **Backdrop reach**: one mirrored ring (about 200 m past each edge). From the
   70 m ceiling, a second ring of ground and impostors would push the horizon out.
 - **LiDAR vs foliage**: range sensors ignore `alphaCutoff`, so twig cards
   would read as solid planes. Fix before LiDAR work.
 
-Known bugs: with `ambientOcclusionRadius 0` the forest renders only sky (a small
-test world renders fine); cause not yet found.
+Known bugs: with `ambientOcclusionRadius 0` the forest view can render only sky
+(a small test world renders fine; the viewpoint's position is right); cause not
+yet found.
 
 ### Candidates for later regions
 
