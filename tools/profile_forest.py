@@ -79,12 +79,29 @@ def sample(pid):
     return rss // 1024, used, util
 
 
+def without_shapes(world, text):
+    """The world without the Shape nodes whose text contains text."""
+    kept, start = [], 0
+    while (begin := world.find("Shape {", start)) != -1:
+        depth, end = 0, begin
+        for end in range(begin, len(world)):
+            depth += {"{": 1, "}": -1}.get(world[end], 0)
+            if depth == 0 and world[end] == "}":
+                break
+        block = world[begin:end + 1]
+        kept.append(world[start:begin] + ("" if text in block else block))
+        start = end + 1
+    return "".join(kept) + world[start:]
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--webots-home", type=Path, default=None)
     p.add_argument("--seconds", type=float, default=5.0, help="sim seconds per view")
     p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--without", action="append", default=[], metavar="TEXT",
+                   help="drop every Shape whose text contains TEXT, to attribute its cost (repeatable)")
     args = p.parse_args()
     home = (args.webots_home or Path(os.environ.get("WEBOTS_HOME", ROOT / ".cache/webots-renderer"))).resolve()
     out = args.out.resolve()
@@ -99,6 +116,8 @@ def main():
     world = (source / "pine_forest.wbt").read_text().replace("../.cache/", str(ROOT / ".cache") + "/")
     world = world.replace('controller "flight_bridge"', 'controller "<none>"')
     world = world.replace('controller "flight_observer"', 'controller "forest_profile"')
+    for text in args.without:
+        world = without_shapes(world, text)
     target = out / "worlds/profile.wbt"
     target.write_text(world)
     env = os.environ | {

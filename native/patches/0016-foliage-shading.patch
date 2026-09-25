@@ -1,0 +1,128 @@
+diff --git a/resources/wren/shaders/pbr.frag b/resources/wren/shaders/pbr.frag
+index c5eab6a..03b85c9 100644
+--- a/resources/wren/shaders/pbr.frag
++++ b/resources/wren/shaders/pbr.frag
+@@ -14,6 +14,10 @@ in vec2 texUv;
+ in vec2 penTexUv;
+ in mat3 inverseViewMatrix;
+ 
++// The mean of the normals a pixel covers, in view space: shorter where they disagree (minified
++// normal maps). Direct light uses it through a first-order model (PBRpass).
++vec3 meanNormal;
++
+ layout(location = 0) out vec4 fragColor;
+ layout(location = 1) out vec4 fragNormal;
+ 
+@@ -224,11 +228,18 @@ mat3 cotangentFrame(vec3 N, vec3 p, vec2 uv) {
+   return mat3(T * invmax, B * invmax, N);
+ }
+ 
++// Sets meanNormal. Minified past a few texels per pixel, a normal map's detail is sub-pixel, and
++// the frame built from screen derivatives breaks down once a pixel quad spans several small
++// triangles (needles), turning normals at random. There the mipmapped normal's length, how much
++// its texels disagree, shades instead.
+ vec3 perturbNormal(vec3 N, vec3 V) {
+   vec3 map = texture(inputTextures[4], texUv).rgb * 2.0 - 1.0;
+   map.xy = vec2(material.roughnessMetalnessNormalMapFactorOcclusion.z) * map.xy;
++  vec2 texel = texUv * vec2(textureSize(inputTextures[4], 0));
++  float mip = 0.5 * log2(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel))));
+   mat3 TBN = cotangentFrame(N, -V, texUv);
+-  return normalize(TBN * map);
++  meanNormal = mix(normalize(TBN * map), N * clamp(map.z, 0.0, 1.0), smoothstep(1.0, 3.0, mip));
++  return normalize(meanNormal);
+ }
+ 
+ // Basic Lambertian diffuse
+@@ -312,14 +323,24 @@ vec3 PBRpass(vec3 l, vec3 n, vec3 v, vec3 h, vec4 lightColorAndIntensity, float
+   // diffuse light scale with intensity squared.
+   vec3 diffuseContrib = (1.0 - F) * diffuse(pbrInputs);
+   vec3 specContrib = F * G * D / (4.0 * NdotL * NdotV);
++  // A pixel covering many surfaces (needles): their mean clamped cosine is, to first order (L1
++  // spherical harmonics), 1/4 + (mean normal . l) / 2, linear so it survives blending and
++  // mipmaps. It sharpens to the plain cosine as the normals agree; for one normal it is exact.
++  float coherence = length(meanNormal);
++  float cosine = dot(meanNormal, l);
++  NdotL = mix(clamp(0.25 + 0.5 * cosine, 0.0, 1.0), max(cosine / max(coherence, 0.0001), 0.0), pow(coherence, 4.0));
+   // Obtain final intensity as reflectance (BRDF) scaled by the energy of the light (cosine law)
+   color = NdotL * lightColorAndIntensity.xyz * (diffuseContrib + specContrib) * lightColorAndIntensity.w;
+ 
+   return color;
+ }
+ 
++
+ void main() {
+   vec3 viewFragmentNormal = normalize(reverseNormals ? -fragmentNormal : fragmentNormal);
++  // Back faces are only drawn for two-sided (alpha-masked) materials: shade them facing the viewer.
++  if (!gl_FrontFacing)
++    viewFragmentNormal = -viewFragmentNormal;
+   fragNormal = vec4(normalize(viewFragmentNormal), 1.0) * 0.5 + 0.5;
+ 
+   float foam = material.transmission.y > 0.0 ? material.transmission.y * flowFoam(texUv) : 0.0;
+@@ -334,6 +355,7 @@ void main() {
+   }
+   float transmitted = material.transmission.x * (1.0 - foam);
+ 
++  meanNormal = viewFragmentNormal;
+   // sample from normal map if one exists
+   if (material.normalBrdfEmissiveBackgroundFlags.x > 0.0)
+     viewFragmentNormal = perturbNormal(viewFragmentNormal, normalize(-fragmentPosition));
+diff --git a/src/wren/Material.cpp b/src/wren/Material.cpp
+index 635cefc..0bac2d7 100644
+--- a/src/wren/Material.cpp
++++ b/src/wren/Material.cpp
+@@ -77,6 +77,7 @@ namespace wren {
+   Material::Material() :
+     mHasPremultipliedAlpha(false),
+     mIsTranslucent(false),
++    mIsTwoSided(false),
+     mTextures(gMaxShaderTextures, std::make_pair(nullptr, Texture::DEFAULT_USAGE_PARAMS)),
+     mTextureCubes(gMaxShaderCubemapTextures, std::make_pair(nullptr, Texture::DEFAULT_USAGE_PARAMS)),
+     mTextureTransform(NULL),
+diff --git a/src/wren/Material.hpp b/src/wren/Material.hpp
+index 6888e85..2dcc5de 100644
+--- a/src/wren/Material.hpp
++++ b/src/wren/Material.hpp
+@@ -122,6 +122,8 @@ namespace wren {
+     }
+ 
+     bool isTranslucent() const { return mIsTranslucent; }
++    // Both faces drawn, back faces shaded with their normal turned to the viewer (foliage cards)
++    bool isTwoSided() const { return mIsTwoSided; }
+ 
+     WrTextureWrapMode textureWrapS(size_t index) const {
+       assert(index < mTextures.size());
+@@ -165,6 +167,7 @@ namespace wren {
+ 
+     bool mHasPremultipliedAlpha;
+     bool mIsTranslucent;
++    bool mIsTwoSided;
+ 
+     std::vector<std::pair<Texture *, Texture::UsageParams>> mTextures;
+     std::vector<std::pair<TextureCubeMap *, Texture::UsageParams>> mTextureCubes;
+diff --git a/src/wren/PbrMaterial.cpp b/src/wren/PbrMaterial.cpp
+index 16db744..89285de 100644
+--- a/src/wren/PbrMaterial.cpp
++++ b/src/wren/PbrMaterial.cpp
+@@ -269,6 +269,9 @@ namespace wren {
+   }
+ 
+   void PbrMaterial::updateTranslucency() {
++    // Alpha-masked cards (foliage) show both faces, as Blender renders them.
++    mIsTwoSided = mCacheData->mMaterial.mAlphaCutoff.x > 0.0f;
++
+     // Transmissive surfaces blend premultiplied: the shader outputs what the surface
+     // adds (reflection, foam) and, as alpha, how much of the scene behind it is hidden.
+     mHasPremultipliedAlpha = mCacheData->mMaterial.mTransmission.x > 0.0f;
+diff --git a/src/wren/Renderable.cpp b/src/wren/Renderable.cpp
+index 61258ab..a2a5b29 100644
+--- a/src/wren/Renderable.cpp
++++ b/src/wren/Renderable.cpp
+@@ -323,7 +323,7 @@ namespace wren {
+     if (config::isPointSizeEnabled() && mPointSize > 0.0f)
+       glUniform1f(program->uniformLocation(WR_GLSL_LAYOUT_UNIFORM_POINT_SIZE), mPointSize);
+ 
+-    glstate::setCullFace(mFaceCulling);
++    glstate::setCullFace(mFaceCulling && !mDefaultMaterial->isTwoSided());
+ 
+     glUniformMatrix4fv(program->uniformLocation(WR_GLSL_LAYOUT_UNIFORM_MODEL_TRANSFORM), 1, false,
+                        glm::value_ptr(mParent->matrix()));

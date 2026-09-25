@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
+import forest_backdrop
 from forest_view import CAMERAS, ORIGIN, REGION, VIEW_CEILING, VIEW_MARGIN
 
 sys.path.insert(
@@ -174,6 +175,12 @@ Solid {{
     }}
   ]
   name "river"
+}}
+# Beyond the source's edges: the region mirrored across them (tools/forest_backdrop.py).
+Group {{
+  children [
+    {backdrop_shapes}
+  ]
 }}
 {tree_solids}
 # A visible home pad. Its top is flush with the flattened ground disc.
@@ -460,23 +467,139 @@ def place_tree_part(parts, part, pos, aa, scale):
         }
     )
     matrix = axis_angle_matrix(axis, aa[3]) @ np.diag([sx, sy, sz])
-    key = (part["mesh_url"], part["tex"], part.get("normal", ""), part.get("roughness", ""))
-    parts.setdefault(key, []).append(np.hstack([matrix, np.array(translation)[:, None]]))
+    row = np.hstack([matrix, np.array(translation)[:, None]])
+    parts.setdefault(part_key(part), []).append(row)
+    return row
 
 
-def instanced_tree_shapes(parts, out):
-    """One instanced Shape per tree part. The source draws trees at full detail up to
-    its Lod1_distance (218-226 m), past the edge of this region, so no range is set."""
+def part_key(part):
+    return (part["mesh_url"], part["tex"], part.get("normal", ""), part.get("roughness", ""))
+
+
+def instanced_tree_shapes(parts, out, far):
+    """One instanced Shape per tree part, drawn up to far (then impostors take over).
+    The source draws trees at full detail up to its Lod1_distance (218-226 m)."""
+    band = f"\n          visibilityRange 0 {far:.1f}" if far else ""
     nodes = []
     for i, ((mesh, tex, normal, roughness), rows) in enumerate(sorted(parts.items())):
         url = f"meshes/instances_tree_{i}.bin"
-        np.asarray(rows, dtype="<f4").tofile(out / url)
+        np.asarray(rows, "<f4").tofile(out / url)
         nodes.append(
             f"""Shape {{
 {shape_fields(mesh, tex, normal, roughness)}
-          instancesUrl [ "{url}" ]
+          instancesUrl [ "{url}" ]{band}
         }}"""
         )
+    return nodes
+
+
+# Trees beyond this distance are drawn as impostors (tools/bake_impostors.py). A view
+# covers the capture sphere's diameter; at this distance on a 1080-line screen with the
+# viewer's 1 rad field of view, a metre spans about 12 pixels.
+IMPOSTOR_DISTANCE = 150.0
+IMPOSTOR_PIXELS_PER_METRE = 12.0
+IMPOSTOR_FRAMES = 8
+# Coverage an impostor texel needs to be drawn. Full trees keep a needle texel whose mipmapped
+# alpha, scaled by 1 + mip / 4 (Webots patch 0004), reaches 0.5: past 150 m (mip 6 and up)
+# about 0.2 of it covered.
+IMPOSTOR_ALPHA_CUTOFF = 0.2
+IMPOSTOR_QUAD = """# Impostor quad (Webots Shape.impostor): corners (+-1, +-1, 0).
+v -1 -1 0
+v 1 -1 0
+v 1 1 0
+v -1 1 0
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+vn 0 0 1
+f 1/1/1 2/2/1 3/3/1
+f 1/1/1 3/3/1 4/4/1
+"""
+
+
+def dilate(color, alpha, steps=16):
+    """Spread colours into empty texels so filtering never pulls in black."""
+    valid = (alpha > 1e-3).astype(np.float32)
+    color = color * valid[..., None]
+    for _ in range(steps):
+        pad_c = np.pad(color, ((1, 1), (1, 1), (0, 0)), mode="edge")
+        pad_v = np.pad(valid, 1, mode="edge")
+        acc = sum(pad_c[1 + dy:pad_c.shape[0] - 1 + dy, 1 + dx:pad_c.shape[1] - 1 + dx]
+                  for dy in (-1, 0, 1) for dx in (-1, 0, 1))
+        weight = sum(pad_v[1 + dy:pad_v.shape[0] - 1 + dy, 1 + dx:pad_v.shape[1] - 1 + dx]
+                     for dy in (-1, 0, 1) for dx in (-1, 0, 1))
+        grow = (valid == 0) & (weight > 0)
+        color[grow] = acc[grow] / weight[grow][:, None]
+        valid = np.maximum(valid, grow.astype(np.float32))
+    fill = color[valid > 0].mean(0) if valid.any() else np.zeros(color.shape[-1])
+    color[valid == 0] = fill
+    return color
+
+
+def impostor_atlases(build, out, variant, radius):
+    """Albedo+alpha and normal atlases, sized so a view has about the screen's pixels
+    at the impostor distance."""
+    data = np.load(build / f"impostor_{variant}.npz")
+    alpha = data["alpha"]
+    safe = np.maximum(alpha, 1e-6)[..., None]
+    albedo = np.clip(data["albedo"] / safe, 0, 1)
+    albedo = np.where(albedo <= 0.0031308, 12.92 * albedo, 1.055 * albedo ** (1 / 2.4) - 0.055)
+    # The mean normal over each texel's needles, kept unnormalized: its length says how much
+    # they agree, which the impostor shader's foliage lighting uses.
+    normal = np.clip(data["normal"] / safe * 2 - 1, -1, 1)
+    depth = np.clip(data["depth"] / safe[..., 0], 0, 1)
+    # Power-of-two views: Webots would rescale any other atlas size.
+    view = int(np.clip(2 ** np.ceil(np.log2(2 * radius * IMPOSTOR_PIXELS_PER_METRE)), 32, 256))
+    size = (IMPOSTOR_FRAMES * view,) * 2
+    color = Image.fromarray(np.round(np.dstack([dilate(albedo, alpha), alpha]) * 255).astype(np.uint8), "RGBA")
+    color.resize(size, Image.Resampling.LANCZOS).save(out / f"meshes/impostor_{variant}.png")
+    # Normals (RGB) and depth (A) shade the crown softly: half the views' resolution is enough.
+    filled = dilate(np.dstack([normal * 0.5 + 0.5, depth]), alpha)
+    Image.fromarray(np.round(filled * 255).astype(np.uint8), "RGBA").resize(
+        (size[0] // 2, size[1] // 2), Image.Resampling.LANCZOS).save(out / f"meshes/impostor_{variant}_normal.png")
+
+
+def impostor_shapes(build, out, visual_trees, rows, variants):
+    """Declare the variants for tools/bake_impostors.py; once baked, one instanced
+    impostor Shape per variant. Returns the Shapes (empty before the bake)."""
+    declared = {v: [{"mesh": p["mesh_url"], "tex": p["tex"], "normal": p.get("normal", "")} for p in parts]
+                for v, parts in visual_trees.items()}
+    (build / "impostor_variants.json").write_text(json.dumps(declared, indent=1, sort_keys=True))
+    baked_path = build / "impostors.json"
+    baked = json.loads(baked_path.read_text()) if baked_path.exists() else {}
+    if not declared.keys() <= baked.keys():
+        return []
+    for variant in declared:  # a bake from an older capture lacks passes: rebake first
+        with np.load(build / f"impostor_{variant}.npz") as data:
+            if not {"albedo", "normal", "depth", "alpha"} <= set(data.files):
+                return []
+    (out / "meshes/impostor_quad.obj").write_text(IMPOSTOR_QUAD)
+    nodes = []
+    for variant in sorted(declared):
+        sphere = baked[variant]
+        impostor_atlases(build, out, variant, sphere["radius"])
+        # Instance space = capture space: the tree's frame, moved to the sphere's centre, scaled by its radius.
+        placed = rows[np.array([v == variant for v in variants])]
+        capture = np.hstack([np.eye(3) * sphere["radius"], np.array(sphere["center"])[:, None]])
+        instances = np.einsum("nab,bc->nac", placed[:, :, :3], capture)
+        instances[:, :, 3] += placed[:, :, 3]
+        url = f"meshes/instances_impostor_{variant}.bin"
+        instances.astype("<f4").tofile(out / url)
+        nodes.append(f"""Shape {{
+          appearance PBRAppearance {{
+            baseColorMap ImageTexture {{ url "meshes/impostor_{variant}.png" }}
+            normalMap ImageTexture {{ url "meshes/impostor_{variant}_normal.png" }}
+            roughness 0.9
+            metalness 0
+            alphaCutoff {IMPOSTOR_ALPHA_CUTOFF}
+          }}
+          geometry Mesh {{ url "meshes/impostor_quad.obj" }}
+          instancesUrl [ "{url}" ]
+          visibilityRange {IMPOSTOR_DISTANCE - 1:.1f} 0
+          castShadows FALSE
+          impostor TRUE
+        }}""")
     return nodes
 
 
@@ -536,7 +659,9 @@ def instance_cover(build, out, cover_index):
                 }
             )
         url = "meshes/instances_%s.bin" % re.sub(r"\W", "_", asset)
-        np.asarray(rows, dtype="<f4").tofile(out / url)
+        rows = np.asarray(rows).reshape(-1, 3, 4)
+        backdrop, _ = forest_backdrop.copies(rows, far=first["lod1_distance"], seed=len(nodes))
+        np.concatenate([rows, backdrop]).astype("<f4").tofile(out / url)
         total += assets[asset]["tris"] * len(placements)
         bands = [(asset, 0.0, first["lod0_distance"])]
         if first["lod1"] != asset:
@@ -554,7 +679,20 @@ def instance_cover(build, out, cover_index):
     return nodes, total, set(mesh_urls.values())
 
 
-def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, fog):
+def river_backdrop(out):
+    forest_backdrop.ground_rows().astype("<f4").tofile(out / "meshes/instances_backdrop.bin")
+    return """Shape {
+      appearance PBRAppearance {
+        baseColor 0.10 0.23 0.26
+        roughness 0.15
+        metalness 0
+      }
+      geometry Mesh { url "meshes/river.obj" }
+      instancesUrl [ "meshes/instances_backdrop.bin" ]
+    }"""
+
+
+def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, backdrop_shapes, fog):
     tree_solids = list(solids)
     tree_solids.extend(colliders)
     view_pos = "4 -5 2.6"
@@ -567,6 +705,7 @@ def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, fog):
         WORLD_TEMPLATE.format(
             tree_solids="\n".join(tree_solids),
             terrain_shapes=terrain_shapes,
+            backdrop_shapes=backdrop_shapes,
             sky_fields=sky_fields,
             fog=fog,
             bounds_min=f"{REGION[0] - ORIGIN[0] + VIEW_MARGIN:.1f} {REGION[2] - ORIGIN[1] + VIEW_MARGIN:.1f} -50",
@@ -625,14 +764,16 @@ def main():
     tree_parts = {}
     colliders = []
     tri_total = 0
+    tree_rows = []
     for i, t in enumerate(trees):
         variant = t["variant"]
         pos = t["pos"]
         sx, sy, sz = t["scale"]
         ax, ay, az, angle = t["aa"]
         for part in visual_trees[variant]:
-            place_tree_part(tree_parts, part, pos, (ax, ay, az, angle), (sx, sy, sz))
+            row = place_tree_part(tree_parts, part, pos, (ax, ay, az, angle), (sx, sy, sz))
             tri_total += part["tris"]
+        tree_rows.append(row)
         dist = math.hypot(pos[0], pos[2])
         if dist < COLLIDER_RADIUS:
             crown_info = properties[variant]
@@ -652,7 +793,17 @@ def main():
                     i=len(colliders),
                 )
             )
-    solids.extend(instanced_tree_shapes(tree_parts, out))
+    # The backdrop's trees: each tree copied whole, so its parts turn together.
+    tree_rows = np.array(tree_rows)
+    backdrop, sources = forest_backdrop.copies(tree_rows)
+    tree_variants = [t["variant"] for t in trees]
+    for row, original in zip(backdrop, sources):
+        for part in visual_trees[tree_variants[original]]:
+            tree_parts[part_key(part)].append(row)
+    impostors = impostor_shapes(build, out, visual_trees, np.concatenate([tree_rows, backdrop]),
+                                tree_variants + [tree_variants[s] for s in sources])
+    solids.extend(instanced_tree_shapes(tree_parts, out, IMPOSTOR_DISTANCE if impostors else None))
+    solids.extend(impostors)
     print(
         "trees", len(trees), "tris", tri_total, "colliders", len(colliders), flush=True
     )
@@ -706,9 +857,11 @@ def main():
     from forest_terrain import build_terrain_tiles
 
     manifest["light_signature"] = light_signature(build, out)
-    terrain_shapes = build_terrain_tiles(build, out)
+    terrain_shapes, backdrop_shapes = build_terrain_tiles(build, out)
+    backdrop_shapes.append(river_backdrop(out))
     fog = fog_node(build, out, manifest["home_blender"])
-    write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, fog)
+    write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, "\n".join(backdrop_shapes), fog)
+    two_sided_materials(out)
     (out / "visual_instances.json").write_text(
         json.dumps(VISUAL_INSTANCES, separators=(",", ":"))
     )
@@ -721,6 +874,8 @@ def main():
         if path.is_file() and "meshes/" + path.name not in referenced:
             path.unlink()
     limit_textures(out / "meshes")
+    bleed_alpha(out / "meshes")
+    bleed_normals(out)
     print("wrote", out / "pine_forest.wbt", flush=True)
 
 
@@ -730,9 +885,10 @@ TEXTURE_LIMIT = 1024
 
 def limit_textures(folder):
     """Downsample textures above the limit. Terrain tiles span 60 m each and are
-    rebuilt separately from the source's tiling ground materials."""
+    rebuilt separately from the source's tiling ground materials; impostor atlases
+    hold 64 views, each sized to the screen at the impostor distance."""
     for path in folder.glob("*.png"):
-        if path.name.startswith("terrain_"):
+        if path.name.startswith(("terrain_", "impostor_")):
             continue
         with Image.open(path) as image:
             if max(image.size) <= TEXTURE_LIMIT:
@@ -740,6 +896,109 @@ def limit_textures(folder):
             image.load()
         image.thumbnail((TEXTURE_LIMIT, TEXTURE_LIMIT), Image.Resampling.LANCZOS)
         image.save(path)
+
+
+def two_sided_materials(out):
+    """Alpha masks only where a texture has transparency: Webots draws masked materials from
+    both sides (patch 0017), as Blender does, and opaque ones culled. Meshes drawn only
+    two-sided lose the back copy of each double-faced card, which that already shows."""
+    path = out / "pine_forest.wbt"
+    world = path.read_text()
+    opaque = {}
+
+    def transparent(url):
+        if url not in opaque:
+            with Image.open(out / url) as image:
+                opaque[url] = "A" not in image.getbands() or image.getchannel("A").getextrema()[0] >= 250
+        return not opaque[url]
+
+    users = {}
+    def material(match):
+        block = match.group(0)
+        texture = re.search(r'baseColorMap ImageTexture \{ url "([^"]+)"', block)
+        mesh = re.search(r'geometry Mesh \{ url "([^"]+)"', block)
+        if texture and "alphaCutoff" in block and not transparent(texture[1]):
+            block = re.sub(r"\n\s*alphaCutoff [\d.]+", "", block)
+        if mesh:
+            users.setdefault(mesh[1], []).append("alphaCutoff" in block)
+        return block
+
+    world = re.sub(r"Shape \{.*?geometry Mesh \{ url \"[^\"]+\" \}", material, world, flags=re.S)
+    path.write_text(world)
+    dropped = 0
+    for mesh, masked in users.items():
+        if all(masked) and "impostor_" not in mesh:
+            dropped += drop_back_copies(out / mesh)
+    print("two-sided: dropped", dropped, "back copies", flush=True)
+
+
+def drop_back_copies(path):
+    """Remove the second of each pair of faces with the same corners and texture
+    coordinates (a card and its reversed copy)."""
+    lines = path.read_text().splitlines(keepends=True)
+    positions = [l.split()[1:4] for l in lines if l.startswith("v ")]
+    uvs = [l.split()[1:3] for l in lines if l.startswith("vt ")]
+    seen, kept, dropped = set(), [], 0
+    for line in lines:
+        if line.startswith("f "):
+            corners = []
+            for vertex in line.split()[1:]:
+                index = vertex.split("/")
+                uv = tuple(uvs[int(index[1]) - 1]) if len(index) > 1 and index[1] else ()
+                corners.append((tuple(positions[int(index[0]) - 1]), uv))
+            key = frozenset(corners)
+            if len(key) == len(corners) and key in seen:
+                dropped += 1
+                continue
+            seen.add(key)
+        kept.append(line)
+    if dropped:
+        path.write_text("".join(kept))
+    return dropped
+
+
+def bleed_alpha(folder):
+    """Give masked-out texels their opaque neighbours' colours. Mipmaps average colour
+    over the mask: with near-black texels there (78% of a twig atlas), distant foliage
+    darkened to a fifth of its colour. Nothing visible changes at full resolution."""
+    for path in folder.glob("*.png"):
+        if path.name.startswith("impostor_"):
+            continue  # dilated when built
+        with Image.open(path) as image:
+            if image.mode != "RGBA":
+                continue
+            rgba = np.asarray(image, np.float32) / 255
+        alpha = rgba[..., 3]
+        if (alpha > 0.5).all():
+            continue
+        # Dilate from texels that stay opaque at any cutoff, a few texels at a time, then fill
+        # the rest (which only deep mipmaps reach) with the mean opaque colour.
+        color = dilate(rgba[..., :3], np.where(alpha > 0.5, alpha, 0), steps=8)
+        keep = alpha[..., None] > 0.5
+        rgba[..., :3] = np.where(keep, rgba[..., :3], color)
+        Image.fromarray(np.round(rgba * 255).astype(np.uint8), "RGBA").save(path)
+
+
+def bleed_normals(out):
+    """Same for normal maps, under their base colour's mask: their mipmaps then average the
+    needles' normals only, whose disagreement the renderer shades (Webots patch 0018)."""
+    pairs = set(re.findall(r'baseColorMap ImageTexture \{ url "([^"]+)" \}\s*normalMap ImageTexture \{ url "([^"]+)" \}',
+                           (out / "pine_forest.wbt").read_text()))
+    for base, normal in sorted(pairs):
+        if Path(normal).name.startswith("impostor_"):
+            continue
+        with Image.open(out / base) as image:
+            if image.mode != "RGBA":
+                continue
+            alpha = image.getchannel("A")
+        with Image.open(out / normal) as image:
+            rgb = np.asarray(image.convert("RGB"), np.float32) / 255
+        alpha = np.asarray(alpha.resize(rgb.shape[1::-1], Image.Resampling.BILINEAR), np.float32) / 255
+        if (alpha > 0.5).all():
+            continue
+        keep = alpha[..., None] > 0.5
+        rgb = np.where(keep, rgb, dilate(rgb, np.where(alpha > 0.5, alpha, 0), steps=8))
+        Image.fromarray(np.round(rgb * 255).astype(np.uint8), "RGB").save(out / normal)
 
 
 if __name__ == "__main__":

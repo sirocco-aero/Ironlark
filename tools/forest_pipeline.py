@@ -224,6 +224,16 @@ def build_world(skip_export=False):
             blender_stage("canopy-light", "bake_forest_light.py", "--world", str(world))
             stamp.write_text(json.dumps({"signature": signature}))
             run_stage(assemble, logs / "assemble-lit.log")
+        # Impostors capture the trees as the world draws them; the world then draws them far away.
+        signature = hashlib.sha256(
+            (build / "impostor_variants.json").read_bytes() + (TOOLS / "bake_impostors.py").read_bytes()
+        ).hexdigest()
+        stamp = build / "impostor_stamp.json"
+        if not stamp.exists() or json.loads(stamp.read_text()).get("signature") != signature:
+            (build / "impostors.json").unlink(missing_ok=True)
+            blender_stage("impostors", "bake_impostors.py", "--world", str(world))
+            stamp.write_text(json.dumps({"signature": signature}))
+            run_stage(assemble, logs / "assemble-impostors.log")
     print(f"Forest world ready: {world / 'pine_forest.wbt'}", flush=True)
 
 

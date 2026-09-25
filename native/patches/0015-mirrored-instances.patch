@@ -1,0 +1,137 @@
+diff --git a/resources/wren/shaders/pbr_instanced.vert b/resources/wren/shaders/pbr_instanced.vert
+index 21fadef..8eb7f66 100644
+--- a/resources/wren/shaders/pbr_instanced.vert
++++ b/resources/wren/shaders/pbr_instanced.vert
+@@ -16,6 +16,7 @@ out vec2 penTexUv;
+ out mat3 inverseViewMatrix;
+ 
+ uniform samplerBuffer instanceTransforms;
++uniform int instanceOffset;  // first instance of this draw call (mirrored instances draw separately)
+ uniform mat4 textureTransform;
+ 
+ // Camera transforms for this frame
+@@ -27,9 +28,10 @@ layout(std140) uniform CameraTransforms {
+ cameraTransforms;
+ 
+ void main() {
+-  vec4 row0 = texelFetch(instanceTransforms, 3 * gl_InstanceID);
+-  vec4 row1 = texelFetch(instanceTransforms, 3 * gl_InstanceID + 1);
+-  vec4 row2 = texelFetch(instanceTransforms, 3 * gl_InstanceID + 2);
++  int instance = 3 * (gl_InstanceID + instanceOffset);
++  vec4 row0 = texelFetch(instanceTransforms, instance);
++  vec4 row1 = texelFetch(instanceTransforms, instance + 1);
++  vec4 row2 = texelFetch(instanceTransforms, instance + 2);
+   mat4 modelTransform = mat4(vec4(row0.x, row1.x, row2.x, 0.0), vec4(row0.y, row1.y, row2.y, 0.0),
+                              vec4(row0.z, row1.z, row2.z, 0.0), vec4(row0.w, row1.w, row2.w, 1.0));
+ 
+diff --git a/src/wren/Renderable.cpp b/src/wren/Renderable.cpp
+index 5c16f9d..61258ab 100644
+--- a/src/wren/Renderable.cpp
++++ b/src/wren/Renderable.cpp
+@@ -218,6 +218,8 @@ namespace wren {
+     mInstanceBoundsMesh(NULL),
+     mInstanceBuffer(0),
+     mInstanceTexture(0),
++    mMirroredInstancesStart(0),
++    mVisibleMirroredInstances(0),
+     mVisibilityRange(0.0f),
+     mInViewSpace(false),
+     mZSortedRendering(false),
+@@ -235,7 +237,20 @@ namespace wren {
+   }
+ 
+   void Renderable::setInstances(const float *rows, int count) {
+-    mInstances.assign(rows, rows + 12 * count);
++    // Mirrored instances (negative determinant) wind their faces the other way: store them
++    // last, to draw them in a second call with the front face inverted.
++    mInstances.clear();
++    mInstances.reserve(12 * count);
++    std::vector<float> mirrored;
++    for (int i = 0; i < count; ++i) {
++      const float *m = rows + 12 * i;
++      const float determinant =
++        m[0] * (m[5] * m[10] - m[6] * m[9]) - m[1] * (m[4] * m[10] - m[6] * m[8]) + m[2] * (m[4] * m[9] - m[5] * m[8]);
++      std::vector<float> &target = determinant < 0.0f ? mirrored : mInstances;
++      target.insert(target.end(), m, m + 12);
++    }
++    mMirroredInstancesStart = mInstances.size();
++    mInstances.insert(mInstances.end(), mirrored.begin(), mirrored.end());
+     mInstanceBoundsMesh = NULL;
+   }
+ 
+@@ -256,6 +271,7 @@ namespace wren {
+     const float maxDistance2 = mVisibilityRange.y > 0.0f ? mVisibilityRange.y * mVisibilityRange.y : INFINITY;
+ 
+     mVisibleInstances.clear();
++    mVisibleMirroredInstances = 0;
+     const size_t count = mInstances.size() / 12;
+     for (size_t i = 0; i < count; ++i) {
+       const float *m = &mInstances[12 * i];
+@@ -272,6 +288,8 @@ namespace wren {
+       if (!frustum.isInside(primitive::Sphere(center, mInstanceBounds.mRadius * scale)))
+         continue;
+       mVisibleInstances.insert(mVisibleInstances.end(), m, m + 12);
++      if (12 * i >= mMirroredInstancesStart)
++        ++mVisibleMirroredInstances;
+     }
+ 
+     const int visible = static_cast<int>(mVisibleInstances.size() / 12);
+@@ -313,27 +331,29 @@ namespace wren {
+     // to render cw and ccw meshes
+     const unsigned int frontFaceMode = glstate::getFrontFace();
+     const glm::vec3 &scale = parent()->scale();
+-    if (mInvertFrontFace) {
++    if (mInvertFrontFace)
+       glstate::setFrontFace((frontFaceMode == GL_CCW) ? GL_CW : GL_CCW);
+-
+-      if (scale.x * scale.y * scale.z >= 0.0) {
+-        const GLint location = glGetUniformLocation(program->glName(), "reverseNormals");
+-        if (location != -1)
+-          glUniform1i(location, true);
+-      }
+-    } else {
+-      if (scale.x * scale.y * scale.z < 0.0) {
+-        const GLint location = glGetUniformLocation(program->glName(), "reverseNormals");
+-        if (location != -1)
+-          glUniform1i(location, true);
+-      }
+-    }
++    // Set every draw: program uniforms outlive the renderable that set them.
++    const GLint reverseNormals = glGetUniformLocation(program->glName(), "reverseNormals");
++    if (reverseNormals != -1)
++      glUniform1i(reverseNormals, mInvertFrontFace != (scale.x * scale.y * scale.z < 0.0));
+ 
+     if (isInstanced()) {
+       const Camera *camera = Scene::instance()->currentViewport()->camera();
+       const int count = uploadVisibleInstances(program, glm::vec3(glm::inverse(camera->view())[3]), camera->frustum());
+-      if (count)
+-        mMesh->renderInstanced(mDrawingMode, count);
++      const int unmirrored = count - mVisibleMirroredInstances;
++      const GLint offset = glGetUniformLocation(program->glName(), "instanceOffset");
++      if (offset != -1)
++        glUniform1i(offset, 0);
++      if (unmirrored)
++        mMesh->renderInstanced(mDrawingMode, unmirrored);
++      if (mVisibleMirroredInstances) {
++        glstate::setFrontFace(glstate::getFrontFace() == GL_CCW ? GL_CW : GL_CCW);
++        if (offset != -1)
++          glUniform1i(offset, unmirrored);
++        mMesh->renderInstanced(mDrawingMode, mVisibleMirroredInstances);
++        glstate::setFrontFace(glstate::getFrontFace() == GL_CCW ? GL_CW : GL_CCW);
++      }
+     } else
+       mMesh->render(mDrawingMode);
+ 
+diff --git a/src/wren/Renderable.hpp b/src/wren/Renderable.hpp
+index c73459a..f43b6da 100644
+--- a/src/wren/Renderable.hpp
++++ b/src/wren/Renderable.hpp
+@@ -139,6 +139,8 @@ namespace wren {
+     const Mesh *mInstanceBoundsMesh;
+     unsigned int mInstanceBuffer;
+     unsigned int mInstanceTexture;
++    size_t mMirroredInstancesStart;  // instances are stored unmirrored first, then mirrored
++    int mVisibleMirroredInstances;
+     glm::vec2 mVisibilityRange;
+ 
+     int uploadVisibleInstances(const ShaderProgram *program, const glm::vec3 &eye, const Frustum &frustum);

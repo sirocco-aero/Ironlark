@@ -22,45 +22,35 @@ color, direction), the camera-visible sky (HDRI × 0.2 with its rotation), the
 lighting sky (Nishita × 0.7), and HD (1K) object textures downsampled from the
 source's originals.
 
-The world has no visible end. The viewer is fenced inside the exported area,
-above the ground (patch 0012), and the export now covers the whole source
-terrain (203 × 200 m). The source ends 20 m south of home, so beyond its edges
-comes a backdrop: the terrain mirrored across each edge (continuous at the
-seams) and distant forest drawn as impostors, fading into fog and horizon.
+The world has no visible end. The viewer is fenced inside the exported source
+terrain (203 × 200 m, patch 0012). Beyond it, the region mirrored across each
+edge: ground and river truly mirrored (continuous at the seams), trees and cover
+at their mirrored places but turned, so none faces its twin
+(`tools/forest_backdrop.py`). Trees past 150 m are impostors captured from the
+trees as drawn (`tools/bake_impostors.py`, patch 0017). The fog is a layer, so it
+has no walls (patch 0014).
 
-Open fidelity gaps against the source (measured: Webots is 1.15–1.96× brighter
-than Cycles lighting the same geometry with the source's lights; 1.4–2.3×
-before shadows):
+Open fidelity gaps against the source (Cycles lighting the same geometry with the
+source's lights: 1.0–2.3× brighter at the pinned views):
 
-- **Shadows**: done for the main sun (patch 0011). The second sun (strength 1
-  of 6) is unshadowed; supporting two shadowing lights would close that.
 - **Sky occlusion**: every surface sees the whole sky; under the canopy the
-  source sees little of it.
-
-- **Fog**: the source's scattering volume now renders (patch 0008), shadowed
-  by the canopy bake. Still to do: robot `Camera` devices, and calibration
-  against `./loiter render-reference`, which needs more than ~26 GB RAM even
-  with the trees' twigs kept instanced.
-- **Ground cover**: done. All 55,277 source placements, instanced, with the
-  source's camera-distance LODs (patch 0009). The export used to lose most of
-  them: the source picks LODs by distance to a camera it never loaded.
-- **Terrain**: four 4K baked tiles (60 m each). The source tiles its ground
+  source sees little of it. With the second sun (strength 1 of 6) unshadowed,
+  shaded ground stays too bright (2.2× at the drone's view).
+- **Fog**: robot `Camera` devices lack it; calibrate against
+  `./loiter render-reference` (needs more than ~26 GB RAM).
+- **Terrain**: four 4K baked tiles (~100 m each). The source tiles its ground
   materials under masks; matching that needs a Webots detail-map patch, and
   would be sharper up close with far less VRAM.
-
-- **River**: the source's is clear water (IOR 1.333, roughness 0) with foam
-  streaks flowing along the river. Patch 0010 renders both, and the export now
-  keeps the flow coordinates, but it stays opaque until reflections exist
-  (screen-space reflections): at grazing angles clear water mirrors the banks
-  and trees, and Webots can only reflect sky.
-- **Real-time shadows** are off: Webots' stencil shadows cost ~7× frame time
-  and cannot shadow meshes over ~21,800 triangles. Tree shadows on the ground
-  are baked. Revisit with cascaded shadow maps once detail levels land, only
-  within a fixed frame budget.
+- **River**: the source's is clear water with flowing foam (patch 0010 renders
+  both). Opaque until reflections exist (screen-space reflections): clear water
+  at grazing angles mirrors the banks and trees; Webots can only reflect sky.
+- **Backdrop reach**: one mirrored ring (about 200 m past each edge). From the
+  70 m ceiling, a second ring of ground and impostors would push the horizon out.
 - **LiDAR vs foliage**: range sensors ignore `alphaCutoff`, so twig cards
   would read as solid planes. Fix before LiDAR work.
-- Measure fidelity: render matching views in Cycles and Webots and score them
-  (FLIP/SSIM), per asset and per view.
+
+Known bugs: with `ambientOcclusionRadius 0` the forest renders only sky (a small
+test world renders fine); cause not yet found.
 
 ### Candidates for later regions
 

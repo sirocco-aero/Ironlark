@@ -55,7 +55,7 @@ def build_terrain_tiles(build,out):
             for i in range(1,len(polygon)-1):
                 face=[polygon[0],polygon[i],polygon[i+1]]
                 if np.linalg.norm(np.cross(face[1][:3]-face[0][:3],face[2][:3]-face[0][:3]))>1e-12:faces.append(face)
-    nodes=[]
+    nodes=[];backdrop=[]
     for (x,y),faces in tiles.items():
         prefix=f'terrain_{x}_{y}'
         write_tile(out/'meshes'/f'{prefix}.obj',faces)
@@ -64,13 +64,19 @@ def build_terrain_tiles(build,out):
         # Unlit albedo: the sun's shadow map shades the ground at runtime.
         shutil.copyfile(albedo,out/'meshes'/f'{prefix}_diff.png')
         shutil.copyfile(build/f'{prefix}_normal.png',out/'meshes'/f'{prefix}_normal.png')
-        nodes.append(f'''Shape {{
-            appearance PBRAppearance {{
+        appearance=f'''appearance PBRAppearance {{
               baseColorMap ImageTexture {{ url "meshes/{prefix}_diff.png" repeatS FALSE repeatT FALSE }}
               normalMap ImageTexture {{ url "meshes/{prefix}_normal.png" repeatS FALSE repeatT FALSE }}
               roughness 0.95 metalness 0
             }}
-            geometry Mesh {{ url "meshes/{prefix}.obj" }}
+            geometry Mesh {{ url "meshes/{prefix}.obj" }}'''
+        nodes.append(f'''Shape {{
+            {appearance}
             castShadows TRUE
         }}''')
-    return '\n'.join(nodes)
+        # The same tile, mirrored into every backdrop tile (rows written with the river's).
+        backdrop.append(f'''Shape {{
+            {appearance}
+            instancesUrl [ "meshes/instances_backdrop.bin" ]
+        }}''')
+    return '\n'.join(nodes),backdrop

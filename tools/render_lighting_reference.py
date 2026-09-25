@@ -174,7 +174,11 @@ for found in re.finditer(r"instancesUrl", text):
         match = re.search(name + r' ImageTexture \{ url "([^"]+)"', block)
         return args.world / match[1] if match else None
 
+    if "impostor TRUE" in block:
+        continue  # the reference draws the trees themselves at every distance
     band = re.search(r"visibilityRange ([\d.]+) ([\d.]+)", block)
+    if "meshes/visual_" in block:
+        band = None
     rows = np.fromfile(args.world / re.search(r'instancesUrl \[ "([^"]+)" \]', block)[1], dtype="<f4")
     rows = rows.reshape(-1, 3, 4).astype(np.float64)
     origins, quats, scales = decompose(rows)

@@ -39,7 +39,8 @@ camera = bpy.data.objects.new("panorama", bpy.data.cameras.new("panorama"))
 camera.data.type = "PANO"
 camera.data.panorama_type = "EQUIRECTANGULAR"
 # With this rotation a panorama matches Blender's environment-texture layout:
-# u = atan2(y, -x) / 2pi + 1/2, v = atan2(z, |xy|) / pi + 1/2, rows from the bottom.
+# u = -atan2(y, x) / 2pi + 1/2 (+x at the centre), v = atan2(z, |xy|) / pi + 1/2, rows
+# from the bottom.
 camera.rotation_euler = (math.pi / 2, 0, -math.pi / 2)
 scene.collection.objects.link(camera)
 scene.camera = camera
@@ -57,18 +58,32 @@ def panorama(name, width):
     return pixels
 
 
+# Webots (ENU) fills OpenGL cube face g (+X, -X, +Y, -Y, +Z, -Z) from the url field
+# named here, rotated as its loader does, and samples it with (x, y, -z) of a world
+# direction (WbBackground.cpp, skybox.frag, pbr.frag).
+WEBOTS_FACES = {"back": (0, 90), "front": (1, -90), "right": (2, 0), "left": (3, 180), "bottom": (4, -90), "top": (5, -90)}
+
+
+def face_directions(name, size):
+    """World direction shown by each file pixel (rows from the top) of a Webots face."""
+    face, rotation = WEBOTS_FACES[name]
+    row, col = np.mgrid[0:size, 0:size]
+    last = size - 1
+    # File pixel -> texel of the rotated face uploaded to OpenGL (row = t, column = s).
+    r, c = {0: (row, col), 90: (col, last - row), -90: (last - col, row), 180: (last - row, last - col)}[rotation]
+    sc, tc = 2 * (c + 0.5) / size - 1, 2 * (r + 0.5) / size - 1
+    one = np.ones_like(sc)
+    sample = [(one, -tc, -sc), (-one, -tc, sc), (sc, one, tc), (sc, -one, -tc), (sc, -tc, one), (-sc, -tc, -one)][face]
+    d = np.stack([sample[0], sample[1], -sample[2]], axis=-1)
+    return d / np.linalg.norm(d, axis=-1, keepdims=True)
+
+
 def cube(pixels, prefix, size):
     height, width = pixels.shape[:2]
-    u, v = np.meshgrid(np.linspace(-1, 1, size), np.linspace(-1, 1, size))
-    one = np.ones_like(u)
-    faces = {"right": (one, v, -u), "left": (-one, v, u), "top": (u, one, -v),
-             "bottom": (u, -one, v), "front": (-u, v, -one), "back": (u, v, one)}
-    for name, parts in faces.items():
-        d = np.stack(parts, axis=-1)
-        d /= np.linalg.norm(d, axis=-1, keepdims=True)
-        # Faces are defined in Webots' Y-up background frame; the world is Z-up.
-        x, y, z = d[..., 0], -d[..., 2], d[..., 1]
-        sx = ((np.arctan2(y, -x) / (2 * math.pi) + 0.5) * width - 0.5) % width
+    for name in WEBOTS_FACES:
+        d = face_directions(name, size)
+        x, y, z = d[..., 0], d[..., 1], d[..., 2]
+        sx = ((0.5 - np.arctan2(y, x) / (2 * math.pi)) * width - 0.5) % width
         sy = np.clip((np.arctan2(z, np.hypot(x, y)) / math.pi + 0.5) * height - 0.5, 0, height - 1)
         ix, iy = np.floor(sx).astype(int), np.floor(sy).astype(int)
         fx, fy = (sx - ix)[..., None], (sy - iy)[..., None]
@@ -77,7 +92,7 @@ def cube(pixels, prefix, size):
                  + (pixels[iy1, ix] * (1 - fx) + pixels[iy1, ix1] * fx) * fy)
         color[..., 3] = 1
         face = bpy.data.images.new(name, width=size, height=size, float_buffer=True)
-        face.pixels.foreach_set(color.astype(np.float32).ravel())
+        face.pixels.foreach_set(color[::-1].astype(np.float32).ravel())  # Blender rows run bottom up
         face.file_format = "HDR"
         face.filepath_raw = str(out / f"{prefix}_{name}.hdr")
         face.save()
