@@ -495,6 +495,23 @@ def instanced_tree_shapes(parts, out, far):
     return nodes
 
 
+# Far impostor trees thin out with distance past the fence, as the source's scatter thins
+# its trees with camera distance; the kept ones widen so the canopy stays closed:
+# (distance, fraction kept) steps.
+THINNING = [(400.0, 0.5), (800.0, 0.25), (1400.0, 0.125)]
+
+
+def thin_with_distance(rows, variants, seed=11):
+    distance = forest_backdrop.fence_distance(rows[:, :, 3])
+    keep = np.ones(len(rows))
+    for start, fraction in THINNING:
+        keep[distance >= start] = fraction
+    chosen = np.random.default_rng(seed).random(len(rows)) < keep
+    kept = rows[chosen].copy()
+    kept[:, :, :2] *= (1 / np.sqrt(keep[chosen]))[:, None, None]  # widen: the tree's own x and y axes
+    return kept, [v for v, c in zip(variants, chosen) if c]
+
+
 # Trees beyond this distance are drawn as impostors (tools/bake_impostors.py). A view
 # covers the capture sphere's diameter; at this distance on a 1080-line screen with the
 # viewer's 1 rad field of view, a metre spans about 12 pixels.
@@ -574,7 +591,7 @@ def impostor_shapes(build, out, visual_trees, rows, variants):
         return []
     for variant in declared:  # a bake from an older capture lacks passes: rebake first
         with np.load(build / f"impostor_{variant}.npz") as data:
-            if not {"albedo", "normal", "depth", "alpha"} <= set(data.files):
+            if not {"albedo", "normal", "depth", "alpha", "top_albedo", "top_alpha"} <= set(data.files):
                 return []
     (out / "meshes/impostor_quad.obj").write_text(IMPOSTOR_QUAD)
     nodes = []
@@ -682,8 +699,23 @@ def instance_cover(build, out, cover_index):
 
 
 def river_backdrop(out):
+    from forest_terrain import decimate_obj
+
     forest_backdrop.ground_rows().astype("<f4").tofile(out / "meshes/instances_backdrop.bin")
-    return """Shape {
+    forest_backdrop.ground_rows(forest_backdrop.far_rings(), 2).astype("<f4").tofile(
+        out / "meshes/instances_backdrop_far.bin")
+    decimate_obj(out / "meshes/river.obj", out / "meshes/river_far.obj", 2.0)
+    far = """Shape {
+      appearance PBRAppearance {
+        baseColor 0.10 0.23 0.26
+        roughness 0.15
+        metalness 0
+        flowFoam 1
+      }
+      geometry Mesh { url "meshes/river_far.obj" }
+      instancesUrl [ "meshes/instances_backdrop_far.bin" ]
+    }\n"""
+    return far + """Shape {
       appearance PBRAppearance {
         baseColor 0.10 0.23 0.26
         roughness 0.15
@@ -801,15 +833,18 @@ def main():
                     i=len(colliders),
                 )
             )
-    # The backdrop's trees: each tree copied whole, so its parts turn together.
+    # The backdrop's trees: each tree copied whole, so its parts turn together. Impostors
+    # fill every ring; full trees only copies that can come within their distance.
     tree_rows = np.array(tree_rows)
-    backdrop, sources = forest_backdrop.copies(tree_rows)
+    backdrop, sources = forest_backdrop.copies(tree_rows, rings=forest_backdrop.far_rings())
     tree_variants = [t["variant"] for t in trees]
-    for row, original in zip(backdrop, sources):
+    near = forest_backdrop.fence_distance(backdrop[:, :, 3]) < IMPOSTOR_DISTANCE
+    for row, original in zip(backdrop[near], sources[near]):
         for part in visual_trees[tree_variants[original]]:
             tree_parts[part_key(part)].append(row)
-    impostors = impostor_shapes(build, out, visual_trees, np.concatenate([tree_rows, backdrop]),
-                                tree_variants + [tree_variants[s] for s in sources])
+    far_rows, far_variants = thin_with_distance(backdrop, [tree_variants[s] for s in sources])
+    impostors = impostor_shapes(build, out, visual_trees, np.concatenate([tree_rows, far_rows]),
+                                tree_variants + far_variants)
     solids.extend(instanced_tree_shapes(tree_parts, out, IMPOSTOR_DISTANCE if impostors else None))
     solids.extend(impostors)
     print(

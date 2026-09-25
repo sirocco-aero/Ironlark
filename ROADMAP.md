@@ -28,8 +28,12 @@ terrain (203 × 200 m, patch 0012). Beyond it, the region mirrored across each
 edge of the rectangle the terrain fully covers (its edges are ragged by up to 3 m): ground and river truly mirrored (continuous at the seams), trees and cover
 at their mirrored places but turned, so none faces its twin
 (`tools/forest_backdrop.py`). Trees past 150 m are impostors captured from the
-trees as drawn (`tools/bake_impostors.py`, patch 0017). The fog is a layer, so it
-has no walls (patch 0014).
+trees as drawn (`tools/bake_impostors.py`, patch 0017), out to 2 km, where fog
+seen from the 70 m ceiling hides what lies beyond; past 400 m they thin with
+distance and widen to keep the canopy closed, as the source's scatter thins with
+camera distance. Ground past the first ring is decimated. The fog is a layer
+with a soft top (patches 0014, 0021) whose far haze meets the sky at the
+horizon (patch 0020). Rendering: 23 ms per step (19 without the far rings).
 
 Open fidelity gaps against the source (Cycles lighting the same geometry with the
 source's lights: 0.85–1.9× as bright at the pinned views):
@@ -49,8 +53,6 @@ source's lights: 0.85–1.9× as bright at the pinned views):
 - **Foliage shimmer**: needles thinner than a pixel flip in and out as the view
   moves (22% of pixels for a 2 cm step). Needs multisampling with
   alpha-to-coverage for masked materials.
-- **Backdrop reach**: one mirrored ring (about 200 m past each edge). From the
-  70 m ceiling, a second ring of ground and impostors would push the horizon out.
 - **LiDAR vs foliage**: range sensors ignore `alphaCutoff`, so twig cards
   would read as solid planes. Fix before LiDAR work.
 

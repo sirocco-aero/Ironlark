@@ -9,7 +9,8 @@ from PIL import Image
 # (color 0.8, density 0.004, anisotropy 0.8), in Blender world coordinates.
 # Loiter keeps its height but not its sides: from the world's edge the box's
 # walls showed as hard lines, so the fog is a horizontal layer. Seen from above,
-# its top was a hard line too: density fades over the top FOG_FALLOFF metres.
+# its top was a hard line too: above the box, density decays over FOG_FALLOFF
+# metres instead of stopping, and inside it stays the source's.
 FOG_FALLOFF = 10.0
 FOG_CENTER = (0.6179197, 2.4716792, 11.4727554)
 FOG_SIZE = (208.8162231, 208.8162231, 29.1523743)

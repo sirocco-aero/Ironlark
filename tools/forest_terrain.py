@@ -54,6 +54,46 @@ def inner_rect(build):
             float(boundary[side==2,1].max()),float(boundary[side==3,1].min()))
 
 
+def decimate_obj(src, dst, cell, keep=None):
+    """Vertex clustering for far copies: vertices in each cell-sized grid square merge
+    (position, UV and normal averaged); degenerate triangles go. keep(xy) marks vertices
+    left as they are, so seams between copies stay closed."""
+    positions, uvs, normals, faces = [], [], [], []
+    for line in src.read_text().splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == "v":
+            positions.append(list(map(float, parts[1:4])))
+        elif parts[0] == "vt":
+            uvs.append(list(map(float, parts[1:3])))
+        elif parts[0] == "vn":
+            normals.append(list(map(float, parts[1:4])))
+        elif parts[0] == "f":
+            faces.append([tuple(int(i) - 1 for i in c.split("/")) for c in parts[1:]])
+    corners = np.array([c for f in faces for c in f])  # (v, t, n) per corner
+    p, uv, n = np.array(positions)[corners[:, 0]], np.array(uvs)[corners[:, 1]], np.array(normals)[corners[:, 2]]
+    key = np.floor(p[:, :2] / cell).astype(np.int64)
+    fixed = keep(p[:, :2]) if keep else np.zeros(len(p), bool)
+    # Kept vertices are their own cluster: key them by their exact position.
+    labels_input = np.where(fixed[:, None], np.round(p[:, :2] * 1000).astype(np.int64) + (1 << 40), key)
+    _, label = np.unique(labels_input, axis=0, return_inverse=True)
+    label = label.ravel()
+    count = np.bincount(label).astype(float)[:, None]
+    mean = lambda values: np.stack([np.bincount(label, values[:, k]) for k in range(values.shape[1])], 1) / count
+    cp, cuv, cn = mean(p), mean(uv), mean(n)
+    cn /= np.maximum(np.linalg.norm(cn, axis=1, keepdims=True), 1e-9)
+    tri = label.reshape(-1, 3)
+    tri = tri[(tri[:, 0] != tri[:, 1]) & (tri[:, 1] != tri[:, 2]) & (tri[:, 0] != tri[:, 2])]
+    with dst.open("w") as f:
+        f.write(f"# {src.name}, vertices clustered to {cell} m for far copies.\n")
+        f.writelines(f"v {x:.3f} {y:.3f} {z:.3f}\n" for x, y, z in cp)
+        f.writelines(f"vt {u:.6f} {v:.6f}\n" for u, v in cuv)
+        f.writelines(f"vn {x:.4f} {y:.4f} {z:.4f}\n" for x, y, z in cn)
+        f.writelines(f"f {a + 1}/{a + 1}/{a + 1} {b + 1}/{b + 1}/{b + 1} {c + 1}/{c + 1}/{c + 1}\n" for a, b, c in tri)
+    return len(tri)
+
+
 def build_terrain_tiles(build,out,rect):
     verts=[];uvs=[];norms=[];triangles=[]
     for line in (build/'terrain.obj').read_text().splitlines():
@@ -102,9 +142,18 @@ def build_terrain_tiles(build,out,rect):
             {appearance}
             castShadows TRUE
         }}''')
-        # The same tile, mirrored into every backdrop tile (rows written with the river's).
+        # The same tile, mirrored into every backdrop tile (rows written with the river's);
+        # past the first ring, coarser, with its edges kept so the seams stay closed.
         backdrop.append(f'''Shape {{
             {appearance}
             instancesUrl [ "meshes/instances_backdrop.bin" ]
+        }}''')
+        points=np.array([p[:3] for f in faces for p in f])
+        lo=np.array([points[:,0].min(),-points[:,2].max()]);hi=np.array([points[:,0].max(),-points[:,2].min()])
+        edge=lambda xy:(np.abs(xy-lo)<0.01).any(1)|(np.abs(xy-hi)<0.01).any(1)
+        decimate_obj(out/'meshes'/f'{prefix}.obj',out/'meshes'/f'{prefix}_far.obj',4.0,edge)
+        backdrop.append(f'''Shape {{
+            {appearance.replace(f'meshes/{prefix}.obj', f'meshes/{prefix}_far.obj')}
+            instancesUrl [ "meshes/instances_backdrop_far.bin" ]
         }}''')
     return '\n'.join(nodes),backdrop

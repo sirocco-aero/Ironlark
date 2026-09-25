@@ -113,6 +113,9 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0018-fog-horizon** | `Fog.boxFalloff`: density fades to zero over that distance inside the box's bounded faces, so the fog layer's top is soft. Past the 400 m marched with canopy shadow, a few unshadowed steps carry the haze to the horizon. From above, the layer's top showed as a hard line against the sky. | — |
 | **0019-white-foam** | `flowFoam` foam is white and opaque, and its bump blends with the flat normal by the Bump node's strength, as in the source. Foam had only bumped normals: dark streaks with dark rims. | — |
 | **0020-horizon-haze** | `Fog.horizonRadiance`: the visible sky just above the horizon, by azimuth; far haze converges to it, so haze below the horizon meets the sky above it. It converged to the medium's ambient light, bluer and darker, and a hard line showed from altitude. | — |
+| **0021-fog-falloff-outside** | `boxFalloff` now thins density outside the box, exponentially, instead of inside it: the source's fog stays whole, and from above near-level rays gather haze towards the horizon. | — |
+| **0022-instance-cells** | Instances sorted into 64 m cells; whole cells are culled by frustum and distance band before any instance is tested. The backdrop holds 1.5M tree copies before thinning. | — |
+| **0023-impostor-early-depth** | Impostor quads sit at the front of their capture sphere, so texel depths only push fragments back, declared with `depth_greater`: the GPU rejects hidden fragments before shading again. | impostors 7.1 → 4.2 ms |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,
