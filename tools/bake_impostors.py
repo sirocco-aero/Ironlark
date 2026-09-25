@@ -8,8 +8,7 @@ so that a single orthographic camera sees it from that view's direction, in its 
 
     blender --background --python bake_impostors.py -- --build <forest-build> --world <world>
         ->  <build>/impostor_<variant>.npz  (albedo: linear RGB, alpha, normal: capture space,
-                                            depth: towards the view, 0..1 over the sphere; top_albedo, top_alpha: seen
-                                            from straight above)
+                                            depth: towards the view, 0..1 over the sphere)
             <build>/impostors.json          (capture sphere per variant, in the tree's frame)
 """
 import argparse
@@ -209,34 +208,8 @@ for name, parts in sorted(variants.items()):
         result[output] = pixels
     coverage = np.clip(result["coverage"][..., 0], 0, 1)
 
-    # The tree from straight above (for the far-field forest): one copy, upright, image
-    # right = +x and up = +y of the tree's frame, covering the capture sphere's diameter.
-    for obj in list(copies.objects):
-        bpy.data.objects.remove(obj, do_unlink=True)
-    for mesh in meshes:
-        obj = bpy.data.objects.new(f"{name}:top", mesh)
-        obj.matrix_world = Matrix.Translation(Vector(-center))
-        copies.objects.link(obj)
-    camera.location = (0, 0, 4 * radius)
-    camera.rotation_euler = (0, 0, 0)
-    camera.data.ortho_scale = 2 * radius
-    scene.render.resolution_x = scene.render.resolution_y = SIZE
-    top = {}
-    for output in ("albedo", "coverage"):
-        for mesh, part in zip(meshes, parts):
-            mesh.materials[0] = material(part, output, radius)
-        path = args.build / f"impostor_{name}_top.exr"
-        scene.render.filepath = str(path)
-        bpy.ops.render.render(write_still=True)
-        img = bpy.data.images.load(str(path))
-        top[output] = np.array(img.pixels[:], np.float32).reshape(SIZE, SIZE, 4)[::-1, :, :3]
-        bpy.data.images.remove(img)
-        path.unlink()
-    scene.render.resolution_x = scene.render.resolution_y = FRAMES * SIZE
-
     np.savez_compressed(OUT / f"impostor_{name}.npz", albedo=result["albedo"], normal=result["normal"],
-                        depth=result["depth"][..., 0], alpha=coverage, top_albedo=top["albedo"],
-                        top_alpha=np.clip(top["coverage"][..., 0], 0, 1))
+                        depth=result["depth"][..., 0], alpha=coverage)
     report[name] = {"center": center.tolist(), "radius": radius}
     report_path.write_text(json.dumps(report, indent=1))
     print("IMPOSTOR", name, "radius", round(radius, 2), flush=True)

@@ -591,7 +591,7 @@ def impostor_shapes(build, out, visual_trees, rows, variants):
         return []
     for variant in declared:  # a bake from an older capture lacks passes: rebake first
         with np.load(build / f"impostor_{variant}.npz") as data:
-            if not {"albedo", "normal", "depth", "alpha", "top_albedo", "top_alpha"} <= set(data.files):
+            if not {"albedo", "normal", "depth", "alpha"} <= set(data.files):
                 return []
     (out / "meshes/impostor_quad.obj").write_text(IMPOSTOR_QUAD)
     nodes = []
