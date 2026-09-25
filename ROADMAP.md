@@ -22,12 +22,17 @@ color, direction), the camera-visible sky (HDRI × 0.2 with its rotation), the
 lighting sky (Nishita × 0.7), and HD (1K) object textures downsampled from the
 source's originals.
 
-Open fidelity gaps against the source (measured: Webots is 1.4–2.3× brighter
-than Cycles lighting the same geometry with the source's lights):
+The world has no visible end: the viewer is fenced into the playable region
+(above the ground, inside its bounds, sliding along the limits), and beyond
+the fence the rest of the source's terrain and forest continues at its own
+low detail into the fog and the sky's horizon.
 
-- **Shadows above the ground**: only the terrain carries the canopy's shade;
-  trees, trunks and cover are fully sunlit. Needs real-time sun shadow maps
-  (affordable now: 5.7 ms frames) with alpha-tested instanced casters.
+Open fidelity gaps against the source (measured: Webots is 1.15–1.96× brighter
+than Cycles lighting the same geometry with the source's lights; 1.4–2.3×
+before shadows):
+
+- **Shadows**: done for the main sun (patch 0011). The second sun (strength 1
+  of 6) is unshadowed; supporting two shadowing lights would close that.
 - **Sky occlusion**: every surface sees the whole sky; under the canopy the
   source sees little of it.
 

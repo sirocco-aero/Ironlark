@@ -43,6 +43,23 @@ for name, pose in scene['cameras'].items():
     views.append({'view': name, 'sim_seconds': round(r.getTime() - sim0, 3),
                   'wall_seconds': round(wall, 3),
                   'real_time_factor': round((r.getTime() - sim0) / wall, 3)})
+# Moving view: fly the forest camera forward at 4 m/s, as a drone or a dragging viewer would.
+pose = scene['cameras']['forest']
+eye, target = [float(v) for v in pose['eye']], [float(v) for v in pose['target']]
+heading = [t - e for t, e in zip(target, eye)]
+norm = sum(h * h for h in heading) ** 0.5
+heading = [h / norm for h in heading]
+sim0, wall0 = r.getTime(), time.monotonic()
+while r.getTime() - sim0 < seconds:
+    travelled = 4.0 * (r.getTime() - sim0)
+    position = [e + h * travelled for e, h in zip(eye, heading)]
+    view.getField('position').setSFVec3f(position)
+    view.getField('orientation').setSFRotation(look_at(position, [p + h for p, h in zip(position, heading)]))
+    if r.step(step * 10) == -1:
+        break
+wall = time.monotonic() - wall0
+views.append({'view': 'moving', 'sim_seconds': round(r.getTime() - sim0, 3), 'wall_seconds': round(wall, 3),
+              'real_time_factor': round((r.getTime() - sim0) / wall, 3)})
 report['views'] = views
 Path(os.environ['LOITER_REPORT']).write_text(json.dumps(report))
 r.simulationQuit(0)

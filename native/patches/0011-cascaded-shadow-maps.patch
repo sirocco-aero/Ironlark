@@ -1,0 +1,875 @@
+diff --git a/include/wren/glsl_layout.h b/include/wren/glsl_layout.h
+index eaef1e0..88b1ca4 100644
+--- a/include/wren/glsl_layout.h
++++ b/include/wren/glsl_layout.h
+@@ -42,6 +42,7 @@ typedef enum WrGlslLayoutUniformBuffer {
+   WR_GLSL_LAYOUT_UNIFORM_BUFFER_CAMERA_TRANSFORMS,
+   WR_GLSL_LAYOUT_UNIFORM_BUFFER_FOG,
+   WR_GLSL_LAYOUT_UNIFORM_BUFFER_OVERLAY,
++  WR_GLSL_LAYOUT_UNIFORM_BUFFER_SHADOWS,
+   WR_GLSL_LAYOUT_UNIFORM_BUFFER_COUNT
+ } WrGlslLayoutUniformBuffer;
+ 
+diff --git a/include/wren/scene.h b/include/wren/scene.h
+index ec9fd2e..597e8b0 100644
+--- a/include/wren/scene.h
++++ b/include/wren/scene.h
+@@ -59,6 +59,9 @@ void wr_scene_set_skybox(WrScene *scene, WrRenderable *renderable);
+ void wr_scene_set_hdr_clear_quad(WrScene *scene, WrRenderable *renderable);
+ void wr_scene_set_fog_program(WrScene *scene, WrShaderProgram *program);
+ void wr_scene_set_shadow_volume_program(WrScene *scene, WrShaderProgram *program);
++/* Directional lights cast through cascaded shadow maps of size^2 texels up to max_distance from the camera. */
++void wr_scene_set_shadow_map(WrScene *scene, WrShaderProgram *program, WrShaderProgram *instanced_program, int size,
++                             float max_distance);
+ 
+ void wr_scene_enable_skybox(WrScene *scene, bool enable);
+ void wr_scene_enable_hdr_clear(WrScene *scene, bool enable);
+diff --git a/resources/wren/shaders/pbr.frag b/resources/wren/shaders/pbr.frag
+index 4f36932..c5eab6a 100644
+--- a/resources/wren/shaders/pbr.frag
++++ b/resources/wren/shaders/pbr.frag
+@@ -8,6 +8,7 @@ const int maxPointLights = 48;
+ const int maxSpotLights = 48;
+ 
+ in vec3 fragmentPosition;
++in vec3 worldPosition;
+ in vec3 fragmentNormal;
+ in vec2 texUv;
+ in vec2 penTexUv;
+@@ -20,6 +21,36 @@ uniform sampler2D inputTextures[13];
+ uniform samplerCube cubeTextures[1];
+ uniform bool reverseNormals;
+ uniform float simulationTime;  // seconds
++uniform sampler2DArrayShadow shadowMap;
++
++// Cascaded shadow maps of one directional light (see ShadowMap).
++layout(std140) uniform Shadows {
++  mat4 lightViewProjection[3];
++  vec4 splits;      // view distance at which each cascade ends
++  vec4 texelSizes;  // world size of a shadow map texel, per cascade
++  vec4 params;      // x: enabled, y: index of the light among directional lights
++}
++shadows;
++
++// Lit fraction of the shadowing light: 4 bilinear depth comparisons (16 texels), offset along
++// the normal by about a texel against self-shadowing, fading out past the last cascade.
++float sunVisibility(vec3 worldNormal) {
++  float distance = -fragmentPosition.z;
++  int cascade = distance < shadows.splits.x ? 0 : (distance < shadows.splits.y ? 1 : 2);
++  if (distance >= shadows.splits.z)
++    return 1.0;
++  vec3 p = worldPosition + worldNormal * 1.5 * shadows.texelSizes[cascade];
++  vec4 lightPosition = shadows.lightViewProjection[cascade] * vec4(p, 1.0);
++  vec3 c = lightPosition.xyz / lightPosition.w * 0.5 + 0.5;
++  vec2 texel = vec2(1.0) / vec2(textureSize(shadowMap, 0).xy);
++  float lit = 0.0;
++  for (int i = 0; i < 4; ++i) {
++    vec2 offset = (vec2(i & 1, i >> 1) - 0.5) * texel;
++    lit += texture(shadowMap, vec4(c.xy + offset, float(cascade), c.z));
++  }
++  float fade = clamp((shadows.splits.z - distance) / (0.1 * shadows.splits.z), 0.0, 1.0);
++  return mix(1.0, lit * 0.25, fade);
++}
+ 
+ struct PBRInfo {
+   float NdotL;                // cos angle between normal and light direction
+@@ -401,8 +432,9 @@ void main() {
+     l = -vec3(light.direction);
+     h = normalize(l + v);
+ 
+-    color += PBRpass(l, viewFragmentNormal, v, h, light.colorAndIntensity, perceptualRoughness, metalness,
+-                     specularEnvironmentR0, specularEnvironmentR90, alphaRoughness, diffuseColor, specularColor);
++    float visibility = shadows.params.x > 0.0 && i == int(shadows.params.y) ? sunVisibility(worldFragmentNormal) : 1.0;
++    color += visibility * PBRpass(l, viewFragmentNormal, v, h, light.colorAndIntensity, perceptualRoughness, metalness,
++                                  specularEnvironmentR0, specularEnvironmentR90, alphaRoughness, diffuseColor, specularColor);
+   }
+ 
+   // Apply active point lights
+diff --git a/resources/wren/shaders/pbr.vert b/resources/wren/shaders/pbr.vert
+index 3f78a7e..260b67e 100644
+--- a/resources/wren/shaders/pbr.vert
++++ b/resources/wren/shaders/pbr.vert
+@@ -6,6 +6,7 @@ layout(location = 2) in vec2 vTexCoord;
+ layout(location = 4) in vec2 vUnwrappedTexCoord;
+ 
+ out vec3 fragmentPosition;
++out vec3 worldPosition;
+ out vec3 fragmentNormal;
+ out vec2 texUv;
+ out vec2 penTexUv;
+@@ -26,6 +27,7 @@ void main() {
+   inverseViewMatrix = mat3(inverse(cameraTransforms.view));
+   mat4 modelView = cameraTransforms.view * modelTransform;
+ 
++  worldPosition = vec3(modelTransform * vec4(vCoord, 1.0));
+   vec4 vCoordTransformed = modelView * vec4(vCoord, 1.0);
+   fragmentPosition = vec3(vCoordTransformed);
+   gl_Position = cameraTransforms.infiniteProjection * vCoordTransformed;
+diff --git a/resources/wren/shaders/pbr_instanced.vert b/resources/wren/shaders/pbr_instanced.vert
+index dd2e5dc..21fadef 100644
+--- a/resources/wren/shaders/pbr_instanced.vert
++++ b/resources/wren/shaders/pbr_instanced.vert
+@@ -9,6 +9,7 @@ layout(location = 2) in vec2 vTexCoord;
+ layout(location = 4) in vec2 vUnwrappedTexCoord;
+ 
+ out vec3 fragmentPosition;
++out vec3 worldPosition;
+ out vec3 fragmentNormal;
+ out vec2 texUv;
+ out vec2 penTexUv;
+@@ -35,6 +36,7 @@ void main() {
+   inverseViewMatrix = mat3(inverse(cameraTransforms.view));
+   mat4 modelView = cameraTransforms.view * modelTransform;
+ 
++  worldPosition = vec3(modelTransform * vec4(vCoord, 1.0));
+   vec4 vCoordTransformed = modelView * vec4(vCoord, 1.0);
+   fragmentPosition = vec3(vCoordTransformed);
+   gl_Position = cameraTransforms.infiniteProjection * vCoordTransformed;
+diff --git a/resources/wren/shaders/shadow_depth.frag b/resources/wren/shaders/shadow_depth.frag
+new file mode 100644
+index 0000000..bb4e5a6
+--- /dev/null
++++ b/resources/wren/shaders/shadow_depth.frag
+@@ -0,0 +1,31 @@
++#version 330 core
++
++// Alpha-masked texels cast no shadow, exactly as they draw no color (PBRAppearance.alphaCutoff).
++
++in vec2 texUv;
++
++uniform sampler2D inputTextures[1];
++uniform bool alphaMasked;
++
++layout(std140) uniform PbrMaterial {
++  vec4 baseColorAndTransparency;
++  vec4 roughnessMetalnessNormalMapFactorOcclusion;
++  vec4 backgroundColorAndIblStrength;
++  vec4 emissiveColorAndIntensity;
++  vec4 baseColorRoughnessMetalnessOcclusionMapFlags;
++  vec4 normalBrdfEmissiveBackgroundFlags;
++  vec4 penFlags;
++  vec4 cubeTextureFlags;
++  vec4 alphaCutoff;
++  vec4 transmission;
++}
++material;
++
++void main() {
++  if (alphaMasked && material.alphaCutoff.x > 0.0 && material.baseColorRoughnessMetalnessOcclusionMapFlags.x > 0.0) {
++    vec2 texel = texUv * vec2(textureSize(inputTextures[0], 0));
++    float mip = max(0.0, 0.5 * log2(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel)))));
++    if (texture(inputTextures[0], texUv).a * (1.0 + 0.25 * mip) < material.alphaCutoff.x)
++      discard;
++  }
++}
+diff --git a/resources/wren/shaders/shadow_depth.vert b/resources/wren/shaders/shadow_depth.vert
+new file mode 100644
+index 0000000..fdeb939
+--- /dev/null
++++ b/resources/wren/shaders/shadow_depth.vert
+@@ -0,0 +1,16 @@
++#version 330 core
++
++// Depth from the light, for cascaded shadow maps.
++
++layout(location = 0) in vec3 vCoord;
++layout(location = 2) in vec2 vTexCoord;
++
++out vec2 texUv;
++
++uniform mat4 modelTransform;
++uniform mat4 lightViewProjection;
++
++void main() {
++  texUv = vTexCoord;
++  gl_Position = lightViewProjection * modelTransform * vec4(vCoord, 1.0);
++}
+diff --git a/resources/wren/shaders/shadow_depth_instanced.vert b/resources/wren/shaders/shadow_depth_instanced.vert
+new file mode 100644
+index 0000000..092ab67
+--- /dev/null
++++ b/resources/wren/shaders/shadow_depth_instanced.vert
+@@ -0,0 +1,20 @@
++#version 330 core
++
++// Depth from the light for instanced renderables (see pbr_instanced.vert).
++
++layout(location = 0) in vec3 vCoord;
++layout(location = 2) in vec2 vTexCoord;
++
++out vec2 texUv;
++
++uniform samplerBuffer instanceTransforms;
++uniform mat4 lightViewProjection;
++
++void main() {
++  vec4 row0 = texelFetch(instanceTransforms, 3 * gl_InstanceID);
++  vec4 row1 = texelFetch(instanceTransforms, 3 * gl_InstanceID + 1);
++  vec4 row2 = texelFetch(instanceTransforms, 3 * gl_InstanceID + 2);
++  vec4 p = vec4(vCoord, 1.0);
++  texUv = vTexCoord;
++  gl_Position = lightViewProjection * vec4(dot(row0, p), dot(row1, p), dot(row2, p), 1.0);
++}
+diff --git a/src/webots/gui/WbWrenWindow.cpp b/src/webots/gui/WbWrenWindow.cpp
+index e7cc23b..1f214af 100644
+--- a/src/webots/gui/WbWrenWindow.cpp
++++ b/src/webots/gui/WbWrenWindow.cpp
+@@ -177,6 +177,9 @@ void WbWrenWindow::initialize() {
+ 
+   wr_scene_set_fog_program(wr_scene_get_instance(), WbWrenShaders::fogShader());
+   wr_scene_set_shadow_volume_program(wr_scene_get_instance(), WbWrenShaders::shadowVolumeShader());
++  // Directional lights cast through cascaded shadow maps: any mesh size, alpha masks included.
++  wr_scene_set_shadow_map(wr_scene_get_instance(), WbWrenShaders::shadowDepthShader(),
++                          WbWrenShaders::shadowDepthInstancedShader(), 2048, 100.0f);
+ 
+   WbWrenOpenGlContext::doneWren();
+   WbWrenPostProcessingEffects::loadResources();
+diff --git a/src/webots/nodes/WbTriangleMeshGeometry.cpp b/src/webots/nodes/WbTriangleMeshGeometry.cpp
+index 1baec38..9cbc7f5 100644
+--- a/src/webots/nodes/WbTriangleMeshGeometry.cpp
++++ b/src/webots/nodes/WbTriangleMeshGeometry.cpp
+@@ -116,14 +116,8 @@ void WbTriangleMeshGeometry::createWrenObjects() {
+   connect(WbWrenRenderingContext::instance(), &WbWrenRenderingContext::lineScaleChanged, this,
+           &WbTriangleMeshGeometry::updateNormalsRepresentation);
+ 
+-  const WbShape *shape = dynamic_cast<const WbShape *>(parentNode());
+-  if (shape && shape->isCastShadowsEnabled() && 3 * mTriangleMesh->numberOfTriangles() > maxIndexNumberToCastShadows()) {
+-    warn(tr("Too many triangles (%1) in mesh: unable to cast shadows, please reduce "
+-            "the number of triangles below %2 or set Shape.castShadows to "
+-            "FALSE to disable this warning.")
+-           .arg(mTriangleMesh->numberOfTriangles())
+-           .arg((int)(maxIndexNumberToCastShadows() / 3)));
+-  }
++  // Directional lights cast through shadow maps whatever the mesh size; point and spot
++  // lights' stencil shadow volumes silently skip meshes too large for them.
+   emit wrenObjectsCreated();
+ }
+ 
+diff --git a/src/webots/wren/WbWrenShaders.cpp b/src/webots/wren/WbWrenShaders.cpp
+index af35c23..3c91f95 100644
+--- a/src/webots/wren/WbWrenShaders.cpp
++++ b/src/webots/wren/WbWrenShaders.cpp
+@@ -96,6 +96,8 @@ enum SHADER {
+   SHADER_PASS_THROUGH,
+   SHADER_PBR,
+   SHADER_PBR_INSTANCED,
++  SHADER_SHADOW_DEPTH,
++  SHADER_SHADOW_DEPTH_INSTANCED,
+   SHADER_PBR_STENCIL_AMBIENT_EMISSIVE,
+   SHADER_PBR_STENCIL_DIFFUSE_SPECULAR,
+   SHADER_PHONG,
+@@ -865,6 +867,7 @@ WrShaderProgram *WbWrenShaders::pbrShader() {
+     wr_shader_program_use_uniform_buffer(gShaders[SHADER_PBR], WR_GLSL_LAYOUT_UNIFORM_BUFFER_LIGHTS);
+     wr_shader_program_use_uniform_buffer(gShaders[SHADER_PBR], WR_GLSL_LAYOUT_UNIFORM_BUFFER_CAMERA_TRANSFORMS);
+     wr_shader_program_use_uniform_buffer(gShaders[SHADER_PBR], WR_GLSL_LAYOUT_UNIFORM_BUFFER_FOG);
++    wr_shader_program_use_uniform_buffer(gShaders[SHADER_PBR], WR_GLSL_LAYOUT_UNIFORM_BUFFER_SHADOWS);
+ 
+     const bool defaultBoolValue = false;
+     wr_shader_program_create_custom_uniform(gShaders[SHADER_PBR], "reverseNormals", WR_SHADER_PROGRAM_UNIFORM_TYPE_BOOL,
+@@ -879,6 +882,36 @@ WrShaderProgram *WbWrenShaders::pbrShader() {
+   return gShaders[SHADER_PBR];
+ }
+ 
++static WrShaderProgram *shadowDepthProgram(int index, const char *vertexShader) {
++  if (!gShaders[index]) {
++    WrShaderProgram *program = wr_shader_program_new();
++    gShaders[index] = program;
++
++    wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE0);  // base color, for its alpha mask
++    if (index == SHADER_SHADOW_DEPTH)
++      wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_MODEL_TRANSFORM);
++    wr_shader_program_use_uniform_buffer(program, WR_GLSL_LAYOUT_UNIFORM_BUFFER_MATERIAL_PBR);
++
++    const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
++    const bool masked = true;
++    wr_shader_program_create_custom_uniform(program, "lightViewProjection", WR_SHADER_PROGRAM_UNIFORM_TYPE_MAT4F,
++                                            reinterpret_cast<const char *>(identity));
++    wr_shader_program_create_custom_uniform(program, "alphaMasked", WR_SHADER_PROGRAM_UNIFORM_TYPE_BOOL,
++                                            reinterpret_cast<const char *>(&masked));
++
++    ::buildShader(program, QFileInfo(vertexShader), QFileInfo("gl:shaders/shadow_depth.frag"));
++  }
++  return gShaders[index];
++}
++
++WrShaderProgram *WbWrenShaders::shadowDepthShader() {
++  return shadowDepthProgram(SHADER_SHADOW_DEPTH, "gl:shaders/shadow_depth.vert");
++}
++
++WrShaderProgram *WbWrenShaders::shadowDepthInstancedShader() {
++  return shadowDepthProgram(SHADER_SHADOW_DEPTH_INSTANCED, "gl:shaders/shadow_depth_instanced.vert");
++}
++
+ WrShaderProgram *WbWrenShaders::pbrInstancedShader() {
+   if (!gShaders[SHADER_PBR_INSTANCED]) {
+     gShaders[SHADER_PBR_INSTANCED] = wr_shader_program_new();
+@@ -899,6 +932,7 @@ WrShaderProgram *WbWrenShaders::pbrInstancedShader() {
+     wr_shader_program_use_uniform_buffer(gShaders[SHADER_PBR_INSTANCED], WR_GLSL_LAYOUT_UNIFORM_BUFFER_LIGHTS);
+     wr_shader_program_use_uniform_buffer(gShaders[SHADER_PBR_INSTANCED], WR_GLSL_LAYOUT_UNIFORM_BUFFER_CAMERA_TRANSFORMS);
+     wr_shader_program_use_uniform_buffer(gShaders[SHADER_PBR_INSTANCED], WR_GLSL_LAYOUT_UNIFORM_BUFFER_FOG);
++    wr_shader_program_use_uniform_buffer(gShaders[SHADER_PBR_INSTANCED], WR_GLSL_LAYOUT_UNIFORM_BUFFER_SHADOWS);
+ 
+     const bool defaultBoolValue = false;
+     wr_shader_program_create_custom_uniform(gShaders[SHADER_PBR_INSTANCED], "reverseNormals", WR_SHADER_PROGRAM_UNIFORM_TYPE_BOOL,
+diff --git a/src/webots/wren/WbWrenShaders.hpp b/src/webots/wren/WbWrenShaders.hpp
+index 75accd2..ddff788 100644
+--- a/src/webots/wren/WbWrenShaders.hpp
++++ b/src/webots/wren/WbWrenShaders.hpp
+@@ -57,6 +57,8 @@ namespace WbWrenShaders {
+   WrShaderProgram *passThroughShader();
+   WrShaderProgram *pbrShader();
+   WrShaderProgram *pbrInstancedShader();
++  WrShaderProgram *shadowDepthShader();
++  WrShaderProgram *shadowDepthInstancedShader();
+   WrShaderProgram *pbrStencilAmbientEmissiveShader();
+   WrShaderProgram *pbrStencilDiffuseSpecularShader();
+   WrShaderProgram *phongShader();
+diff --git a/src/wren/GlslLayout.cpp b/src/wren/GlslLayout.cpp
+index 8a09529..bd150fc 100644
+--- a/src/wren/GlslLayout.cpp
++++ b/src/wren/GlslLayout.cpp
+@@ -30,11 +30,12 @@ namespace wren {
+       "viewportSize",      "colorPerVertex",   "pointSize",        "channelCount",     "gtaoTexture"};
+ 
+     const std::vector<const char *> gUniformBufferNames = {"PhongMaterial",    "PbrMaterial", "Lights", "LightRenderable",
+-                                                           "CameraTransforms", "Fog",         "Overlay"};
++                                                           "CameraTransforms", "Fog",         "Overlay",
++                                                           "Shadows"};
+ 
+     const std::vector<int> gUniformBufferSizes = {sizeof(PhongMaterial),   sizeof(PbrMaterial),      sizeof(Lights),
+                                                   sizeof(LightRenderable), sizeof(CameraTransforms), sizeof(Fog),
+-                                                  sizeof(Overlay)};
++                                                  sizeof(Overlay),         sizeof(Shadows)};
+ 
+   }  // namespace GlslLayout
+ }  // namespace wren
+diff --git a/src/wren/GlslLayout.hpp b/src/wren/GlslLayout.hpp
+index 8ab7f49..f9f763b 100644
+--- a/src/wren/GlslLayout.hpp
++++ b/src/wren/GlslLayout.hpp
+@@ -101,6 +101,14 @@ namespace wren {
+       glm::ivec4 mActiveLights;
+     };
+ 
++    // Cascaded shadow maps of one directional light, see ShadowMap.
++    struct Shadows {
++      glm::mat4 mLightViewProjection[3];
++      glm::vec4 mSplits;      // view distance at which each cascade ends
++      glm::vec4 mTexelSizes;  // world size of a shadow map texel, per cascade
++      glm::vec4 mParams;      // x: enabled, y: index of the light among directional lights
++    };
++
+     struct Fog {
+       glm::vec2 mMode;    // x: disabled, exp, exp2, y: depth, distance
+       glm::vec2 padding;  // unused
+diff --git a/src/wren/Renderable.cpp b/src/wren/Renderable.cpp
+index aeb01e7..42ef287 100644
+--- a/src/wren/Renderable.cpp
++++ b/src/wren/Renderable.cpp
+@@ -246,10 +246,7 @@ namespace wren {
+     return distance >= mVisibilityRange.x && (mVisibilityRange.y <= 0.0f || distance < mVisibilityRange.y);
+   }
+ 
+-  int Renderable::uploadVisibleInstances(const ShaderProgram *program) {
+-    const Camera *camera = Scene::instance()->currentViewport()->camera();
+-    const glm::vec3 eye(glm::inverse(camera->view())[3]);
+-    const Frustum &frustum = camera->frustum();
++  int Renderable::uploadVisibleInstances(const ShaderProgram *program, const glm::vec3 &eye, const Frustum &frustum) {
+     if (mInstanceBoundsMesh != mMesh) {
+       mInstanceBounds = mMesh->recomputeBoundingSphere(gVec3Ones);
+       mInstanceBoundsMesh = mMesh;
+@@ -333,7 +330,8 @@ namespace wren {
+     }
+ 
+     if (isInstanced()) {
+-      const int count = uploadVisibleInstances(program);
++      const Camera *camera = Scene::instance()->currentViewport()->camera();
++      const int count = uploadVisibleInstances(program, glm::vec3(glm::inverse(camera->view())[3]), camera->frustum());
+       if (count)
+         mMesh->renderInstanced(mDrawingMode, count);
+     } else
+@@ -346,6 +344,35 @@ namespace wren {
+       glstate::setBlendFunc(blendSrcFactor, blendDestFactor);
+   }
+ 
++  void Renderable::renderShadow(const ShaderProgram *program, const ShaderProgram *instancedProgram,
++                                const glm::mat4 &lightViewProjection, const Frustum &lightFrustum, const glm::vec3 &eye) {
++    if (!mEffectiveMaterial || !mMesh)
++      return;
++    const bool instanced = isInstanced();
++    if (!instanced && !isInVisibilityRange(eye))
++      return;
++    const ShaderProgram *depth = instanced ? instancedProgram : program;
++
++    // Bind the material with its own program (textures, material uniforms for the alpha
++    // mask), then switch programs: textures and uniform buffers stay bound.
++    mDefaultMaterial->setEffectiveProgram(Material::MATERIAL_PROGRAM_DEFAULT);
++    mDefaultMaterial->bind(true);
++    depth->bind();
++    glUniformMatrix4fv(glGetUniformLocation(depth->glName(), "lightViewProjection"), 1, false,
++                       glm::value_ptr(lightViewProjection));
++    glUniform1i(glGetUniformLocation(depth->glName(), "alphaMasked"), mDefaultMaterial->type() == WR_MATERIAL_PBR);
++    if (!instanced)
++      glUniformMatrix4fv(depth->uniformLocation(WR_GLSL_LAYOUT_UNIFORM_MODEL_TRANSFORM), 1, false,
++                         glm::value_ptr(mParent->matrix()));
++
++    if (instanced) {
++      const int count = uploadVisibleInstances(depth, eye, lightFrustum);
++      if (count)
++        mMesh->renderInstanced(mDrawingMode, count);
++    } else
++      mMesh->render(mDrawingMode);
++  }
++
+   void Renderable::updateShadowVolumeCaster() {
+     delete mShadowVolumeCaster;
+ 
+diff --git a/src/wren/Renderable.hpp b/src/wren/Renderable.hpp
+index 9dc1ff0..c73459a 100644
+--- a/src/wren/Renderable.hpp
++++ b/src/wren/Renderable.hpp
+@@ -28,6 +28,7 @@
+ 
+ namespace wren {
+ 
++  class Frustum;
+   class LightNode;
+   class Material;
+   class Mesh;
+@@ -65,6 +66,10 @@ namespace wren {
+     // max 0 means unbounded.
+     void setVisibilityRange(float minDistance, float maxDistance) { mVisibilityRange = glm::vec2(minDistance, maxDistance); }
+     bool isInVisibilityRange(const glm::vec3 &cameraPosition) const;
++    // Depth-only draw into a shadow map. Instances are culled against the light's frustum
++    // but keep the level of detail chosen from the viewer's eye.
++    void renderShadow(const ShaderProgram *program, const ShaderProgram *instancedProgram,
++                      const glm::mat4 &lightViewProjection, const Frustum &lightFrustum, const glm::vec3 &eye);
+     void setInViewSpace(bool inViewSpace) { mInViewSpace = inViewSpace; }
+     void setZSortedRendering(bool zSortedRendering) { mZSortedRendering = zSortedRendering; }
+     void setFaceCulling(bool faceCulling) { mFaceCulling = faceCulling; }
+@@ -136,7 +141,7 @@ namespace wren {
+     unsigned int mInstanceTexture;
+     glm::vec2 mVisibilityRange;
+ 
+-    int uploadVisibleInstances(const ShaderProgram *program);
++    int uploadVisibleInstances(const ShaderProgram *program, const glm::vec3 &eye, const Frustum &frustum);
+     bool mInViewSpace;
+     bool mZSortedRendering;
+     bool mFaceCulling;
+diff --git a/src/wren/Scene.cpp b/src/wren/Scene.cpp
+index 97185f0..85cc0c1 100644
+--- a/src/wren/Scene.cpp
++++ b/src/wren/Scene.cpp
+@@ -32,6 +32,7 @@
+ #include "PointLight.hpp"
+ #include "Renderable.hpp"
+ #include "ShaderProgram.hpp"
++#include "ShadowMap.hpp"
+ #include "ShadowVolumeCaster.hpp"
+ #include "SpotLight.hpp"
+ #include "Transform.hpp"
+@@ -250,6 +251,8 @@ namespace wren {
+     for (Viewport *viewport : viewports) {
+       mCurrentViewport = viewport;
+ 
++      renderShadowMap();
++
+       glstate::setDefaultState();
+       mCurrentViewport->updateUniforms();
+       mCurrentViewport->bind();
+@@ -318,6 +321,7 @@ namespace wren {
+     mHdrClearQuad(NULL),
+     mFogProgram(NULL),
+     mShadowVolumeProgram(NULL),
++    mShadowMap(NULL),
+     mRenderSkybox(true),
+     mHdrClear(true),
+     mTranslucence(true),
+@@ -330,7 +334,41 @@ namespace wren {
+     setFog(WR_SCENE_FOG_TYPE_NONE);
+   }
+ 
++  void Scene::setShadowMap(ShaderProgram *program, ShaderProgram *instancedProgram, int size, float maxDistance) {
++    delete mShadowMap;
++    mShadowMap = new ShadowMap(program, instancedProgram, size, maxDistance);
++  }
++
++  int Scene::stencilShadowLights() const {
++    if (!mShadowMap)
++      return LightNode::activeLightsCastingShadows();
++    return LightNode::activeLightsCastingShadows(LightNode::TYPE_POINT) +
++           LightNode::activeLightsCastingShadows(LightNode::TYPE_SPOT);
++  }
++
++  void Scene::renderShadowMap() {
++    if (!mShadowMap) {
++      static const GlslLayout::Shadows none = {};
++      glstate::uniformBuffer(WR_GLSL_LAYOUT_UNIFORM_BUFFER_SHADOWS)->writeValue(&none);
++      return;
++    }
++    const DirectionalLight *caster = NULL;
++    int index = 0;
++    for (size_t i = 0; i < mDirectionalLightsActive.size(); ++i)
++      if (mDirectionalLightsActive[i]->castShadows()) {
++        caster = mDirectionalLightsActive[i];
++        index = static_cast<int>(i);
++        break;
++      }
++    if (!caster || !config::areShadowsEnabled() || !mCurrentViewport->areShadowsEnabled() || Renderable::useMaterial())
++      mShadowMap->disable();
++    else
++      mShadowMap->render(mCurrentViewport->camera(), caster, index, mRenderQueues[WR_RENDERABLE_DRAWING_ORDER_MAIN]);
++  }
++
+   Scene::~Scene() {
++    delete mShadowMap;
++
+     // Cleanup static meshes used for AABBs & bounding spheres draw
+     config::cleanup();
+ 
+@@ -439,7 +477,7 @@ namespace wren {
+     sortRenderQueueByDistance(renderQueue->begin(), firstOpaqueRenderable);
+ 
+     DEBUG("Rendering opaque renderables");
+-    if (config::areShadowsEnabled() && mCurrentViewport->areShadowsEnabled() && LightNode::activeLightsCastingShadows() > 0) {
++    if (config::areShadowsEnabled() && mCurrentViewport->areShadowsEnabled() && stencilShadowLights() > 0) {
+       DEBUG("Rendering ambient and emissive illumination");
+ 
+       RenderQueueIterator firstWithoutStencilProgram = partitionByStencilProgram(firstOpaqueRenderable, firstCulledRenderable);
+@@ -971,6 +1009,13 @@ void wr_scene_set_shadow_volume_program(WrScene *scene, WrShaderProgram *program
+   reinterpret_cast<wren::Scene *>(scene)->setShadowVolumeProgram(reinterpret_cast<wren::ShaderProgram *>(program));
+ }
+ 
++void wr_scene_set_shadow_map(WrScene *scene, WrShaderProgram *program, WrShaderProgram *instanced_program, int size,
++                             float max_distance) {
++  reinterpret_cast<wren::Scene *>(scene)->setShadowMap(reinterpret_cast<wren::ShaderProgram *>(program),
++                                                       reinterpret_cast<wren::ShaderProgram *>(instanced_program), size,
++                                                       max_distance);
++}
++
+ void wr_scene_enable_depth_reset(WrScene *scene, bool enable) {
+   reinterpret_cast<wren::Scene *>(scene)->enableDepthReset(enable);
+ }
+diff --git a/src/wren/Scene.hpp b/src/wren/Scene.hpp
+index 10b093b..1e299c6 100644
+--- a/src/wren/Scene.hpp
++++ b/src/wren/Scene.hpp
+@@ -24,6 +24,8 @@
+ 
+ namespace wren {
+ 
++  class ShadowMap;
++
+   class Camera;
+   class DirectionalLight;
+   class LightNode;
+@@ -70,6 +72,8 @@ namespace wren {
+     void setHdrClearQuad(Renderable *renderable);
+ 
+     void setFogProgram(ShaderProgram *program) { mFogProgram = program; }
++    // Directional lights then cast through cascaded shadow maps, not stencil volumes.
++    void setShadowMap(ShaderProgram *program, ShaderProgram *instancedProgram, int size, float maxDistance);
+     void setShadowVolumeProgram(ShaderProgram *program) { mShadowVolumeProgram = program; }
+ 
+     void enableDepthReset(bool enabled) { mClearDepth = enabled; }
+@@ -156,6 +160,10 @@ namespace wren {
+     Renderable *mHdrClearQuad;
+     ShaderProgram *mFogProgram;
+     ShaderProgram *mShadowVolumeProgram;
++    ShadowMap *mShadowMap;
++
++    void renderShadowMap();
++    int stencilShadowLights() const;
+ 
+     bool mRenderSkybox;
+     bool mHdrClear;
+diff --git a/src/wren/ShaderProgram.cpp b/src/wren/ShaderProgram.cpp
+index 0ec8046..5b358df 100644
+--- a/src/wren/ShaderProgram.cpp
++++ b/src/wren/ShaderProgram.cpp
+@@ -220,6 +220,14 @@ namespace wren {
+       glUniformBlockBinding(mGlName, uniformBlockIndex, ub);
+     }
+ 
++    // Samplers on fixed units, shared by every program that declares them.
++    const std::pair<const char *, int> fixedSamplers[] = {{"shadowMap", 14}, {"instanceTransforms", 15}};
++    for (const auto &sampler : fixedSamplers) {
++      const int location = glGetUniformLocation(mGlName, sampler.first);
++      if (location != -1)
++        glUniform1i(location, sampler.second);
++    }
++
+     for (auto &el : mCustomUniforms) {
+       int location = glGetUniformLocation(mGlName, el.second->name().c_str());
+       assert(location >= 0);
+diff --git a/src/wren/ShadowMap.cpp b/src/wren/ShadowMap.cpp
+new file mode 100644
+index 0000000..e0b3e70
+--- /dev/null
++++ b/src/wren/ShadowMap.cpp
+@@ -0,0 +1,194 @@
++// Copyright 1996-2024 Cyberbotics Ltd.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#include "ShadowMap.hpp"
++
++#include "Camera.hpp"
++#include "DirectionalLight.hpp"
++#include "Frustum.hpp"
++#include "GlState.hpp"
++#include "Renderable.hpp"
++#include "ShaderProgram.hpp"
++#include "UniformBuffer.hpp"
++
++#include <wren/renderable.h>
++
++#ifdef __EMSCRIPTEN__
++#include <GL/gl.h>
++#include <GLES3/gl3.h>
++#else
++#include <glad/glad.h>
++#endif
++
++#include <glm/gtc/matrix_transform.hpp>
++
++#include <cmath>
++
++namespace wren {
++
++  // How far towards the light casters may stand in front of a cascade.
++  static const float CASTER_REACH = 200.0f;
++  // Blend of logarithmic and uniform cascade splits (the "practical" split scheme).
++  static const float SPLIT_BLEND = 0.8f;
++  // Far cascades cover this much more than the view needs, so the camera can move within
++  // them before they must be redrawn.
++  static const float CASCADE_SLACK = 1.25f;
++
++  ShadowMap::ShadowMap(ShaderProgram *program, ShaderProgram *instancedProgram, int size, float maxDistance) :
++    mProgram(program),
++    mInstancedProgram(instancedProgram),
++    mSize(size),
++    mMaxDistance(maxDistance),
++    mFrameBuffer(0),
++    mDepthTexture(0),
++    mShadows(),
++    mCachedRadius(),
++    mCachedLightDirection(0.0f) {
++  }
++
++  ShadowMap::~ShadowMap() {
++    if (mFrameBuffer)
++      glDeleteFramebuffers(1, &mFrameBuffer);
++    if (mDepthTexture)
++      glDeleteTextures(1, &mDepthTexture);
++  }
++
++  void ShadowMap::prepareGl() {
++    glGenTextures(1, &mDepthTexture);
++    glstate::activateTextureUnit(TEXTURE_UNIT);
++    glBindTexture(GL_TEXTURE_2D_ARRAY, mDepthTexture);
++    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT32F, mSize, mSize, CASCADES, 0, GL_DEPTH_COMPONENT, GL_FLOAT,
++                 NULL);
++    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    // Hardware depth comparison: each lookup returns a bilinearly filtered lit fraction.
++    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
++    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
++    glGenFramebuffers(1, &mFrameBuffer);
++  }
++
++  void ShadowMap::render(const Camera *camera, const DirectionalLight *light, int lightIndex,
++                         const std::vector<Renderable *> &casters) {
++    if (!mDepthTexture)
++      prepareGl();
++
++    const glm::mat4 inverseView = glm::inverse(camera->view());
++    const glm::vec3 eye(inverseView[3]);
++    const glm::vec3 right(inverseView[0]), up(inverseView[1]), forward(-inverseView[2]);
++    const float tanHalfFovy = std::tan(0.5f * camera->fovy());
++    const float nearDistance = camera->nearDistance();
++    const glm::vec3 lightDirection = glm::normalize(light->direction());
++    const glm::vec3 lightUp = std::abs(lightDirection.z) < 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
++
++    glstate::bindFrameBuffer(mFrameBuffer);
++    glViewport(0, 0, mSize, mSize);
++    glstate::setColorMask(false, false, false, false);
++    glstate::setDepthMask(true);
++    glstate::setDepthTest(true);
++    glstate::setDepthFunc(GL_LESS);
++    glstate::setBlend(false);
++    glstate::setStencilTest(false);
++    glstate::setCullFace(false);  // foliage is two-sided
++    glEnable(GL_POLYGON_OFFSET_FILL);
++    glPolygonOffset(1.5f, 2.0f);
++
++    // Redraw the near cascade, which holds whatever moves near the viewer, every frame; far
++    // cascades only when the view leaves them or the light turns. Objects moving far from the
++    // viewer therefore cast stale shadows until then.
++    const bool refresh = lightDirection != mCachedLightDirection;
++    mCachedLightDirection = lightDirection;
++
++    float start = nearDistance;
++    for (int cascade = 0; cascade < CASCADES; ++cascade) {
++      const float t = static_cast<float>(cascade + 1) / CASCADES;
++      const float end = SPLIT_BLEND * nearDistance * std::pow(mMaxDistance / nearDistance, t) +
++                        (1.0f - SPLIT_BLEND) * (nearDistance + (mMaxDistance - nearDistance) * t);
++
++      // Bounding sphere of this slice of the view frustum: rotation-invariant, so the
++      // cascade does not change size (and shadows do not shimmer) as the view turns.
++      glm::vec3 corners[8];
++      int k = 0;
++      for (float d : {start, end}) {
++        const float halfHeight = d * tanHalfFovy, halfWidth = halfHeight * camera->aspectRatio();
++        for (float sx : {-1.0f, 1.0f})
++          for (float sy : {-1.0f, 1.0f})
++            corners[k++] = eye + forward * d + right * (sx * halfWidth) + up * (sy * halfHeight);
++      }
++      glm::vec3 center(0.0f);
++      for (const glm::vec3 &c : corners)
++        center += c / 8.0f;
++      float radius = 0.0f;
++      for (const glm::vec3 &c : corners)
++        radius = std::max(radius, glm::distance(center, c));
++      radius = std::ceil(radius * 2.0f) / 2.0f;
++
++      if (cascade > 0) {
++        if (!refresh && mCachedRadius[cascade] > 0.0f &&
++            glm::distance(center, mCachedCenter[cascade]) + radius <= mCachedRadius[cascade]) {
++          start = end;
++          continue;  // still covers the view: keep its depth and matrix
++        }
++        radius = std::ceil(radius * CASCADE_SLACK * 2.0f) / 2.0f;
++      }
++
++      // Snap the light-space origin to whole texels, so shadows keep still as the view moves.
++      const float texel = 2.0f * radius / mSize;
++      glm::mat4 lightView = glm::lookAt(-lightDirection, glm::vec3(0.0f), lightUp);
++      glm::vec4 origin = lightView * glm::vec4(center, 1.0f);
++      origin.x = std::floor(origin.x / texel) * texel;
++      origin.y = std::floor(origin.y / texel) * texel;
++      center = glm::vec3(glm::inverse(lightView) * origin);
++      lightView = glm::lookAt(center - lightDirection * (radius + CASTER_REACH), center, lightUp);
++      const glm::mat4 projection = glm::ortho(-radius, radius, -radius, radius, 0.0f, 2.0f * radius + CASTER_REACH);
++      const glm::mat4 viewProjection = projection * lightView;
++      const Frustum frustum(viewProjection);
++
++      glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, mDepthTexture, 0, cascade);
++      glClear(GL_DEPTH_BUFFER_BIT);
++      for (Renderable *caster : casters) {
++        if (!caster->castShadows() || caster->isTranslucent() || caster->drawingMode() != WR_RENDERABLE_DRAWING_MODE_TRIANGLES)
++          continue;
++        if (!caster->isInstanced() && caster->sceneCulling() && !frustum.isInside(caster->aabb()))
++          continue;
++        caster->renderShadow(mProgram, mInstancedProgram, viewProjection, frustum, eye);
++      }
++
++      mShadows.mLightViewProjection[cascade] = viewProjection;
++      mShadows.mSplits[cascade] = end;
++      mShadows.mTexelSizes[cascade] = texel;
++      mCachedCenter[cascade] = center;
++      mCachedRadius[cascade] = radius;
++      start = end;
++    }
++
++    glDisable(GL_POLYGON_OFFSET_FILL);
++    glstate::setColorMask(true, true, true, true);
++    mShadows.mParams = glm::vec4(1.0f, static_cast<float>(lightIndex), 0.0f, 0.0f);
++    publish();
++    glstate::activateTextureUnit(TEXTURE_UNIT);
++    glBindTexture(GL_TEXTURE_2D_ARRAY, mDepthTexture);
++  }
++
++  void ShadowMap::disable() {
++    mShadows.mParams = glm::vec4(0.0f);
++    publish();
++  }
++
++  void ShadowMap::publish() const {
++    glstate::uniformBuffer(WR_GLSL_LAYOUT_UNIFORM_BUFFER_SHADOWS)->writeValue(&mShadows);
++  }
++
++}  // namespace wren
+diff --git a/src/wren/ShadowMap.hpp b/src/wren/ShadowMap.hpp
+new file mode 100644
+index 0000000..1ee433e
+--- /dev/null
++++ b/src/wren/ShadowMap.hpp
+@@ -0,0 +1,65 @@
++// Copyright 1996-2024 Cyberbotics Ltd.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#ifndef SHADOW_MAP_HPP
++#define SHADOW_MAP_HPP
++
++#include "GlslLayout.hpp"
++
++#include <vector>
++
++namespace wren {
++
++  class Camera;
++  class DirectionalLight;
++  class Renderable;
++  class ShaderProgram;
++
++  // Cascaded shadow maps for one directional light. Unlike stencil shadow volumes,
++  // any mesh can cast, alpha-masked texels included, and instanced renderables cast
++  // with the level of detail the viewer sees.
++  class ShadowMap {
++  public:
++    static const int TEXTURE_UNIT = 14;
++    static const int CASCADES = 3;
++
++    ShadowMap(ShaderProgram *program, ShaderProgram *instancedProgram, int size, float maxDistance);
++    ~ShadowMap();
++
++    // Renders the cascades covering this camera's view and publishes them to shaders.
++    void render(const Camera *camera, const DirectionalLight *light, int lightIndex,
++                const std::vector<Renderable *> &casters);
++    // Publishes "no shadow map": lights are then unshadowed by it.
++    void disable();
++
++  private:
++    void prepareGl();
++    void publish() const;
++
++    ShaderProgram *mProgram;
++    ShaderProgram *mInstancedProgram;
++    int mSize;
++    float mMaxDistance;
++    unsigned int mFrameBuffer;
++    unsigned int mDepthTexture;
++    GlslLayout::Shadows mShadows;
++    // Far cascades are reused while the view still fits them (see render()).
++    glm::vec3 mCachedCenter[CASCADES];
++    float mCachedRadius[CASCADES];
++    glm::vec3 mCachedLightDirection;
++  };
++
++}  // namespace wren
++
++#endif  // SHADOW_MAP_HPP

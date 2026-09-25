@@ -115,6 +115,15 @@ def main():
     series = hashlib.sha256(b"".join(p.read_bytes() for p in patches)).hexdigest()
     stamp = source / ".loiter-patches"
     if not stamp.exists() or stamp.read_text().strip() != series:
+        # Reapplying resets the sources: never discard edits not yet saved as a patch.
+        unsaved = subprocess.check_output(
+            ["git", "-C", str(source), "diff", "--name-only", "--", "src", "include", "resources"], text=True
+        ).split()
+        if unsaved and stamp.exists():
+            raise RuntimeError(
+                "Webots sources have edits not saved as a patch; save them to native/patches first: "
+                + ", ".join(unsaved)
+            )
         call("git", "-C", source, "checkout", "HEAD", "--", "src", "include", "resources")
         # Files the series adds survive the checkout; remove them so it reapplies.
         for patch in patches:
@@ -124,7 +133,7 @@ def main():
             for line in summary.splitlines():
                 if line.strip().startswith("create mode"):
                     added = line.split()[-1]
-                    call("git", "-C", source, "rm", "-q", "--cached", "--ignore-unmatch", added)
+                    call("git", "-C", source, "rm", "-q", "-f", "--cached", "--ignore-unmatch", added)
                     (source / added).unlink(missing_ok=True)
         for patch in patches:
             call("git", "-C", source, "apply", "--index", patch)

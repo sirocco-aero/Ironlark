@@ -103,13 +103,13 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0008-scattering-fog** | `Fog { fogType "SCATTERING" }`: single-scattering medium in HDR (density, color, Henyey–Greenstein anisotropy, box), lit by the directional lights and an ambient term; sun visibility from a top-down occlusion map, so canopy shafts come from the baked canopy light. Main view only; `Camera` devices not yet. | ~1–2 ms |
 | **0009-instancing-and-visibility-range** | `Shape.instancesUrl`: one shape drawn at every transform in a binary file, culled per instance and drawn with one instanced call. `Shape.visibilityRange`: draw only within a camera-distance band, per instance when instanced. The forest's 55,277 cover placements and all trees use it, with the source's own lod0/lod1 distances. | load 42 → 20 s, frame 25 → 5.7 ms, RAM 3.7 → 2.3 GB, 16,814 → 185 geometries |
 | **0010-transmission-and-flow-foam** | `PBRAppearance.transmission` (thin surface, Fresnel for IOR 1.333, premultiplied blending, no refraction offset) and `flowFoam`: the source river's foam recipe on the UVs, animated by simulation time. Not used by the forest yet: without reflections, clear water at grazing angles shows only bright sky. | river pixels only |
+| **0011-cascaded-shadow-maps** | Directional lights cast through three cascaded shadow maps (2048², 100 m), not stencil volumes: any mesh size, alpha masks included, instanced casters culled per cascade at the viewer's LOD. Far cascades are reused until the view leaves them; the near one redraws every frame. | frame 5.7 → 12.3 ms; brightness vs Cycles 1.4–2.3× → 1.15–1.96× |
 
-To add a patch: edit `.cache/webots-source/` (the series is staged there; `git add -N` new files), then
-`git -C .cache/webots-source diff --binary -- src include resources > native/patches/NNNN-name.patch`,
+To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
+files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,
 `./loiter build-renderer`, `./loiter check`, `./loiter check --world forest`,
-and note here what it fixes and how it was measured. To amend patch N, stage
-its files and regenerate it with `git diff --cached --binary HEAD -- <files>`
-(valid while no earlier patch touches them). Keep each patch clean enough to
+and note here what it fixes and how it was measured. The builder refuses to
+reapply the series over edits not saved as a patch. Keep each patch clean enough to
 become an upstream pull request.
 
 `tools/render_lighting_reference.py` renders the built world in Cycles under the

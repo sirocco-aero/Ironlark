@@ -132,15 +132,13 @@ Background {{
   luminosity 1
 }}
 {fog}
-# Tree shadows on the ground are baked into the terrain (canopy light).
-# Webots' real-time stencil shadows would only add rock and drone shadows,
-# at about seven times the frame cost.
 # The source's two suns: strength in W/m² as intensity, linear color in sRGB.
+# The main sun casts through cascaded shadow maps (Webots patch 0011).
 DirectionalLight {{
   direction 0.272788 -0.814025 -0.512786
   color 1 0.9276 0.7243
   intensity 5
-  castShadows FALSE
+  castShadows TRUE
 }}
 DirectionalLight {{
   direction -0.148121 -0.845642 -0.512786
@@ -242,7 +240,7 @@ def light_signature(build, out):
     return digest.hexdigest()
 
 
-def shape_fields(mesh, tex, normal="", roughness="", shadow=False):
+def shape_fields(mesh, tex, normal="", roughness="", shadow=True):
     # All 53 source materials are alpha-hashed: mask texels, never blend them.
     normal_field = f'normalMap ImageTexture {{ url "{normal}" }}' if normal else ""
     roughness_field = f'roughnessMap ImageTexture {{ url "{roughness}" }}' if roughness else ""
@@ -702,7 +700,7 @@ def main():
     from forest_terrain import build_terrain_tiles
 
     manifest["light_signature"] = light_signature(build, out)
-    terrain_shapes = build_terrain_tiles(build, out, manifest["light_signature"])
+    terrain_shapes = build_terrain_tiles(build, out)
     fog = fog_node(build, out, manifest["home_blender"])
     write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, fog)
     (out / "visual_instances.json").write_text(

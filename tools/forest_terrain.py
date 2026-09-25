@@ -31,7 +31,7 @@ def write_tile(path, faces):
             f.write('f '+' '.join(f'{j}/{j}/{j}' for j in range(i*3+1,i*3+4))+'\n')
 
 
-def build_terrain_tiles(build,out,light_signature=None):
+def build_terrain_tiles(build,out):
     verts=[];uvs=[];norms=[];triangles=[]
     for line in (build/'terrain.obj').read_text().splitlines():
         parts=line.split()
@@ -55,30 +55,14 @@ def build_terrain_tiles(build,out,light_signature=None):
             for i in range(1,len(polygon)-1):
                 face=[polygon[0],polygon[i],polygon[i+1]]
                 if np.linalg.norm(np.cross(face[1][:3]-face[0][:3],face[2][:3]-face[0][:3]))>1e-12:faces.append(face)
-    lightmaps={}
-    light_paths=[build/f'terrain_{x}_{y}_light.npy' for x in range(2) for y in range(2)]
-    stamp = build / 'light_stamp.json'
-    current = stamp.exists() and json.loads(stamp.read_text()).get('signature') == light_signature
-    if current and all(p.exists() for p in light_paths):
-        lightmaps={(x,y):np.load(build/f'terrain_{x}_{y}_light.npy').mean(axis=2) for x in range(2) for y in range(2)}
-        reference=float(np.quantile(np.concatenate([m.ravel() for m in lightmaps.values()]),.995))
-        if reference<1e-6:raise RuntimeError('The canopy lighting bake is empty')
     nodes=[]
     for (x,y),faces in tiles.items():
         prefix=f'terrain_{x}_{y}'
         write_tile(out/'meshes'/f'{prefix}.obj',faces)
         albedo=build/f'{prefix}_floor.png'
         if not albedo.exists():albedo=build/f'{prefix}_diff.png'
-        if lightmaps:
-            img=Image.open(albedo).convert('RGB')
-            visibility=Image.fromarray(np.clip(lightmaps[x,y]/reference,0,1).astype(np.float32)).resize(img.size,Image.Resampling.BILINEAR)
-            # Modulate in linear light; doing this in sRGB crushes forest detail.
-            pixels=np.asarray(img,dtype=np.float32)/255
-            linear=np.where(pixels<=.04045,pixels/12.92,((pixels+.055)/1.055)**2.4)
-            linear*=.22+.78*np.asarray(visibility)[...,None]
-            rgb=np.where(linear<=.0031308,linear*12.92,1.055*np.maximum(linear,0)**(1/2.4)-.055)
-            Image.fromarray(np.uint8(np.clip(rgb*255,0,255))).save(out/'meshes'/f'{prefix}_diff.png')
-        else:shutil.copyfile(albedo,out/'meshes'/f'{prefix}_diff.png')
+        # Unlit albedo: the sun's shadow map shades the ground at runtime.
+        shutil.copyfile(albedo,out/'meshes'/f'{prefix}_diff.png')
         shutil.copyfile(build/f'{prefix}_normal.png',out/'meshes'/f'{prefix}_normal.png')
         nodes.append(f'''Shape {{
             appearance PBRAppearance {{
@@ -87,6 +71,6 @@ def build_terrain_tiles(build,out,light_signature=None):
               roughness 0.95 metalness 0
             }}
             geometry Mesh {{ url "meshes/{prefix}.obj" }}
-            castShadows FALSE
+            castShadows TRUE
         }}''')
     return '\n'.join(nodes)
