@@ -40,19 +40,18 @@ horizon (patch 0020). Rendering: 23 ms per step (19 without the far rings).
 
 Open fidelity gaps against the source (Cycles lighting the same geometry with the
 source's lights, `tools/render_lighting_reference.py` and `tools/compare_views.py`:
-0.79–1.20× as bright at the pinned views):
+0.96–1.23× as bright at the pinned views):
 
 - **Bounced light**: Webots has none; under the canopy Cycles' sunlight bounces
-  off leaves and ground. Sun shafts in the haze are also weaker.
+  off leaves and ground. Inside the forest the fog adds ×1.67 light to Cycles' ×1.37.
 - **Fog**: robot `Camera` devices lack it; calibrate against
   `./loiter render-reference` (needs more than ~26 GB RAM).
 - **Terrain**: four 4K baked tiles (~100 m each). The source tiles its ground
   materials under masks; matching that needs a Webots detail-map patch, and
   would be sharper up close with far less VRAM.
-- **River**: the source's is clear water with flowing white foam. The foam flows
-  (patches 0010, 0019); the water stays opaque until reflections exist
-  (screen-space reflections): clear water at grazing angles mirrors the banks and
-  trees; Webots can only reflect sky.
+- **River**: done: the source's clear water (patch 0010) with flowing white foam
+  (0019), mirroring the banks and trees through screen-space reflections (0030).
+  No refraction offset yet: the bed shows straight through.
 - **Foliage shimmer**: needles thinner than a pixel flip in and out as the view
   moves (22% of pixels for a 2 cm step). Needs multisampling with
   alpha-to-coverage for masked materials.
@@ -104,8 +103,7 @@ later, each when a capability needs it.
 
 ### 1. Finish the forest's looks
 
-In order: river reflections (then clear water), terrain detail maps, fog in
-`Camera` devices. Loose ends: with ambient occlusion off (`ambientOcclusionRadius
+In order: terrain detail maps, fog in `Camera` devices. Loose ends: with ambient occlusion off (`ambientOcclusionRadius
 0` or the GTAO preference) most trees do not draw; foliage shimmer if opt-in
 multisampling (patch 0025) proves worth a cheaper form.
 

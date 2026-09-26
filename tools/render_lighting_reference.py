@@ -217,7 +217,10 @@ for x in range(2):
         mat = material(f"terrain_{x}_{y}", albedo, args.world / f"meshes/terrain_{x}_{y}_normal.png", None, None)
         ob = bpy.data.objects.new(f"terrain_{x}_{y}", mesh(f"meshes/terrain_{x}_{y}.obj", mat))
         scene.collection.objects.link(ob)
-river = material("river", base_color=(0.10, 0.23, 0.26), rough_value=0.15)
+# The source's river_flow without its foam: clear water.
+river = material("river", base_color=(1.0, 1.0, 1.0), rough_value=0.0)
+river.node_tree.nodes["Principled BSDF"].inputs["Transmission Weight"].default_value = 1.0
+river.node_tree.nodes["Principled BSDF"].inputs["IOR"].default_value = 1.333
 scene.collection.objects.link(bpy.data.objects.new("river", mesh("meshes/river.obj", river)))
 
 tree = instancer()
