@@ -124,10 +124,29 @@ Handoff state (2026-09-26), partly unverified:
   the `rock_moss_set_02_rock07`…`13` LOD1 shapes (visibilityRange 8–61 m; setting
   their `castShadows FALSE` fixes it; LOD0 and the river are innocent). Their LOD1
   meshes match LOD0 in bounds, instances are unmirrored at scale ~0.5, and
-  `uploadVisibleInstances` culls by the eye. Next: capture the shadow depth texture,
-  or check the shadow pass's instance buffer binding (`renderShadow` renders
-  `count` without `instanceOffset`) and per-cell culling for these 11 k-instance
-  shapes.
+  `uploadVisibleInstances` culls by the eye.
+  Narrowed further (2026-09-26, cloud session, Mesa llvmpipe, no GPU):
+  - It reproduces in software GL, so it is logic, not a driver quirk.
+  - Ruled out: `instanceOffset` (the shadow pass draws all visible instances in one
+    call from 0 and culls no faces, so it needs no mirrored split); the LOD1 meshes
+    (normals agree with winding, bounds match LOD0, no NaNs, no mirrored instances,
+    scale 0.45–3.0); shadow resolution (the black rocks are ~10 m away: the view's
+    `fieldOfView` 1.0 is horizontal, ~24° vertical at this aspect, so they sit in
+    cascade 1 at ~1.6 cm texels).
+  - The black rocks are LOD1 shading themselves, not LOD1 shading LOD0: with LOD0
+    hidden and LOD1 drawn at every distance they stay black.
+  - Repro in ~40 s instead of 10–20 min: a world with only the terrain Solid, the
+    header nodes (WorldInfo, Viewpoint, Background, lights) and the 14 rock07…13
+    Shapes, `--lights main`, the `forest` camera only. Black; lit with LOD1
+    `castShadows FALSE`. Still black with the LOD1 Shapes pointed at the LOD0
+    `.obj`, so the mesh is innocent: suspect what differs per Shape, the 8–61 m
+    band (`visibilityRange`), and cell culling against the light frustum. Keeping
+    only rock07 left fewer, smaller rocks; inconclusive.
+  - Next: in the minimal world, try LOD1 `visibilityRange 0 0` and a single rock07
+    instance, then capture the cascade-1 depth layer.
+  - `tools/render_forest.py` fails without `nvidia-smi` (FileNotFoundError), and its
+    4.8 GiB RSS cap sums every `webots-bin` on the machine, so two renders at once
+    both fail.
 - Next, in order: the river up close (Webots water reads pale grey-green where
   Cycles shows the bed and the bank's reflections: suspect screen-space reflections
   missing and falling back to the sky); terrain detail maps (read the source's
