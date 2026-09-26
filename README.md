@@ -150,6 +150,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0037-normal-map-degenerate-frame** | A degenerate normal-map frame (tiny triangles in a pixel quad) falls back to the surface normal instead of NaN: no black foliage. | — |
 | **0038-reflections-blocked-by-scene** | A reflected ray that passes behind the scene (under a crown, behind a trunk) takes that geometry's colour instead of missing to the sky map, which has no forest: the river shows its bed and banks, not a pale sheen. | river close-up matches Cycles by eye |
 | **0039-terrain-detail** | `Background.terrainDetail*` and `PBRAppearance.terrainDetail`: near the viewer the ground takes the source's tiled layers (leaves, ground, rocky trail, by its `path`/`river` masks) as detail over its 2.5 cm bake: their colour over their own colour at the bake's resolution, and their fine slopes. The bake keeps its content (the painted floor plants). | — |
+| **0040-device-overlay-perspective** | A camera or range finder's overlay, created after the world restored its perspective, takes that perspective's saved visibility, size and position instead of showing: the drone camera's hidden overlay stays hidden. | — |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,

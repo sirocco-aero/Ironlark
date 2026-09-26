@@ -155,8 +155,7 @@ renders 56 layers over ±52.3° and the stream keeps the top 32 (+52.3° to −6
 passed `array('B')`: now ~840/s).
 
 Next: make sensing cheaper in the forest (engine-side: the LiDAR's sub-cameras render the whole scene
-with full shading); hide the camera's overlay (Webots creates it after restoring the perspective,
-visible); `replay` checked by hand.
+with full shading); the camera's overlay is hidden (patch 0040); `replay` checked by hand.
 
 Start with 3D LiDAR, IMU and RGB camera. LiDAR and IMU drive first
 localization; the camera serves viewing now and object understanding later.
