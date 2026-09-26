@@ -242,7 +242,15 @@ def copy_resource(source, out, convert_mesh=False):
 def light_signature(build, out):
     """Invalidate canopy lighting when its actual geometry or alpha changes."""
     digest = hashlib.sha256(json.dumps(VISUAL_INSTANCES, sort_keys=True).encode())
-    urls = {record[key] for record in VISUAL_INSTANCES for key in ("mesh", "texture")}
+    # Meshes, and the textures whose alpha masks the light (RGBA PNGs: the bake treats the rest as
+    # opaque, whatever their colour).
+    def masks_light(path):
+        with path.open("rb") as stream:
+            header = stream.read(26)
+        return len(header) == 26 and header[25] == 6
+
+    urls = {record["mesh"] for record in VISUAL_INSTANCES}
+    urls |= {record["texture"] for record in VISUAL_INSTANCES if record["texture"] and masks_light(out / record["texture"])}
     paths = [out / url for url in sorted(urls)]
     paths += [
         build / "terrain.obj",

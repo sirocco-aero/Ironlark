@@ -124,6 +124,10 @@ Handoff state (2026-09-26), partly unverified:
   reverted) and a 4× normal offset are ruled out. The rocks of `set_01`, as small but
   ~950 per mesh, shade correctly. Repro: `/tmp`-style world with the terrain, lights
   and one `rock07` instance (instance 729 at −21.01, 32.14, −0.92), `--lights main`.
+- Trunk bands: fixed. 9 of 11 big pine and fir variants tile their bark past the UV square
+  above ~2 m; the trunk bake wrote only the square, so 13–21% of each trunk read unbaked
+  texels (black, roughness 0: glossy dark bands, stretched bark). The bake now writes the
+  tiled faces shifted into the square first, then the trunk's own islands over them.
 - River close up: done (0038). The water shows its sunlit bed and the banks.
 - Terrain detail (0039): the source's three tiled layers (read from its `main_terrain`:
   forest_leaves_04 at 1/150, forest_ground_04 at 1/22, rocky_trail at 1/20 of the

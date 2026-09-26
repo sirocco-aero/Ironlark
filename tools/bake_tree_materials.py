@@ -58,14 +58,47 @@ def main():
         uv = loop_uvs(mesh)
         if uv is None:
             raise RuntimeError(f'{material.name}: source UVMap was lost')
+        # Upper trunks tile the bark: their UVs run past the unit square, where the renderer
+        # wraps them back onto it. The bake writes the square only: those faces bake shifted
+        # into it (by whole tiles: where the renderer reads them) and first; the faces inside
+        # it then bake over them, exact. Every texel the trunk reads is written.
+        uv = uv.astype(np.float32).reshape(-1, 2)
+        starts = np.array([p.loop_start for p in mesh.polygons])
+        counts = np.array([p.loop_total for p in mesh.polygons])
+        face_of_loop = np.repeat(np.arange(len(starts)), counts)
+        low = np.minimum.reduceat(uv, starts)
+        high = np.maximum.reduceat(uv, starts)
+        tiled = ((low < -1e-4) | (high > 1 + 1e-4)).any(axis=1)
+        centre = np.add.reduceat(uv, starts) / counts[:, None]
+        shifted = uv - np.floor(centre)[face_of_loop] * tiled[face_of_loop, None]
         target_uv = mesh.uv_layers.new(name='IronlarkBake')
-        target_uv.data.foreach_set('uv', uv.astype(np.float32).ravel())
+        target_uv.data.foreach_set('uv', shifted.ravel())
         mesh.uv_layers.active = target_uv
         target_uv.active_render = True
-        ob = bpy.data.objects.new('trunk material', mesh)
-        scene.collection.objects.link(ob)
-        bpy.context.view_layer.objects.active = ob
-        ob.select_set(True)
+
+        def part(faces, name):
+            """An object holding only the given faces (with both UV layers)."""
+            copy = mesh.copy()
+            bm = bmesh.new()
+            bm.from_mesh(copy)
+            bm.faces.ensure_lookup_table()
+            bmesh.ops.delete(bm, geom=[f for f in bm.faces if not faces[f.index]], context='FACES')
+            bm.to_mesh(copy)
+            bm.free()
+            obj = bpy.data.objects.new(name, copy)
+            scene.collection.objects.link(obj)
+            return obj
+
+        passes = [part(tiled, 'tiled trunk'), part(~tiled, 'trunk')] if tiled.any() else [part(~tiled, 'trunk')]
+
+        def bake_all(kind, kwargs):
+            for k, obj in enumerate(passes):
+                for other in scene.objects:
+                    other.select_set(False)
+                obj.select_set(True)
+                bpy.context.view_layer.objects.active = obj
+                scene.render.bake.use_clear = k == 0
+                bpy.ops.object.bake(type=kind, **kwargs)
         nodes = material.node_tree.nodes
         target = nodes.new('ShaderNodeTexImage')
         nodes.active = target
@@ -76,7 +109,7 @@ def main():
                 image.colorspace_settings.name = 'Non-Color'
             target.image = image
             kwargs = {'pass_filter': {'COLOR'}} if kind == 'DIFFUSE' else {}
-            bpy.ops.object.bake(type=kind, **kwargs)
+            bake_all(kind, kwargs)
             name = f'baked_{args.variant}_{material.name}_{suffix}.png'
             image.file_format = 'PNG'
             image.filepath_raw = str(out / name)
@@ -86,7 +119,10 @@ def main():
             print('TRUNK_MATERIAL', args.variant, material.name, suffix, flush=True)
         result[material.name] = files
         nodes.remove(target)
-        bpy.data.objects.remove(ob, do_unlink=True)
+        for obj in passes:
+            data = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            bpy.data.meshes.remove(data)
         bpy.data.meshes.remove(mesh)
     (out / f'baked_{args.variant}.json').write_text(json.dumps(result, indent=2))
 
