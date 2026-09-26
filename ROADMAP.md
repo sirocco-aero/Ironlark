@@ -112,10 +112,8 @@ Handoff state (2026-09-26), partly unverified:
 - Done, verified: light layers baked without cover under 3 m (it shaded itself:
   dark rocks); cover gets the source's normal and roughness maps (the lookup had a
   wrong path); patch 0037 stops black foliage from degenerate normal-map frames.
-- Built, not yet verified: 0035 fog in `Camera` devices (color only; medium from
-  `WbFog` via a provider hook, so headless cameras get it too); 0036 range sensors
-  see instanced shapes and cut alpha-masked texels (they skipped every instance, so
-  a LiDAR saw no trees or rocks).
+- Verified in a recorded forest flight: 0035 (the drone camera sees the fog) and 0036 (a
+  LiDAR scan at 2.5 m: 20.8 k of 28.8 k returns off trunks, crowns and cover).
 - River rocks black under the sun: fixed by casting no cascade shadow from dense
   small clutter (over 2000 instances and under 0.25 m placed height: the river bed's
   `rock_moss_set_02_rock07`…`13` pebbles, ~78 k instances, and two dry-branch sets;
