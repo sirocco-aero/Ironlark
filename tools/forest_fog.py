@@ -7,11 +7,13 @@ from PIL import Image
 
 # The source scene's `fog` object: a box with a Volume Scatter material
 # (color 0.8, density 0.004, anisotropy 0.8), in Blender world coordinates.
-# Loiter keeps its height but not its sides: from the world's edge the box's
-# walls showed as hard lines, so the fog is a horizontal layer. Seen from above,
-# its top was a hard line too: above the box, density decays over FOG_FALLOFF
-# metres instead of stopping, and inside it stays the source's.
+# Inside the box, the medium is the source's. Its faces would show as hard lines
+# against the backdrop past it: outside, density decays instead of stopping, over
+# FOG_FALLOFF metres above and below and FOG_FALLOFF_SIDES sideways. (An unbounded
+# layer instead veiled the backdrop out to the horizon, from above, in haze the
+# source does not have.)
 FOG_FALLOFF = 10.0
+FOG_FALLOFF_SIDES = 30.0
 FOG_CENTER = (0.6179197, 2.4716792, 11.4727554)
 FOG_SIZE = (208.8162231, 208.8162231, 29.1523743)
 FOG_COLOR = 0.8
@@ -171,7 +173,8 @@ def fog_node(build, out, home):
   density {FOG_DENSITY}
   anisotropy {FOG_ANISOTROPY}
   boxCenter {center[0]:.4f} {center[1]:.4f} {center[2]:.4f}
-  boxSize 0 0 {FOG_SIZE[2]:.4f}
+  boxSize {FOG_SIZE[0]:.4f} {FOG_SIZE[1]:.4f} {FOG_SIZE[2]:.4f}
   boxFalloff {FOG_FALLOFF}
+  boxFalloffHorizontal {FOG_FALLOFF_SIDES}
   ambientColor {' '.join(f'{srgb(c):.4f}' for c in ambient)}{occlusion}{horizon}
 }}"""

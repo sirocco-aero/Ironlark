@@ -123,6 +123,10 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0028-fog-light-occlusion** | The scattering fog is lit through the light occlusion layers, and by the sky it scatters along each view direction (`Fog.ambientRadiance`: the sky against its phase, 9 × 8 directions) instead of the sky's mean in every direction. | fog's added light matches Cycles (×1.34 vs ×1.34) |
 | **0029-fog-depth** | The scattering fog decoded WREN's depth as `1 − near/(2d)`; with zero-to-one clip depth it is `1 − near/d`, so it put every surface at half its distance and too little haze in front of it. | brightness vs Cycles 0.79–1.20× → 0.96–1.23× |
 | **0030-water-reflections** | The opaque scene (color, depth) is copied before translucent objects draw; transmissive surfaces march their reflection across its depth and mirror what they hit, the sky only where rays leave the screen. The clear river mirrored only sky: pale at grazing angles. | river colour vs Cycles within 10%; +0.3 ms |
+| **0031-fog-shafts** | Near the viewer the fog reads the sun's shadow maps, in steps that grow with distance: shafts through the canopy. | — |
+| **0032-backlit-foliage** | Foliage takes no light from behind it (the wrap floor is gone); the second sun, 25° from the first, is shaded by the first's shadow maps near the viewer. | — |
+| **0033-fog-sky-phase** | Fog in front of geometry scatters no more sky than the phase-weighted table gives (looking down: the dark ground, not the sky's mean); the air is in the shade of either the maps or the bake. | overview brightness vs Cycles 1.66× → 1.14×; backlit shadows (p10) 3.1× → 1.55× |
+| **0034-fog-box-sides** | `Fog.boxFalloffHorizontal`: the source's 209 m fog box, decaying over 30 m past its sides, replaces the unbounded layer that veiled the backdrop to the horizon. | region canopy from 60 m vs Cycles: 2.4× (checkpoint) → 1.6× |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,

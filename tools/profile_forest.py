@@ -120,7 +120,10 @@ def main():
         world = without_shapes(world, text)
     target = out / "worlds/profile.wbt"
     target.write_text(world)
+    from render_forest import private_preferences
+
     env = os.environ | {
+        "XDG_CONFIG_HOME": str(private_preferences(out, [])),
         "PATH": str(ROOT / ".venv/bin") + ":" + os.environ.get("PATH", ""),
         "LOITER_OBSERVER": str(ROOT / "controllers/flight_observer"),
         "LOITER_SCENE": str(source / "scene.json"),

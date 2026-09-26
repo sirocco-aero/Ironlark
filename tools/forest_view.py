@@ -19,4 +19,6 @@ CAMERAS = {
     "forest": {"eye": [-13.944526, 32.4402, 0.922303], "target": [-23.765966, 33.8368, 2.18279]},
     # Facing the main sun from under the canopy, as the source's hero render does.
     "backlit": {"eye": [-13.944526, 32.4402, 1.5], "target": [-16.672, 40.58, 4.5]},
+    # From 60 m over the middle of the region, across it towards the west.
+    "high": {"eye": [-37, 80, 60], "target": [-300, 120, 20]},
 }
