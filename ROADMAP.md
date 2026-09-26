@@ -115,38 +115,17 @@ Handoff state (2026-09-26), partly unverified:
 - Built, not yet verified: 0035 fog in `Camera` devices (color only; medium from
   `WbFog` via a provider hook, so headless cameras get it too); 0036 range sensors
   see instanced shapes and cut alpha-masked texels (they skipped every instance, so
-  a LiDAR saw no trees or rocks); 0038 refreshes cached shadow cascades once the
-  eye moves 1 m.
-- Open bug, not fixed by 0038 (revert it if it earns nothing): under the main sun
-  (`tools/render_forest.py --lights main`, view `forest`) the river rocks and the bed
-  around them are black where Cycles lights them. Shown by elimination with
-  `--sub`: the shadow maps (fine with `--pref OpenGL/disableShadows=true`), cast by
-  the `rock_moss_set_02_rock07`…`13` LOD1 shapes (visibilityRange 8–61 m; setting
-  their `castShadows FALSE` fixes it; LOD0 and the river are innocent). Their LOD1
-  meshes match LOD0 in bounds, instances are unmirrored at scale ~0.5, and
-  `uploadVisibleInstances` culls by the eye.
-  Narrowed further (2026-09-26, cloud session, Mesa llvmpipe, no GPU):
-  - It reproduces in software GL, so it is logic, not a driver quirk.
-  - Ruled out: `instanceOffset` (the shadow pass draws all visible instances in one
-    call from 0 and culls no faces, so it needs no mirrored split); the LOD1 meshes
-    (normals agree with winding, bounds match LOD0, no NaNs, no mirrored instances,
-    scale 0.45–3.0); shadow resolution (the black rocks are ~10 m away: the view's
-    `fieldOfView` 1.0 is horizontal, ~24° vertical at this aspect, so they sit in
-    cascade 1 at ~1.6 cm texels).
-  - The black rocks are LOD1 shading themselves, not LOD1 shading LOD0: with LOD0
-    hidden and LOD1 drawn at every distance they stay black.
-  - Repro in ~40 s instead of 10–20 min: a world with only the terrain Solid, the
-    header nodes (WorldInfo, Viewpoint, Background, lights) and the 14 rock07…13
-    Shapes, `--lights main`, the `forest` camera only. Black; lit with LOD1
-    `castShadows FALSE`. Still black with the LOD1 Shapes pointed at the LOD0
-    `.obj`, so the mesh is innocent: suspect what differs per Shape, the 8–61 m
-    band (`visibilityRange`), and cell culling against the light frustum. Keeping
-    only rock07 left fewer, smaller rocks; inconclusive.
-  - Next: in the minimal world, try LOD1 `visibilityRange 0 0` and a single rock07
-    instance, then capture the cascade-1 depth layer.
-  - `tools/render_forest.py` fails without `nvidia-smi` (FileNotFoundError), and its
-    4.8 GiB RSS cap sums every `webots-bin` on the machine, so two renders at once
-    both fail.
+  a LiDAR saw no trees or rocks).
+- River rocks black under the sun: fixed by casting no cascade shadow from dense
+  small clutter (over 2000 instances and under 0.25 m placed height: the river bed's
+  `rock_moss_set_02_rock07`…`13` pebbles, ~78 k instances, and two dry-branch sets;
+  `tools/build_forest_world.py`). Root cause still unknown, recorded for later: in
+  the shadow maps such a carpet shades itself black. A lone pebble on the bed stays
+  dark, the same pebble 0.5 m up is lit and casts a correct shadow; the water, LOD1
+  meshes, mesh winding, backdrop terrain, cascade caching (tried as patch 0038,
+  reverted) and a 4× normal offset are ruled out. The rocks of `set_01`, as small but
+  ~950 per mesh, shade correctly. Repro: `/tmp`-style world with the terrain, lights
+  and one `rock07` instance (instance 729 at −21.01, 32.14, −0.92), `--lights main`.
 - Next, in order: the river up close (Webots water reads pale grey-green where
   Cycles shows the bed and the bank's reflections: suspect screen-space reflections
   missing and falling back to the sky); terrain detail maps (read the source's

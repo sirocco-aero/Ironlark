@@ -624,6 +624,25 @@ def impostor_shapes(build, out, visual_trees, rows, variants):
     return nodes
 
 
+CLUTTER_COUNT = 2000
+CLUTTER_HEIGHT = 0.25  # metres
+
+
+def mesh_bounds(path, cache={}):
+    if path not in cache:
+        vertices = np.array([line.split()[1:4] for line in path.read_text().splitlines() if line.startswith("v ")], float)
+        cache[path] = vertices.min(0), vertices.max(0)
+    return cache[path]
+
+
+def height(path, row):
+    """Vertical extent of a mesh placed by a 3 x 4 transform."""
+    low, high = mesh_bounds(path)
+    corners = np.array([[x, y, z] for x in (low[0], high[0]) for y in (low[1], high[1]) for z in (low[2], high[2])])
+    z = corners @ row[2, :3]
+    return z.max() - z.min()
+
+
 def instance_cover(source, build, out, cover_index):
     """Place every source cover instance with GPU instancing.
 
@@ -677,6 +696,7 @@ def instance_cover(source, build, out, cover_index):
                 }
             )
         url = "meshes/instances_%s.bin" % re.sub(r"\W", "_", asset)
+        mesh_file = lambda name: out / mesh_urls[name]
         rows = np.asarray(rows).reshape(-1, 3, 4)
         backdrop, _ = forest_backdrop.copies(rows, far=first["lod1_distance"], seed=len(nodes))
         np.concatenate([rows, backdrop]).astype("<f4").tofile(out / url)
@@ -686,10 +706,15 @@ def instance_cover(source, build, out, cover_index):
             bands.append((first["lod1"], first["lod0_distance"], first["lod1_distance"]))
         else:
             bands = [(asset, 0.0, first["lod1_distance"])]
+        # Dense small clutter (the river bed's pebbles: ~11 k per mesh, under 0.25 m tall) casts
+        # no cascade shadow: its shadows are a few centimetres, and in the maps such a carpet
+        # shades itself black (ROADMAP, open bug). Ambient occlusion still grounds it.
+        low = np.percentile([height(mesh_file(asset), row) for row in rows[:: max(1, len(rows) // 200)]], 90)
+        shadow = not (len(placements) > CLUTTER_COUNT and low < CLUTTER_HEIGHT)
         for name, near, far in bands:
             nodes.append(
                 f"""Shape {{
-{shape_fields(mesh_urls[name], cover_index[name], normal_maps.get(name, ""), roughness_maps.get(name, ""))}
+{shape_fields(mesh_urls[name], cover_index[name], normal_maps.get(name, ""), roughness_maps.get(name, ""), shadow)}
           instancesUrl [ "{url}" ]
           visibilityRange {near:.3f} {far:.3f}
         }}"""
