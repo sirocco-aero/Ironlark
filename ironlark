@@ -18,6 +18,7 @@ import time
 ROOT = Path(__file__).resolve().parent
 CACHE = ROOT / ".cache"
 IMAGE = "ironlark-sitl:copter-4.7.1"
+ROS_IMAGE = "ironlark-ros:humble"
 COMMIT = "dbe792162d06cab66c3475fd5556bf7a120f119e"
 UPSTREAM = "/opt/ardupilot/libraries/SITL/examples/Webots_Python"
 
@@ -38,6 +39,7 @@ def setup():
         if not shutil.which(executable):
             raise RuntimeError(f"Install {executable} before running ./ironlark setup.")
     call("docker", "build", "-t", IMAGE, str(ROOT / "docker"))
+    call("docker", "build", "-t", ROS_IMAGE, str(ROOT / "ros"))
     CACHE.mkdir(exist_ok=True)
     stamp = CACHE / "ardupilot-commit"
     if not stamp.exists() or stamp.read_text().strip() != COMMIT:
@@ -139,6 +141,7 @@ def stage_world(run, world):
             (ROOT / "worlds/flight_foundation.wbt")
             .read_text()
             .replace("../.cache/", os.path.relpath(CACHE, target.parent) + "/")
+            .replace("../protos/", os.path.relpath(ROOT / "protos", target.parent) + "/")
         )
         shutil.copyfile(
             ROOT / "worlds/.flight_foundation.wbproj",
@@ -160,9 +163,9 @@ def stage_world(run, world):
     shutil.copytree(ROOT / "worlds/pine_forest", target_dir, dirs_exist_ok=True)
     target = target_dir / "pine_forest.wbt"
     target.write_text(
-        target.read_text().replace(
-            "../.cache/", os.path.relpath(CACHE, target_dir) + "/"
-        )
+        target.read_text()
+        .replace("../.cache/", os.path.relpath(CACHE, target_dir) + "/")
+        .replace("../protos/", os.path.relpath(ROOT / "protos", target_dir) + "/")
     )
     return target, target_dir / "scene.json"
 
@@ -179,8 +182,41 @@ def run_tool(name, *args):
     call(str(python), str(ROOT / "tools" / name), *args)
 
 
-def flight(headless, editor=False, world="forest"):
+def ros_container(name, run, command):
+    """The ROS 2 container: host network (DDS kept to localhost), the project read-only, the run's
+    folder for bags and logs."""
+    return [
+        "docker", "run", "--rm", "--name", name, "--network", "host",
+        "--user", f"{os.getuid()}:{os.getgid()}",
+        "-e", "HOME=/tmp", "-e", "ROS_LOCALHOST_ONLY=1", "-e", "ROS_LOG_DIR=/run/ironlark/ros-log",
+        "--mount", f"type=bind,src={ROOT},dst=/project,readonly",
+        "--mount", f"type=bind,src={run},dst=/run/ironlark",
+        ROS_IMAGE, "bash", "-c", "source /opt/ros/humble/setup.bash && " + command,
+    ]
+
+
+def replay(run):
+    """Play a recorded flight's bag, publishing its /clock."""
+    run = Path(run).resolve()
+    if not (run / "bag").is_dir():
+        raise RuntimeError(f"No bag in {run}. Record one with ./ironlark run --record.")
+    call(*ros_container(f"ironlark-replay-{os.getpid()}", run, "ros2 bag info bag && ros2 bag play bag --clock"))
+
+
+def build_drone():
+    run_tool("build_drone.py")
+
+
+def check_recording(run):
+    """The recorded sensors against the empty world's calibration wall (tools/check_recording.py)."""
+    run = Path(run).resolve()
+    call(*ros_container(f"ironlark-check-{os.getpid()}", run, "python3 /project/tools/check_recording.py /run/ironlark"))
+
+
+def flight(headless, editor=False, world="forest", record=False):
     doctor()
+    if not (ROOT / "protos/IronlarkDrone.proto").is_file():
+        build_drone()
     CACHE.mkdir(exist_ok=True)
     with (CACHE / "flight.lock").open("w") as lock:
         try:
@@ -225,6 +261,8 @@ def flight(headless, editor=False, world="forest"):
         env["PATH"] = str(ROOT / ".venv/bin") + os.pathsep + env.get("PATH", "")
         env["PYTHONUNBUFFERED"] = "1"
         env["IRONLARK_RUN_DIR"] = str(run)
+        if record:
+            env["IRONLARK_SENSING"] = "1"
         # Webots saves GUI perspectives beside the world. Give each run its own
         # project so watching a flight never rewrites versioned source files.
         world_path, scene_path = stage_world(run, world)
@@ -247,12 +285,28 @@ def flight(headless, editor=False, world="forest"):
             command.append("--fullscreen")
         command.append(str(world_path))
         name = f"ironlark-sitl-{os.getpid()}"
-        webots = sitl = mission = None
+        ros_name = f"ironlark-ros-{os.getpid()}"
+        webots = sitl = mission = ros = None
         with (
             (run / "webots.log").open("w") as webots_log,
             (run / "sitl.log").open("w") as sitl_log,
         ):
             try:
+                if record:
+                    # Bridge and recorder before Webots: the controller's stream finds them waiting.
+                    # SIGINT on exit lets rosbag2 close the bag.
+                    ros = subprocess.Popen(
+                        ros_container(
+                            ros_name,
+                            run,
+                            "python3 /project/ros/ironlark_bridge.py & bridge=$!; "
+                            "ros2 bag record -a -o bag & recorder=$!; "
+                            "trap 'kill -INT $recorder; wait $recorder; kill $bridge' INT TERM; wait",
+                        ),
+                        stdout=(run / "ros.log").open("w"),
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
                 webots = subprocess.Popen(
                     command,
                     env=env,
@@ -363,6 +417,13 @@ def flight(headless, editor=False, world="forest"):
                     )
                     webots.wait()
             finally:
+                if ros is not None:
+                    subprocess.run(["docker", "kill", "--signal", "INT", ros_name],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    try:
+                        ros.wait(timeout=20)
+                    except subprocess.TimeoutExpired:
+                        stop_process(ros)
                 stop_process(mission)
                 subprocess.run(
                     ["docker", "stop", "--time", "3", name],
@@ -377,7 +438,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("setup", "doctor", "run", "check", "build-world", "build-renderer", "render-reference"),
+        choices=("setup", "doctor", "run", "check", "build-world", "build-drone", "build-renderer",
+                 "render-reference", "replay", "check-recording"),
+    )
+    parser.add_argument("run_dir", nargs="?", help="replay, check-recording: a flight's run folder (runs/...)")
+    parser.add_argument(
+        "--record", action="store_true",
+        help="run/check: stream the sensors (config/sensors.json) to ROS 2 and record a rosbag2 in the run folder",
     )
     parser.add_argument(
         "--editor", action="store_true", help="show Webots' development UI (run only)"
@@ -400,7 +467,13 @@ def main():
         parser.error("--skip-export is only available with build-world")
     if args.world is not None and args.command not in ("run", "check"):
         parser.error("--world is only available with run and check")
-    if args.command == "setup":
+    if args.record and args.command not in ("run", "check"):
+        parser.error("--record is only available with run and check")
+    if args.command in ("replay", "check-recording"):
+        if not args.run_dir:
+            parser.error(f"{args.command} needs a run folder")
+        (replay if args.command == "replay" else check_recording)(args.run_dir)
+    elif args.command == "setup":
         setup()
     elif args.command == "doctor":
         doctor()
@@ -410,9 +483,12 @@ def main():
         run_tool("render_reference.py")
     elif args.command == "build-world":
         build_world(skip_export=args.skip_export)
+        build_drone()
+    elif args.command == "build-drone":
+        build_drone()
     else:
         world = args.world or ("empty" if args.command == "check" else "forest")
-        flight(headless=args.command == "check", editor=args.editor, world=world)
+        flight(headless=args.command == "check", editor=args.editor, world=world, record=args.record)
 
 
 if __name__ == "__main__":

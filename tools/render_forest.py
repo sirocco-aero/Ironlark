@@ -93,6 +93,7 @@ def main():
         (source / "pine_forest.wbt")
         .read_text()
         .replace("../.cache/", str(SIM / ".cache") + "/")
+        .replace("../protos/", str(SIM / "protos") + "/")
     )
     world = world.replace('controller "flight_bridge"', 'controller "<none>"')
     # The minimap robot draws nothing without its controller; drop it from previews.
@@ -129,6 +130,8 @@ def main():
         world = re.sub(r"(\nFog \{.*?\n  density )[\d.e-]+", lambda m: m.group(1) + str(args.fog_density), world, flags=re.S)
     target = worlds / "preview.wbt"
     target.write_text(world)
+    # The world's perspective: hidden device overlays, disabled interactions.
+    (worlds / ".preview.wbproj").write_text((source / ".pine_forest.wbproj").read_text())
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(private_preferences(out, args.pref))
     env["QT_QPA_PLATFORM"] = "xcb"

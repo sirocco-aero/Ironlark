@@ -241,7 +241,23 @@ def bake_terrain(obj, mesh, keep_tris, loop_vert, world, uv_data, kind="DIFFUSE"
         dst = sub.attributes.new(attr_name, "FLOAT_COLOR", "POINT").data
         for new_vi, old_vi in enumerate(order):
             dst[new_vi].color = buf[old_vi].tolist()
-    sub.materials.append(bpy.data.materials["main_terrain"])
+    if kind == "MASK":
+        # The material's blend weights as colour: R 'path' (leaves to ground), G 'river' (to the trail).
+        mat = bpy.data.materials.get("ironlark_terrain_mask") or bpy.data.materials.new("ironlark_terrain_mask")
+        mat.use_nodes = True
+        nodes, links = mat.node_tree.nodes, mat.node_tree.links
+        nodes.clear()
+        combine = nodes.new("ShaderNodeCombineColor")
+        for channel, name in ((0, "path"), (1, "river")):
+            attribute = nodes.new("ShaderNodeAttribute")
+            attribute.attribute_name = name
+            links.new(attribute.outputs["Fac"], combine.inputs[channel])
+        emission = nodes.new("ShaderNodeEmission")
+        links.new(combine.outputs["Color"], emission.inputs["Color"])
+        links.new(emission.outputs["Emission"], nodes.new("ShaderNodeOutputMaterial").inputs["Surface"])
+        sub.materials.append(mat)
+    else:
+        sub.materials.append(bpy.data.materials["main_terrain"])
     for poly in sub.polygons:
         poly.use_smooth = True
 
@@ -252,12 +268,12 @@ def bake_terrain(obj, mesh, keep_tris, loop_vert, world, uv_data, kind="DIFFUSE"
     bpy.context.window.scene = bake_scene
     bpy.context.view_layer.update()
     try:
-        mat = bpy.data.materials["main_terrain"]
+        mat = bpy.data.materials["ironlark_terrain_mask" if kind == "MASK" else "main_terrain"]
         nodes = mat.node_tree.nodes
         img = bpy.data.images.get("ironlark_terrain_bake")
         if img is None:
             img = bpy.data.images.new("ironlark_terrain_bake", BAKE_SIZE, BAKE_SIZE)
-        if kind == "NORMAL":
+        if kind in ("NORMAL", "MASK"):
             img.colorspace_settings.name = "Non-Color"
         tex = nodes.get("IronlarkBake")
         if tex is None:
@@ -277,7 +293,7 @@ def bake_terrain(obj, mesh, keep_tris, loop_vert, world, uv_data, kind="DIFFUSE"
         bake_scene.render.bake.margin = 16
         t0 = time.time()
         bpy.ops.object.bake(
-            type=kind, **({"pass_filter": {"COLOR"}} if kind == "DIFFUSE" else {})
+            type="EMIT" if kind == "MASK" else kind, **({"pass_filter": {"COLOR"}} if kind == "DIFFUSE" else {})
         )
         log("terrain bake %.1fs" % (time.time() - t0))
         tmp.select_set(False)

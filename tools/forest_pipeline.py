@@ -169,7 +169,8 @@ def build_world(skip_export=False):
             blender_stage("river", "export_forest_water.py")
         for x in range(2):
             for y in range(2):
-                if missing(f"terrain_{x}_{y}_diff.png", f"terrain_{x}_{y}_normal.png"):
+                if missing(f"terrain_{x}_{y}_diff.png", f"terrain_{x}_{y}_normal.png", f"terrain_{x}_{y}_mask.png",
+                           "terrain_generated.json"):
                     blender_stage(
                         f"terrain-material-{x}-{y}",
                         "export_terrain_detail.py",

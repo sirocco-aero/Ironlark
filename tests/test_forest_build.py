@@ -159,7 +159,7 @@ class BuiltWorld(unittest.TestCase):
             self.skipTest("world not built")
         text = world.read_text()
         self.assertIn('coordinateSystem "ENU"', text)
-        self.assertIn("DEF IRONLARK_DRONE Iris", text)
+        self.assertIn("DEF IRONLARK_DRONE IronlarkDrone", text)
         for path in re.findall(r'"(meshes/[^"\n]+)"', text):
             self.assertTrue((world.parent / path).is_file(), path)
         self.assertNotIn("needles_", text)

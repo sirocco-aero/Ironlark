@@ -1,0 +1,76 @@
+{
+  "frame": "base_link: the drone's body, FLU (x forward, y left, z up), origin at the Iris model's origin. Poses are translation [x, y, z] in metres and rotation [axis x, y, z, angle] (Webots axis-angle).",
+  "imu": {
+    "name": "imu",
+    "frame_id": "imu_link",
+    "translation": [
+      0.0,
+      0.0,
+      0.012
+    ],
+    "rotation": [
+      0,
+      0,
+      1,
+      0
+    ],
+    "rate_hz": 250,
+    "accelerometer_noise": 0.03,
+    "gyro_noise": 0.002,
+    "seed": 0,
+    "note": "noise: absolute standard deviation per sample (m/s^2, rad/s), added by the controller's stream from the seed. ArduPilot keeps the Iris's own noiseless accelerometer, gyro, inertial unit and GPS."
+  },
+  "lidar": {
+    "name": "lidar",
+    "frame_id": "lidar_link",
+    "model": "Livox Mid-360 class: 360 x 59 degrees (-7 to +52), 0.1 to 40 m",
+    "translation": [
+      0.0,
+      0.0,
+      0.083
+    ],
+    "rotation": [
+      0,
+      0,
+      1,
+      0
+    ],
+    "rate_hz": 10,
+    "horizontal_resolution": 900,
+    "layers": 32,
+    "field_of_view": 6.283185,
+    "vertical_field_of_view": 1.826966,
+    "tilt_angle": 0.0,
+    "min_range": 0.1,
+    "max_range": 40.0,
+    "noise": 0.02,
+    "render_layers": 56,
+    "note": "Webots renders a 360-degree Lidar from several cameras and misplaces returns when tiltAngle is set (checked on a recorded flight): it renders render_layers over a symmetric field instead, and the stream keeps the top 'layers' (+52.3 to -6.7 degrees)."
+  },
+  "camera": {
+    "name": "camera",
+    "frame_id": "camera_link",
+    "optical_frame_id": "camera_optical_frame",
+    "translation": [
+      0.12,
+      0.0,
+      -0.012
+    ],
+    "rotation": [
+      0,
+      1,
+      0,
+      0.174533
+    ],
+    "rate_hz": 20,
+    "width": 640,
+    "height": 480,
+    "field_of_view": 1.570796,
+    "near": 0.05
+  },
+  "stream": {
+    "host": "127.0.0.1",
+    "port": 5790,
+    "queue": 64
+  }
+}

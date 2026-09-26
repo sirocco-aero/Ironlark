@@ -1,2 +1,4 @@
 Webots Project File version R2025a
 userInteractions: selectionDisabled::3dContextMenuDisabled::objectMoveDisabled::forceAndTorqueDisabled
+renderingDevicePerspectives: Ironlark:camera;0;1;0;0
+renderingDevicePerspectives: Ironlark:lidar;0;1;0;0

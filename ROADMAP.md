@@ -127,11 +127,34 @@ Handoff state (2026-09-26), partly unverified:
   ~950 per mesh, shade correctly. Repro: `/tmp`-style world with the terrain, lights
   and one `rock07` instance (instance 729 at −21.01, 32.14, −0.92), `--lights main`.
 - River close up: done (0038). The water shows its sunlit bed and the banks.
-- Next, in order: terrain detail maps (read the source's `main_terrain` material
-  first: tiled textures under masks; the bake is 2.5 cm per texel); GTAO-off missing
-  trees; shimmer. Then verify 0035 and 0036 while building the sensor rig.
+- Terrain detail (0039): the source's three tiled layers (read from its `main_terrain`:
+  forest_leaves_04 at 1/150, forest_ground_04 at 1/22, rocky_trail at 1/20 of the
+  terrain's bounds, blended by its `path` and `river` attributes, baked as
+  `terrain_*_mask.png`) add detail within 15–40 m over the 2.5 cm bake. Built; verify
+  up close against the checkpoint and Cycles.
+- Next: GTAO-off missing trees; shimmer.
 
 ### 2. Sensor rig and ROS 2
+
+Verified 2026-09-26: the drone (`tools/build_drone.py`, `protos/IronlarkDrone.proto`, the Iris
+flight model with a new body and the rig of `config/sensors.json`) passes the flight check in both
+worlds. `./ironlark check --record` records a clean rosbag2: every topic at its rate for the whole
+flight (61.4 s: `/clock` 500 Hz, IMU and ground truth 250 Hz, camera 20 Hz, LiDAR 10 Hz), stamps
+strictly increasing, nothing dropped. `./ironlark check-recording RUN` against the empty world's
+calibration wall (face at x = 5.9 m): LiDAR distance 5.897 m (2.9 mm off), normal 0.6° off, plane
+residual 2.3 cm (the configured 2 cm noise); 99% of the wall's returns land on its red in the camera
+frame of the same instant. Added cost: +6% wall time in the empty world; in the forest the flight
+takes 1.72× as long (131 s against 76 s) and Webots time slows rather than drops data.
+
+Found on the way: Webots misplaces a 360° Lidar's returns when `tiltAngle` is set (the multi-camera
+merge ignores it: rays span ±29.5° but are labelled −7°…+52°, and shift ~22° in azimuth), so the rig
+renders 56 layers over ±52.3° and the stream keeps the top 32 (+52.3° to −6.7°); and rclpy checks
+`bytes` assigned to `uint8[]` fields element by element (the bridge managed 320 messages/s until it
+passed `array('B')`: now ~840/s).
+
+Next: make sensing cheaper in the forest (engine-side: the LiDAR's sub-cameras render the whole scene
+with full shading); hide the camera's overlay (Webots creates it after restoring the perspective,
+visible); `replay` checked by hand.
 
 Start with 3D LiDAR, IMU and RGB camera. LiDAR and IMU drive first
 localization; the camera serves viewing now and object understanding later.

@@ -28,9 +28,11 @@ extracted to `./webots/` (or set `WEBOTS_HOME`).
 | `setup` | Builds ArduPilot Copter 4.7.1 (`dbe7921`) in an Ubuntu 22.04 image; extracts its Iris model and Webots bridge to `.cache/`; creates `.venv/` (Python 3.12.11, NumPy, Pillow). System Python is untouched. |
 | `doctor` | Checks every prerequisite. |
 | `build-world` | Downloads Blender 4.2.9 and the [Poly Haven Pine Forest](https://polyhaven.com/collections/pine_forest) scene (checksummed), exports it stage by stage, and assembles `worlds/pine_forest/`. Resumable; `--skip-export` only reassembles. |
+| `build-drone` | Models the drone in Blender and writes `protos/IronlarkDrone.proto` (also run by `build-world`, and by `run`/`check` when missing). |
 | `build-renderer` | Builds patched Webots into `.cache/webots-renderer/`. See [Webots patches](#webots-patches). |
 | `render-reference` | Cycles renders of the source scene at the preview cameras, into `runs/reference/`: the ground truth for looks. Needs more than ~26 GB RAM (15 GB + zram was not enough); needs no built world. |
-| `run` | Flies over the forest in a fullscreen window, then exits. `--world empty` for the bare test area; `--editor` for Webots' UI. |
+| `run` | Flies over the forest in a fullscreen window, then exits. `--world empty` for the bare test area; `--editor` for Webots' UI; `--record` streams the sensors to ROS 2 and records a rosbag2 in the run folder. |
+| `replay RUN` | Plays a recorded run's bag in the ROS 2 container, publishing its `/clock`. |
 | `check` | The same flight on a virtual display, empty world by default. Exits nonzero on failure. |
 
 Webots is chosen in order: `WEBOTS_HOME`, the patched build if present, `./webots/`.
@@ -41,6 +43,7 @@ so builds are source-pinned, not bit-identical.
 Configure in files, not panels; restart to apply:
 [`worlds/flight_foundation.wbt`](worlds/flight_foundation.wbt) (empty-world scene, vehicle, camera, timestep),
 [`config/flight.parm`](config/flight.parm) (autopilot overrides),
+[`config/sensors.json`](config/sensors.json) (sensor poses, rates, ranges, noise),
 [`tests/flight_smoke.py`](tests/flight_smoke.py) (the flight check),
 [`ironlark`](ironlark) (startup, versions, cleanup),
 [`tools/`](tools) (the forest pipeline).
@@ -78,6 +81,21 @@ world, estimator), `result.json` (verdict, transitions, measurements),
 `telemetry.jsonl`, evaluator-only `ground_truth.jsonl`, `world-map.png` (forest), and Webots, SITL and
 ArduPilot logs. Ctrl+C or failure tears everything down; that is cleanup, not a
 recovery policy.
+
+## Sensors and ROS 2
+
+The drone ([`tools/build_drone.py`](tools/build_drone.py)) keeps the Iris flight model (motors,
+propeller constants, mass, inertia, collision box, and the noiseless IMU and GPS ArduPilot reads)
+and carries the rig of `config/sensors.json`: a Mid-360-class LiDAR (360° × 59°, −7° to +52°,
+0.1–40 m, 10 Hz, 32 × 900 returns), an IMU (250 Hz, seeded white noise) and a front camera
+(640 × 480, 90°, 20 Hz, with the scattering fog, patch 0035). With `--record`, the flight
+controller samples them after each 2 ms physics step, on Webots time, and streams them over local
+TCP ([`sensing/protocol.py`](sensing/protocol.py)); a full queue drops and counts, never stalling
+physics, and pausing stops the clock. A ROS 2 Humble container ([`ros/`](ros)) publishes `/clock`,
+`/imu/data`, `/lidar/points` (x, y, z, ring, time), `/camera/image_raw` (bgra8),
+`/camera/camera_info` and `/tf_static`, ground truth only on `/ground_truth/pose` and
+`/ground_truth/velocity`, and records all of it with rosbag2. Frames are REP-103: Webots' world is
+ENU and bodies FLU; [`sensing/frames.py`](sensing/frames.py) is the one place for ENU/FLU ↔ NED/FRD.
 
 ## Webots patches
 
@@ -131,6 +149,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0036-range-sensors-see-foliage** | Range sensors (RangeFinder, Lidar) draw instanced shapes (they skipped them all) and cut alpha-masked texels as the color pass does; impostors stay out. | unverified |
 | **0037-normal-map-degenerate-frame** | A degenerate normal-map frame (tiny triangles in a pixel quad) falls back to the surface normal instead of NaN: no black foliage. | — |
 | **0038-reflections-blocked-by-scene** | A reflected ray that passes behind the scene (under a crown, behind a trunk) takes that geometry's colour instead of missing to the sky map, which has no forest: the river shows its bed and banks, not a pale sheen. | river close-up matches Cycles by eye |
+| **0039-terrain-detail** | `Background.terrainDetail*` and `PBRAppearance.terrainDetail`: near the viewer the ground takes the source's tiled layers (leaves, ground, rocky trail, by its `path`/`river` masks) as detail over its 2.5 cm bake: their colour over their own colour at the bake's resolution, and their fine slopes. The bake keeps its content (the painted floor plants). | — |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,

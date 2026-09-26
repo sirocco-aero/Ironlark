@@ -136,6 +136,7 @@ def build_terrain_tiles(build,out,rect):
               baseColorMap ImageTexture {{ url "meshes/{prefix}_diff.png" repeatS FALSE repeatT FALSE }}
               normalMap ImageTexture {{ url "meshes/{prefix}_normal.png" repeatS FALSE repeatT FALSE }}
               roughness 0.95 metalness 0
+              terrainDetail TRUE
             }}
             geometry Mesh {{ url "meshes/{prefix}.obj" }}'''
         nodes.append(f'''Shape {{
@@ -157,3 +158,55 @@ def build_terrain_tiles(build,out,rect):
             instancesUrl [ "meshes/instances_backdrop_far.bin" ]
         }}''')
     return '\n'.join(nodes),backdrop
+
+
+# The source's ground material (main_terrain): three Poly Haven layers tiled over its Generated
+# coordinates (the terrain's bounds) at these scales, blended by its 'path' and 'river' attributes.
+DETAIL_LAYERS = (("forest_leaves_04", 150.0), ("forest_ground_04", 22.0), ("rocky_trail", 20.0))
+DETAIL_SIZE = 2048
+
+
+def terrain_detail_fields(build, out, home, source, occlusion):
+    """Background fields for the terrain detail layers (Webots patch 0039): each kind of map as
+    three stacked layers, and the blend mask over the light occlusion rectangle (read from its
+    fields, which the mask must match). Empty before the mask bake."""
+    import re
+
+    from forest_fog import ground_heights, stitch
+
+    rect = re.search(r"lightOcclusionMin ([-\d.]+) ([-\d.]+)\s+lightOcclusionMax ([-\d.]+) ([-\d.]+)", occlusion)
+    tiles = {(x, y): build / f"terrain_{x}_{y}_mask.png" for x in range(2) for y in range(2)}
+    generated = build / "terrain_generated.json"
+    if not rect or not generated.exists() or not all(path.exists() for path in tiles.values()):
+        return ""
+    for kind, suffix in (("color", "diff"), ("normal", "nor_gl"), ("roughness", "rough")):
+        target = out / f"meshes/terrain_detail_{kind}.png"
+        if not target.exists():
+            strip = Image.new("RGB", (DETAIL_SIZE, 3 * DETAIL_SIZE))
+            for k, (name, _) in enumerate(DETAIL_LAYERS):
+                with Image.open(source / f"{name}_{suffix}.png") as image:
+                    layer = image.convert("RGB").resize((DETAIL_SIZE, DETAIL_SIZE), Image.Resampling.LANCZOS)
+                strip.paste(layer, (0, k * DETAIL_SIZE))
+            strip.save(target)
+    # The stitched mask spans the bakes' rectangle; resample it onto the occlusion rectangle.
+    masks = {k: np.asarray(Image.open(path).convert("RGB"), np.float32) / 255 for k, path in tiles.items()}
+    mask = stitch(masks)
+    size = mask.shape[0]
+    world_min, world_max, _ = ground_heights(build, home, 4)
+    low, high = np.array([float(rect[1]), float(rect[2])]), np.array([float(rect[3]), float(rect[4])])
+    scale = np.array([size / (world_max[0] - world_min[0]), size / (world_max[1] - world_min[1])])
+    box = (*((low - world_min) * scale), *((high - world_min) * scale))  # x0, y0 (rows from min y), x1, y1
+    image = Image.fromarray(np.round(np.clip(mask, 0, 1) * 255).astype(np.uint8), "RGB")
+    width = int(round(box[2] - box[0]))
+    height = int(round(box[3] - box[1]))
+    image = image.transform((width, height), Image.Transform.EXTENT, box, Image.Resampling.BILINEAR)
+    image.transpose(Image.Transpose.FLIP_TOP_BOTTOM).save(out / "meshes/terrain_detail_mask.png")  # top row: max y
+    meta = json.loads(generated.read_text())
+    span, origin = np.array(meta["span"][:2]), np.array(meta["low"][:2]) - np.array(home[:2])
+    sizes = [span / scale_ for _, scale_ in DETAIL_LAYERS]
+    tiles_field = ", ".join(f"{v[0]:.5f} {v[1]:.5f}" for v in (*sizes, origin))
+    bake_texel = (world_max[0] - world_min[0]) / (2 * 4096)  # two 4K diffuse bakes across
+    return f"""
+  terrainDetailUrl [ "meshes/terrain_detail_color.png", "meshes/terrain_detail_normal.png", "meshes/terrain_detail_roughness.png" ]
+  terrainDetailMaskUrl [ "meshes/terrain_detail_mask.png" ]
+  terrainDetailTiles [ {tiles_field}, {bake_texel:.5f} 0 ]"""

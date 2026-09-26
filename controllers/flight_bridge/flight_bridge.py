@@ -1,4 +1,4 @@
-"""Connect the Iris to the pinned upstream ArduPilot dynamics bridge."""
+"""Connect the drone (the Iris flight model) to the pinned upstream ArduPilot dynamics bridge."""
 
 from pathlib import Path
 import select
@@ -15,8 +15,19 @@ sys.path.insert(0, str(upstream))
 
 from webots_vehicle import WebotsArduVehicle
 
+import sensor_stream
+
 
 class IrisBridge(WebotsArduVehicle):
+    _sensors = None
+
+    def _after_step(self):
+        """Sensing (IRONLARK_SENSING=1): sampled on the step just taken, in Webots time."""
+        if self._sensors is None:
+            self._sensors = sensor_stream.SensorStream(self.robot) if sensor_stream.enabled() else False
+        if self._sensors:
+            self._sensors.after_step()
+
     def _handle_controls(self, command):
         # SITL encodes disabled PWM outputs as -1. The upstream generic bridge
         # treats that value as reverse thrust. Iris has unidirectional motors:
@@ -40,6 +51,7 @@ class IrisBridge(WebotsArduVehicle):
                 s.close()
                 self._webots_connected = False
                 return
+            self._after_step()
         print(f"Connected to ardupilot SITL (I{self._instance})")
         size = self.controls_struct_size
         while True:
@@ -58,6 +70,7 @@ class IrisBridge(WebotsArduVehicle):
             self._handle_controls(command)
             if self.robot.step(self._timestep) == -1:
                 break
+            self._after_step()
         s.close()
         self._webots_connected = False
         print(f"Lost connection to Webots (I{self._instance})")

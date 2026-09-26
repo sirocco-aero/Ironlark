@@ -1,6 +1,6 @@
 #VRML_SIM R2025a utf8
 
-EXTERNPROTO "../.cache/Webots_Python/protos/Iris.proto"
+EXTERNPROTO "../protos/IronlarkDrone.proto"
 
 WorldInfo {
   title "Ironlark — flight foundation"
@@ -11,7 +11,7 @@ WorldInfo {
 Viewpoint {
   orientation -0.174545 0.356882 0.917698 0.979312
   position -7 -9 6
-  follow "Ironlark Iris"
+  follow "Ironlark"
 }
 Background {
   skyColor [ 0.65 0.78 0.9 ]
@@ -51,9 +51,26 @@ Solid {
   ]
   name "home pad"
 }
-DEF IRONLARK_DRONE Iris {
+# A calibration wall for the sensor checks (tools/check_recording.py): its face at x = 5.9 m,
+# facing the pad, 4 m wide, 3 m tall, red so the camera tells it from ground and sky.
+DEF CALIBRATION_WALL Solid {
+  translation 6 0 1.5
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.8 0.08 0.06
+        roughness 0.8
+        metalness 0
+      }
+      geometry Box { size 0.2 4 3 }
+    }
+  ]
+  name "calibration wall"
+  boundingObject Box { size 0.2 4 3 }
+}
+DEF IRONLARK_DRONE IronlarkDrone {
   translation 0 0 0.09
-  name "Ironlark Iris"
+  name "Ironlark"
   controller "flight_bridge"
 }
 Robot {

@@ -104,7 +104,7 @@ class WorldView:
 
     def set_camera(self, mode):
         camera = self.scene['cameras'][mode]
-        self.view.getField('follow').setSFString('Ironlark Iris' if mode == 'drone' else '')
+        self.view.getField('follow').setSFString('Ironlark' if mode == 'drone' else '')
         self.view.getField('position').setSFVec3f(camera['eye'])
         self.view.getField('orientation').setSFRotation(look_at(camera['eye'], camera['target']))
         self.camera = mode

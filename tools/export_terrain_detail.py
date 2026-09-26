@@ -68,12 +68,15 @@ meta=json.loads((out/'terrain_meta.json').read_text());x0,y0,x1,y1=meta['planar'
 uv[:,0]=(world[lv,0]-x0)/(x1-x0)*2-tx;uv[:,1]=(world[lv,1]-y0)/(y1-y0)*2-ty
 keep=[list(t.loops) for t in m.loop_triangles if all(uv[list(t.loops)].max(axis=0)>0) and all(uv[list(t.loops)].min(axis=0)<1)]
 base.HOME=(*base.HOME[:2],json.loads((out/'manifest.json').read_text())['home_ground_z'])
-for kind,size in [('diff',4096),('normal',2048)]:
+# Where the source's ground layers tile from (its Generated coordinates: the original terrain's
+# bounds), for the renderer's terrain detail layers.
+(out/'terrain_generated.json').write_text(json.dumps({'low':lo.tolist(),'span':span.tolist()}))
+for kind,size in [('diff',4096),('normal',2048),('mask',1024)]:
  if (out/f'terrain_{tx}_{ty}_{kind}.png').exists():continue
  base.BAKE_SIZE=size
  old=bpy.data.images.get('ironlark_terrain_bake')
  if old:bpy.data.images.remove(old)
- base.bake_terrain(obj,m,keep,lv,world,uv,kind='NORMAL' if kind=='normal' else 'DIFFUSE')
+ base.bake_terrain(obj,m,keep,lv,world,uv,kind={'normal':'NORMAL','mask':'MASK'}.get(kind,'DIFFUSE'))
  img=bpy.data.images['ironlark_terrain_bake'];img.filepath_raw=str(out/f'terrain_{tx}_{ty}_{kind}.png');img.file_format='PNG'
  img.save();print('TERRAIN_TILE',tx,ty,kind,flush=True)
 bpy.data.meshes.remove(m)
