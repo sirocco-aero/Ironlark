@@ -1,0 +1,130 @@
+diff --git a/resources/nodes/Fog.wrl b/resources/nodes/Fog.wrl
+index 2de5f26..a75dd2c 100644
+--- a/resources/nodes/Fog.wrl
++++ b/resources/nodes/Fog.wrl
+@@ -4,7 +4,7 @@
+ # density * color per metre, a Henyey-Greenstein phase with the given anisotropy, lit by the
+ # directional lights and ambientColor, optionally bounded by a box (a zero size leaves that axis
+ # unbounded, so boxSize 0 0 h is a horizontal layer; outside the box, density decays exponentially
+-# over boxFalloff metres) and shadowed by a top-down
++# over boxFalloff metres, sideways over boxFalloffHorizontal when it is not 0) and shadowed by a top-down
+ # sun occlusion map (R: visibility at the ground, G: ground height between sunOcclusionHeight).
+ # horizonRadiance: linear sky radiance just above the horizon at evenly spaced azimuths from +x,
+ # counterclockwise; far haze converges to it, so it meets the sky at the horizon without a line.
+@@ -21,6 +21,7 @@ Fog {
+   field    SFVec3f                                                         boxCenter          0 0 0
+   field    SFVec3f                                                         boxSize            0 0 0
+   field    SFFloat                                                         boxFalloff         0
++  field    SFFloat                                                         boxFalloffHorizontal 0
+   field    SFColor                                                         ambientColor       0 0 0
+   field    MFString                                                        sunOcclusionUrl    []
+   field    SFVec2f                                                         sunOcclusionMin    0 0
+diff --git a/resources/wren/shaders/scattering_fog.frag b/resources/wren/shaders/scattering_fog.frag
+index 136c577..e112437 100644
+--- a/resources/wren/shaders/scattering_fog.frag
++++ b/resources/wren/shaders/scattering_fog.frag
+@@ -22,8 +22,8 @@ cameraTransforms;
+ 
+ uniform vec4 scattering;      // rgb: scattering coefficient per metre, a: anisotropy
+ uniform vec4 ambient;         // rgb: isotropic ambient radiance
+-uniform vec4 boxMin;          // xyz; w > 0 when the medium is bounded
+-uniform vec4 boxMax;          // w: outside the box, density decays exponentially over this distance
++uniform vec4 boxMin;          // xyz; w > 0 when the medium is bounded: outside the box, density decays sideways over w
++uniform vec4 boxMax;          // w: and above and below it, over this distance
+ uniform vec4 sunDirection0;   // xyz: world direction towards the light, w: enabled
+ uniform vec4 sunRadiance0;    // rgb: color * intensity
+ uniform vec4 sunDirection1;
+@@ -81,10 +81,10 @@ vec3 ambientRadiance(vec3 direction) {
+ }
+ 
+ float density(vec3 p) {
+-  if (boxMin.w <= 0.0 || boxMax.w <= 0.0)
++  if (boxMin.w <= 0.0)
+     return 1.0;
+   vec3 outside = max(max(boxMin.xyz - p, p - boxMax.xyz), vec3(0.0));
+-  return exp(-max(max(outside.x, outside.y), outside.z) / boxMax.w);
++  return exp(-max(max(outside.x, outside.y) / boxMin.w, outside.z / max(boxMax.w, 1e-4)));
+ }
+ 
+ float henyeyGreenstein(float cosTheta, float g) {
+@@ -183,7 +183,7 @@ void main() {
+ 
+   if (boxMin.w > 0.0) {
+     vec3 inverseDirection = 1.0 / direction;
+-    vec3 reach = vec3(10.0 * max(boxMax.w, 0.0));  // where the falloff is below e^-10
++    vec3 reach = 10.0 * vec3(boxMin.w, boxMin.w, max(boxMax.w, 0.0));  // where the falloff is below e^-10
+     vec3 t0 = (boxMin.xyz - reach - origin) * inverseDirection;
+     vec3 t1 = (boxMax.xyz + reach - origin) * inverseDirection;
+     vec3 tNear = min(t0, t1);
+diff --git a/src/webots/nodes/WbFog.cpp b/src/webots/nodes/WbFog.cpp
+index 22334e7..6834c92 100644
+--- a/src/webots/nodes/WbFog.cpp
++++ b/src/webots/nodes/WbFog.cpp
+@@ -45,6 +45,7 @@ void WbFog::init() {
+   mBoxCenter = findSFVector3("boxCenter");
+   mBoxSize = findSFVector3("boxSize");
+   mBoxFalloff = findSFDouble("boxFalloff");
++  mBoxFalloffHorizontal = findSFDouble("boxFalloffHorizontal");
+   mAmbientColor = findSFColor("ambientColor");
+   mSunOcclusionUrl = findMFString("sunOcclusionUrl");
+   mSunOcclusionMin = findSFVector2("sunOcclusionMin");
+@@ -78,6 +79,10 @@ double WbFog::boxFalloff() const {
+   return qMax(0.0, mBoxFalloff->value());
+ }
+ 
++double WbFog::boxFalloffHorizontal() const {
++  return mBoxFalloffHorizontal->value() > 0.0 ? mBoxFalloffHorizontal->value() : boxFalloff();
++}
++
+ int WbFog::horizonCount() const {
+   return mHorizonRadiance->size();
+ }
+diff --git a/src/webots/nodes/WbFog.hpp b/src/webots/nodes/WbFog.hpp
+index 387cbbb..c45ea19 100644
+--- a/src/webots/nodes/WbFog.hpp
++++ b/src/webots/nodes/WbFog.hpp
+@@ -55,6 +55,7 @@ public:
+   const WbVector3 &boxCenter() const;
+   const WbVector3 &boxSize() const;
+   double boxFalloff() const;
++  double boxFalloffHorizontal() const;
+   const WbRgb &ambientColor() const;
+   QString sunOcclusionPath() const;
+   const WbVector2 &sunOcclusionMin() const;
+@@ -92,6 +93,7 @@ private:
+   WbSFVector3 *mBoxCenter;
+   WbSFVector3 *mBoxSize;
+   WbSFDouble *mBoxFalloff;
++  WbSFDouble *mBoxFalloffHorizontal;
+   WbSFColor *mAmbientColor;
+   WbMFString *mSunOcclusionUrl;
+   WbSFVector2 *mSunOcclusionMin;
+diff --git a/src/webots/nodes/WbViewpoint.cpp b/src/webots/nodes/WbViewpoint.cpp
+index 21e07e1..a94d8f8 100644
+--- a/src/webots/nodes/WbViewpoint.cpp
++++ b/src/webots/nodes/WbViewpoint.cpp
+@@ -1286,7 +1286,8 @@ void WbViewpoint::updateScatteringFog() {
+     medium.boxMin[i] = center[i] - half;
+     medium.boxMax[i] = center[i] + half;
+   }
+-  medium.boxMin[3] = bounded ? 1.0f : 0.0f;
++  // w: > 0 when bounded, the falloff sideways; and upwards and downwards.
++  medium.boxMin[3] = bounded ? qMax(fog->boxFalloffHorizontal(), 1e-4) : 0.0f;
+   medium.boxMax[3] = fog->boxFalloff();
+ 
+   // Scattered sky light per view direction: the 9 x 8 table as given.
+diff --git a/src/webots/wren/WbWrenScatteringFog.hpp b/src/webots/wren/WbWrenScatteringFog.hpp
+index 3321cf3..a4b7969 100644
+--- a/src/webots/wren/WbWrenScatteringFog.hpp
++++ b/src/webots/wren/WbWrenScatteringFog.hpp
+@@ -35,8 +35,8 @@ public:
+   struct Medium {
+     float scattering[4];       // rgb: scattering coefficient per metre, a: anisotropy
+     float ambient[4];          // rgb: isotropic ambient radiance
+-    float boxMin[4];           // w: 1 when bounded
+-    float boxMax[4];           // w: exponential falloff distance outside the box
++    float boxMin[4];           // w: > 0 when bounded: falloff distance sideways
++    float boxMax[4];           // w: falloff distance above and below
+     float sunDirection[2][4];  // towards the light; w: 1 when present
+     float sunRadiance[2][4];
+     float occlusionRect[4];    // world min xy, max xy of the occlusion map; zero when absent

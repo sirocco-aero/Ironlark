@@ -35,6 +35,30 @@ r.simulationQuit(0)
 """
 
 
+def private_preferences(out, overrides):
+    """A copy of the user's Webots preferences for this run, with overrides: runs never
+    change the user's own (a run's settings would otherwise leak into their next launch)."""
+    import configparser
+
+    home = out / "config"
+    target = home / "Cyberbotics/Webots-R2025a.conf"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "Cyberbotics/Webots-R2025a.conf"
+    config = configparser.ConfigParser(interpolation=None)
+    config.optionxform = str
+    if source.exists():
+        config.read(source)
+    for override in overrides:
+        key, value = override.split("=", 1)
+        group, name = key.split("/", 1)
+        if not config.has_section(group):
+            config.add_section(group)
+        config.set(group, name, value)
+    with target.open("w") as stream:
+        config.write(stream, space_around_delimiters=False)
+    return home
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--out", required=True)
@@ -44,6 +68,11 @@ def main():
     p.add_argument("--fog-density", type=float, help="override the fog's density (0: a medium that does nothing)")
     p.add_argument("--exposure", type=float, help="override the view's exposure")
     p.add_argument("--bloom-threshold", type=float, help="override the view's bloom threshold (-1: off)")
+    p.add_argument("--no-alpha-cutoff", action="store_true", help="draw alpha-masked materials opaque (debugging)")
+    p.add_argument("--png-textures", action="store_true", help="the PNGs kept beside compressed textures (debugging)")
+    p.add_argument("--no-bands", action="store_true", help="drop full trees' visibility band (debugging)")
+    p.add_argument("--pref", action="append", default=[], metavar="GROUP/KEY=VALUE",
+                   help="Webots preference for this run only, e.g. OpenGL/GTAO=0 (the user's own stay untouched)")
     p.add_argument("--lights", choices=["all", "sky", "main", "secondary"], default="all",
                    help="one light only, fog off (as tools/render_lighting_reference.py --lights)")
     args = p.parse_args()
@@ -78,6 +107,12 @@ def main():
                 world = world[:sun.start()] + block + world[sun.end():]
         if args.lights != "sky":
             world = world.replace("luminosity 1", "luminosity 0", 1)
+    if args.no_bands:
+        world = world.replace("visibilityRange 0 150.0", "visibilityRange 0 0")
+    if args.png_textures:
+        world = world.replace('.dds"', '.png"')
+    if args.no_alpha_cutoff:
+        world = re.sub(r"\n\s*alphaCutoff [\d.]+", "", world)
     if args.bloom_threshold is not None:
         world = world.replace("  ambientOcclusionRadius", f"  bloomThreshold {args.bloom_threshold}\n  ambientOcclusionRadius", 1)
     if args.exposure is not None:
@@ -87,6 +122,7 @@ def main():
     target = worlds / "preview.wbt"
     target.write_text(world)
     env = os.environ.copy()
+    env["XDG_CONFIG_HOME"] = str(private_preferences(out, args.pref))
     env["QT_QPA_PLATFORM"] = "xcb"
     env["PATH"] = str(SIM / ".venv/bin") + ":" + env.get("PATH", "")
     env.update(

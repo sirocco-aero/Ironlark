@@ -1,0 +1,31 @@
+diff --git a/resources/wren/shaders/scattering_fog.frag b/resources/wren/shaders/scattering_fog.frag
+index 083090a..136c577 100644
+--- a/resources/wren/shaders/scattering_fog.frag
++++ b/resources/wren/shaders/scattering_fog.frag
+@@ -120,7 +120,9 @@ float shadowMapVisibility(vec3 p, float baked) {
+   vec3 c = light.xyz / light.w * 0.5 + 0.5;
+   float lit = texture(shadowMap, vec4(c.xy, float(cascade), c.z));
+   float fade = clamp((shadows.splits.z - distance) / (0.1 * shadows.splits.z), 0.0, 1.0);
+-  return mix(baked, lit, fade);
++  // The maps hold the casters near the viewer; the bake, the whole forest between here and a low
++  // sun. The air is in the shade of either.
++  return min(baked, mix(baked, lit, fade));
+ }
+ 
+ // As bakedVisibility() in pbr.frag, at p: R sky, G second sun, B main sun, A overhead.
+@@ -203,10 +205,11 @@ void main() {
+   // Near the viewer, steps sample the canopy's sun occlusion; farther, out to the horizon,
+   // a few unoccluded steps: haze thickens to the horizon instead of stopping at a distance.
+   float tNear = min(tEnd, max(tStart, MAX_DISTANCE * rayScale));
+-  // A forward-scattering medium gets most of its sky light from straight ahead. Where the view
+-  // ray ends on geometry, that geometry hides the sky ahead of every point on the ray (a crown seen
+-  // against the sunset stays a silhouette): only the sky's mean over all directions scatters.
+-  vec3 skyIn = depth >= 1.0 ? ambientRadiance(direction) : ambient.rgb;
++  // A forward-scattering medium gets most of its sky light from straight ahead: the phase-weighted
++  // table (looking down, from the dark ground; towards the sunset, from its glow). Where the view
++  // ray ends on geometry, that geometry hides the sky ahead (a crown seen against the sunset stays
++  // a silhouette): no more than the sky's mean over all directions scatters.
++  vec3 skyIn = depth >= 1.0 ? ambientRadiance(direction) : min(ambientRadiance(direction), ambient.rgb);
+   // Steps grow with distance (quadratically): shafts near the viewer are resolved, far ones blend.
+   float offset = dither(gl_FragCoord.xy);
+   vec3 transmittance = vec3(1.0);
