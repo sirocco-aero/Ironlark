@@ -1,0 +1,20 @@
+diff --git a/resources/wren/shaders/pbr.frag b/resources/wren/shaders/pbr.frag
+index e29fdb0..ec29289 100644
+--- a/resources/wren/shaders/pbr.frag
++++ b/resources/wren/shaders/pbr.frag
+@@ -301,8 +301,13 @@ vec3 perturbNormal(vec3 N, vec3 V) {
+   vec2 texel = texUv * vec2(textureSize(inputTextures[4], 0));
+   float mip = 0.5 * log2(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel))));
+   mat3 TBN = cotangentFrame(N, -V, texUv);
+-  meanNormal = mix(normalize(TBN * map), N * clamp(map.z, 0.0, 1.0), smoothstep(1.0, 3.0, mip));
+-  return normalize(meanNormal);
++  // A pixel quad over several tiny triangles can leave the frame degenerate (inf or NaN): the
++  // mix below would carry the NaN through even at zero weight, and the pixel would render black.
++  vec3 detailed = TBN * map;
++  float detailedLength = dot(detailed, detailed);
++  detailed = detailedLength > 1e-12 && detailedLength < 1e12 ? detailed * inversesqrt(detailedLength) : N;
++  meanNormal = mix(detailed, N * clamp(map.z, 0.0, 1.0), smoothstep(1.0, 3.0, mip));
++  return dot(meanNormal, meanNormal) > 1e-12 ? normalize(meanNormal) : N;
+ }
+ 
+ // Basic Lambertian diffuse

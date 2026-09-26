@@ -624,7 +624,7 @@ def impostor_shapes(build, out, visual_trees, rows, variants):
     return nodes
 
 
-def instance_cover(build, out, cover_index):
+def instance_cover(source, build, out, cover_index):
     """Place every source cover instance with GPU instancing.
 
     Each asset becomes one transforms file and two instanced Shapes: lod0 up to
@@ -640,21 +640,18 @@ def instance_cover(build, out, cover_index):
             continue
         mesh_urls[name] = "meshes/" + meta["file"]
         copy_mesh(build / meta["file"], out / mesh_urls[name])
-    normal_maps = {}
+    # The source's normal and roughness maps, at the albedo's size.
+    normal_maps, roughness_maps = {}, {}
     for name in mesh_urls:
         tex = next(iter(assets[name].get("textures", {}).values()), {})
-        normal_src = (
-            Path(out).resolve().parents[2]
-            / ".cache/pine-forest/source/textures"
-            / tex.get("normal", "missing")
-        )
-        if normal_src.exists():
-            url = "meshes/material_" + normal_src.name
+        for key, mode, maps in (("normal", "RGB", normal_maps), ("roughness", "L", roughness_maps)):
+            src = find_texture(source, tex.get(key))
+            if src is None:
+                continue
+            url = "meshes/material_" + re.sub(r"\W", "_", src.name) + ".png"
             if not (out / url).exists():
-                img = Image.open(normal_src).convert("RGB")
-                img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-                img.save(out / url)
-            normal_maps[name] = url
+                Image.open(src).convert(mode).resize((1024, 1024), Image.Resampling.LANCZOS).save(out / url)
+            maps[name] = url
 
     groups = {}
     for r in records:
@@ -692,7 +689,7 @@ def instance_cover(build, out, cover_index):
         for name, near, far in bands:
             nodes.append(
                 f"""Shape {{
-{shape_fields(mesh_urls[name], cover_index[name], normal_maps.get(name, ""))}
+{shape_fields(mesh_urls[name], cover_index[name], normal_maps.get(name, ""), roughness_maps.get(name, ""))}
           instancesUrl [ "{url}" ]
           visibilityRange {near:.3f} {far:.3f}
         }}"""
@@ -858,7 +855,7 @@ def main():
 
     # -- ground cover instances --
     cover_index = build_cover_textures(source, build, out)
-    cover_nodes, cover_tris, cover_meshes = instance_cover(build, out, cover_index)
+    cover_nodes, cover_tris, cover_meshes = instance_cover(source, build, out, cover_index)
     solids.extend(cover_nodes)
     tri_total += cover_tris
     print("cover tris", cover_tris, flush=True)

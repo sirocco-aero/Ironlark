@@ -1,0 +1,230 @@
+diff --git a/resources/wren/shaders/encode_depth.frag b/resources/wren/shaders/encode_depth.frag
+index a652a52..c7d4f63 100644
+--- a/resources/wren/shaders/encode_depth.frag
++++ b/resources/wren/shaders/encode_depth.frag
+@@ -11,8 +11,35 @@ uniform float minRange;
+ uniform float maxRange;
+ 
+ in float distToCamera;
++in vec2 texUv;
++
++// Alpha-masked materials (PBR alphaCutoff) cut the same texels out of range images as out of the
++// color pass (pbr.frag): foliage cards are needles, not planes.
++uniform sampler2D inputTextures[1];
++uniform bool alphaMasked;
++
++layout(std140) uniform PbrMaterial {
++  vec4 baseColorAndTransparency;
++  vec4 roughnessMetalnessNormalMapFactorOcclusion;
++  vec4 backgroundColorAndIblStrength;
++  vec4 emissiveColorAndIntensity;
++  vec4 baseColorRoughnessMetalnessOcclusionMapFlags;
++  vec4 normalBrdfEmissiveBackgroundFlags;
++  vec4 penFlags;
++  vec4 cubeTextureFlags;
++  vec4 alphaCutoff;
++  vec4 transmission;
++}
++material;
+ 
+ void main() {
++  if (alphaMasked && material.alphaCutoff.x > 0.0 && material.baseColorRoughnessMetalnessOcclusionMapFlags.x > 0.0) {
++    vec2 texel = texUv * vec2(textureSize(inputTextures[0], 0));
++    float mip = max(0.0, 0.5 * log2(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel)))));
++    if (texture(inputTextures[0], texUv).a * (1.0 + 0.25 * mip) < material.alphaCutoff.x)
++      discard;
++  }
++
+   floatDepth = distToCamera;
+ 
+   if (floatDepth < minRange)
+diff --git a/resources/wren/shaders/encode_depth.vert b/resources/wren/shaders/encode_depth.vert
+index eee74c3..35ef9de 100644
+--- a/resources/wren/shaders/encode_depth.vert
++++ b/resources/wren/shaders/encode_depth.vert
+@@ -1,10 +1,20 @@
+ #version 330 core
+ 
+-layout(location = 0) in vec3 vCoord;
++// Distance along the view axis, for range sensors (RangeFinder, Lidar). With INSTANCED, for
++// instanced renderables (see pbr_instanced.vert).
+ 
+-uniform mat4 modelTransform;
++layout(location = 0) in vec3 vCoord;
++layout(location = 2) in vec2 vTexCoord;
+ 
+ out float distToCamera;
++out vec2 texUv;
++
++#ifdef INSTANCED
++uniform samplerBuffer instanceTransforms;
++uniform int instanceOffset;  // first instance of this draw call (mirrored instances draw separately)
++#else
++uniform mat4 modelTransform;
++#endif
+ 
+ // Camera transforms for this frame
+ layout(std140) uniform CameraTransforms {
+@@ -15,11 +25,18 @@ layout(std140) uniform CameraTransforms {
+ cameraTransforms;
+ 
+ void main() {
+-  mat4 modelView = cameraTransforms.view * modelTransform;
+-
+-  vec4 vCoordTransformed = modelView * vec4(vCoord, 1.0);
++#ifdef INSTANCED
++  int instance = 3 * (gl_InstanceID + instanceOffset);
++  vec4 p = vec4(vCoord, 1.0);
++  vec4 world = vec4(dot(texelFetch(instanceTransforms, instance), p), dot(texelFetch(instanceTransforms, instance + 1), p),
++                    dot(texelFetch(instanceTransforms, instance + 2), p), 1.0);
++  vec4 vCoordTransformed = cameraTransforms.view * world;
++#else
++  vec4 vCoordTransformed = cameraTransforms.view * modelTransform * vec4(vCoord, 1.0);
++#endif
+ 
+   distToCamera = -vCoordTransformed.z;
++  texUv = vTexCoord;
+ 
+   gl_Position = cameraTransforms.projection * vCoordTransformed;
+ }
+diff --git a/src/webots/nodes/WbShape.cpp b/src/webots/nodes/WbShape.cpp
+index ca68570..ebcc9de 100644
+--- a/src/webots/nodes/WbShape.cpp
++++ b/src/webots/nodes/WbShape.cpp
+@@ -247,6 +247,10 @@ void WbShape::applyInstancingToGeometry() {
+     return;
+   wr_renderable_set_instances(renderable, mInstances.data(), static_cast<int>(mInstances.size() / 12));
+   wr_renderable_set_scene_culling(renderable, false);  // culled per instance
++  // Range sensors see instances too; impostors (captured views, past any sensor's range) they skip.
++  WrMaterial *depthMaterial = wr_renderable_get_material(renderable, "encodeDepth");
++  if (depthMaterial && !mImpostor->value())
++    wr_material_set_default_program(depthMaterial, WbWrenShaders::encodeDepthInstancedShader());
+   if (mWrenMaterial && mWrenMaterial->type == WR_MATERIAL_PBR) {
+     wr_material_set_default_program(mWrenMaterial, mImpostor->value() ? WbWrenShaders::pbrImpostorShader() :
+                                                                         WbWrenShaders::pbrInstancedShader());
+diff --git a/src/webots/wren/WbWrenCamera.cpp b/src/webots/wren/WbWrenCamera.cpp
+index 4647279..89d2c39 100644
+--- a/src/webots/wren/WbWrenCamera.cpp
++++ b/src/webots/wren/WbWrenCamera.cpp
+@@ -431,12 +431,12 @@ void WbWrenCamera::render() {
+     return;
+ 
+   if (!mIsColor) {
+-    wr_shader_program_set_custom_uniform_value(WbWrenShaders::encodeDepthShader(), "minRange",
+-                                               WR_SHADER_PROGRAM_UNIFORM_TYPE_FLOAT,
+-                                               reinterpret_cast<const char *>(&mMinRange));
+-    wr_shader_program_set_custom_uniform_value(WbWrenShaders::encodeDepthShader(), "maxRange",
+-                                               WR_SHADER_PROGRAM_UNIFORM_TYPE_FLOAT,
+-                                               reinterpret_cast<const char *>(&mMaxRange));
++    for (WrShaderProgram *program : {WbWrenShaders::encodeDepthShader(), WbWrenShaders::encodeDepthInstancedShader()}) {
++      wr_shader_program_set_custom_uniform_value(program, "minRange", WR_SHADER_PROGRAM_UNIFORM_TYPE_FLOAT,
++                                                 reinterpret_cast<const char *>(&mMinRange));
++      wr_shader_program_set_custom_uniform_value(program, "maxRange", WR_SHADER_PROGRAM_UNIFORM_TYPE_FLOAT,
++                                                 reinterpret_cast<const char *>(&mMaxRange));
++    }
+   }
+ 
+   WbWrenOpenGlContext::makeWrenCurrent();
+diff --git a/src/webots/wren/WbWrenShaders.cpp b/src/webots/wren/WbWrenShaders.cpp
+index d46380f..9e71e40 100644
+--- a/src/webots/wren/WbWrenShaders.cpp
++++ b/src/webots/wren/WbWrenShaders.cpp
+@@ -69,6 +69,7 @@ enum SHADER {
+   SHADER_DEPTH_ONLY,
+   SHADER_DEPTH_RESOLUTION,
+   SHADER_ENCODE_DEPTH,
++  SHADER_ENCODE_DEPTH_INSTANCED,
+   SHADER_FOG,
+   SHADER_GAUSSIAN_BLUR,
+   SHADER_GAUSSIAN_BLUR_5_TAP,
+@@ -316,26 +317,41 @@ WrShaderProgram *WbWrenShaders::depthResolutionShader() {
+   return gShaders[SHADER_DEPTH_RESOLUTION];
+ }
+ 
+-WrShaderProgram *WbWrenShaders::encodeDepthShader() {
+-  if (!gShaders[SHADER_ENCODE_DEPTH]) {
+-    gShaders[SHADER_ENCODE_DEPTH] = wr_shader_program_new();
++// Range sensors' depth; the renderable's own PBR material stays bound for its alpha mask (Renderable::render).
++static WrShaderProgram *encodeDepthProgram(int index, const char *defines) {
++  if (!gShaders[index]) {
++    WrShaderProgram *program = wr_shader_program_new();
++    gShaders[index] = program;
++    wr_shader_program_set_defines(program, defines);
+ 
+-    wr_shader_program_use_uniform(gShaders[SHADER_ENCODE_DEPTH], WR_GLSL_LAYOUT_UNIFORM_MODEL_TRANSFORM);
++    wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_MODEL_TRANSFORM);
++    wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE0);  // base color, for its alpha mask
+ 
+-    wr_shader_program_use_uniform_buffer(gShaders[SHADER_ENCODE_DEPTH], WR_GLSL_LAYOUT_UNIFORM_BUFFER_CAMERA_TRANSFORMS);
++    wr_shader_program_use_uniform_buffer(program, WR_GLSL_LAYOUT_UNIFORM_BUFFER_CAMERA_TRANSFORMS);
++    wr_shader_program_use_uniform_buffer(program, WR_GLSL_LAYOUT_UNIFORM_BUFFER_MATERIAL_PBR);
+ 
+     float minRange = 0.0f;
+     float maxRange = 1.0f;
+-    wr_shader_program_create_custom_uniform(gShaders[SHADER_ENCODE_DEPTH], "minRange", WR_SHADER_PROGRAM_UNIFORM_TYPE_FLOAT,
++    const bool masked = false;
++    wr_shader_program_create_custom_uniform(program, "minRange", WR_SHADER_PROGRAM_UNIFORM_TYPE_FLOAT,
+                                             reinterpret_cast<const char *>(&minRange));
+-    wr_shader_program_create_custom_uniform(gShaders[SHADER_ENCODE_DEPTH], "maxRange", WR_SHADER_PROGRAM_UNIFORM_TYPE_FLOAT,
++    wr_shader_program_create_custom_uniform(program, "maxRange", WR_SHADER_PROGRAM_UNIFORM_TYPE_FLOAT,
+                                             reinterpret_cast<const char *>(&maxRange));
++    wr_shader_program_create_custom_uniform(program, "alphaMasked", WR_SHADER_PROGRAM_UNIFORM_TYPE_BOOL,
++                                            reinterpret_cast<const char *>(&masked));
+ 
+-    ::buildShader(gShaders[SHADER_ENCODE_DEPTH], QFileInfo("gl:shaders/encode_depth.vert"),
+-                  QFileInfo("gl:shaders/encode_depth.frag"));
++    ::buildShader(program, QFileInfo("gl:shaders/encode_depth.vert"), QFileInfo("gl:shaders/encode_depth.frag"));
+   }
+ 
+-  return gShaders[SHADER_ENCODE_DEPTH];
++  return gShaders[index];
++}
++
++WrShaderProgram *WbWrenShaders::encodeDepthShader() {
++  return encodeDepthProgram(SHADER_ENCODE_DEPTH, "");
++}
++
++WrShaderProgram *WbWrenShaders::encodeDepthInstancedShader() {
++  return encodeDepthProgram(SHADER_ENCODE_DEPTH_INSTANCED, "#define INSTANCED\n");
+ }
+ 
+ WrShaderProgram *WbWrenShaders::fogShader() {
+diff --git a/src/webots/wren/WbWrenShaders.hpp b/src/webots/wren/WbWrenShaders.hpp
+index c925c1b..e1c064f 100644
+--- a/src/webots/wren/WbWrenShaders.hpp
++++ b/src/webots/wren/WbWrenShaders.hpp
+@@ -29,6 +29,7 @@ namespace WbWrenShaders {
+   WrShaderProgram *depthOnlyShader();
+   WrShaderProgram *depthResolutionShader();
+   WrShaderProgram *encodeDepthShader();
++  WrShaderProgram *encodeDepthInstancedShader();
+   WrShaderProgram *fogShader();
+   WrShaderProgram *gaussianBlurShader();
+   WrShaderProgram *gaussianBlur5TapShader();
+diff --git a/src/wren/Renderable.cpp b/src/wren/Renderable.cpp
+index c0f2a89..5c49e69 100644
+--- a/src/wren/Renderable.cpp
++++ b/src/wren/Renderable.cpp
+@@ -103,8 +103,20 @@ namespace wren {
+     if (isInstanced() && (!effectiveProgram || glGetUniformLocation(effectiveProgram->glName(), "instanceTransforms") == -1))
+       return;
+ 
+-    // Only bind material program if no override program has been specified
+-    mEffectiveMaterial->bind(!program);
++    // Range sensors' programs cut alpha-masked texels as the color pass does: as renderShadow, the
++    // renderable's own material binds its textures and uniform buffers, then that program draws.
++    const GLint alphaMasked = program ? -1 : glGetUniformLocation(effectiveProgram->glName(), "alphaMasked");
++    if (alphaMasked != -1 && mEffectiveMaterial != mDefaultMaterial && mDefaultMaterial->type() == WR_MATERIAL_PBR) {
++      mDefaultMaterial->setEffectiveProgram(Material::MATERIAL_PROGRAM_DEFAULT);
++      mDefaultMaterial->bind(true);
++      effectiveProgram->bind();
++      glUniform1i(alphaMasked, 1);
++    } else {
++      // Only bind material program if no override program has been specified
++      mEffectiveMaterial->bind(!program);
++      if (alphaMasked != -1)
++        glUniform1i(alphaMasked, 0);
++    }
+ 
+     setupAndRender(effectiveProgram);
+   }

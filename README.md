@@ -127,6 +127,10 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0032-backlit-foliage** | Foliage takes no light from behind it (the wrap floor is gone); the second sun, 25° from the first, is shaded by the first's shadow maps near the viewer. | — |
 | **0033-fog-sky-phase** | Fog in front of geometry scatters no more sky than the phase-weighted table gives (looking down: the dark ground, not the sky's mean); the air is in the shade of either the maps or the bake. | overview brightness vs Cycles 1.66× → 1.14×; backlit shadows (p10) 3.1× → 1.55× |
 | **0034-fog-box-sides** | `Fog.boxFalloffHorizontal`: the source's 209 m fog box, decaying over 30 m past its sides, replaces the unbounded layer that veiled the backdrop to the horizon. | region canopy from 60 m vs Cycles: 2.4× (checkpoint) → 1.6× |
+| **0035-camera-fog** | Robot `Camera` devices (color) render the scattering fog; `WbFog` provides the medium to every view, headless ones included. | unverified |
+| **0036-range-sensors-see-foliage** | Range sensors (RangeFinder, Lidar) draw instanced shapes (they skipped them all) and cut alpha-masked texels as the color pass does; impostors stay out. | unverified |
+| **0037-normal-map-degenerate-frame** | A degenerate normal-map frame (tiny triangles in a pixel quad) falls back to the surface normal instead of NaN: no black foliage. | — |
+| **0038-shadow-lod-eye** | Cached shadow cascades redraw once the eye moves 1 m: casters' levels of detail follow the eye, and stale coarse hulls shaded fine meshes. | unverified |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,

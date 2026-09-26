@@ -103,9 +103,27 @@ later, each when a capability needs it.
 
 ### 1. Finish the forest's looks
 
-In order: terrain detail maps, fog in `Camera` devices. Loose ends: with ambient occlusion off (`ambientOcclusionRadius
-0` or the GTAO preference) most trees do not draw; foliage shimmer if opt-in
-multisampling (patch 0025) proves worth a cheaper form.
+Approved look: tag `looks-good-2026-09-26`. Check every change against it
+(A/B renders of the same views) and against Cycles (`tools/render_lighting_reference.py`;
+render it at the preview's aspect, 1920×861 or half, or crop to the same vertical FOV).
+
+Handoff state (2026-09-26), partly unverified:
+
+- Done, verified: light layers baked without cover under 3 m (it shaded itself:
+  dark rocks); cover gets the source's normal and roughness maps (the lookup had a
+  wrong path); patch 0037 stops black foliage from degenerate normal-map frames.
+- Built, not yet verified: 0035 fog in `Camera` devices (color only; medium from
+  `WbFog` via a provider hook, so headless cameras get it too); 0036 range sensors
+  see instanced shapes and cut alpha-masked texels (they skipped every instance, so
+  a LiDAR saw no trees or rocks); 0038 refreshes cached shadow cascades once the
+  eye moves 1 m (stale LOD1 pebble hulls shaded river rocks black). Verify 0038 with
+  `tools/render_forest.py --lights main`: the river rocks in view `forest` must be
+  sunlit as in Cycles.
+- Next, in order: the river up close (Webots water reads pale grey-green where
+  Cycles shows the bed and the bank's reflections: suspect screen-space reflections
+  missing and falling back to the sky); terrain detail maps (read the source's
+  `main_terrain` material first: tiled textures under masks; the bake is 2.5 cm per
+  texel); GTAO-off missing trees; shimmer.
 
 ### 2. Sensor rig and ROS 2
 
@@ -116,6 +134,14 @@ First localization must not depend on cave lighting.
 - A Ironlark vehicle PROTO around the Iris flight model, with sensor poses and
   settings in versioned config, and a look to match the forest (the stock Iris
   looks crude).
+  Plan: `config/sensors.json` is the one source of mounts, rates, ranges and noise;
+  a Blender script generates the PROTO (carbon arms, machined motor bells, two-blade
+  props with a fastHelix blur disc, legs ending at the Iris box bottom, z −0.055) and
+  keeps the Iris physics, bounding box, motor names and its noiseless
+  accelerometer/gyro/inertial unit/GPS for ArduPilot (also ground truth). Sensors: a
+  Mid-360-class LiDAR on top (360° × 59°, `verticalFieldOfView` 1.03, `tiltAngle`
+  +0.39 for −7°…52°; check the sign on a wall), 0.1–40 m, 10 Hz; a separate noisy IMU
+  at 250 Hz (2 ms physics step); a front camera, 640×480 at 20 Hz.
 - LiDAR honours `alphaCutoff`: foliage cards must not read as solid planes.
 - ROS 2 Humble with a bridge publishing `/clock`, IMU, point clouds, images,
   camera calibration and transforms. Webots' Python controller and the ROS
@@ -125,6 +151,17 @@ First localization must not depend on cave lighting.
 - Configurable noise and rates. If the odometry needs per-return LiDAR timing,
   model acquisition; never fake scan timing on an instantaneous range image.
 - rosbag2 record and replay. Ground truth never reaches autonomy topics.
+
+  Plan: `flight_bridge` steps the robot every 2 ms in lockstep with SITL; hook a
+  sampler after each step (Webots time; numpy wraps `wb_lidar_get_point_cloud` and
+  camera buffers without copies) streaming framed messages (magic, type, sim time
+  ns, length) over localhost TCP from a sender thread with a bounded queue (drop and
+  count, never stall physics). A `ros:humble-ros-base` container (image already
+  pulled; `--network host`) runs an rclpy node publishing `/clock`, IMU, PointCloud2,
+  images (bgra8 → bgr8), camera_info and static TF from `config/sensors.json`, ground
+  truth under `/ground_truth/*` only; `./ironlark run --record` adds `ros2 bag record`
+  into the run folder, `./ironlark replay RUN` plays it with `--clock`. Webots frames
+  are ENU/FLU = REP-103; one module documents Webots ↔ ENU/FLU ↔ NED/FRD.
 
 **Done when** one recorded flight holds synchronized sensor data; a known wall
 reads at the right distance and orientation; camera and LiDAR agree; replay

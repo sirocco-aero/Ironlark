@@ -71,6 +71,9 @@ def main():
     p.add_argument("--no-alpha-cutoff", action="store_true", help="draw alpha-masked materials opaque (debugging)")
     p.add_argument("--png-textures", action="store_true", help="the PNGs kept beside compressed textures (debugging)")
     p.add_argument("--no-bands", action="store_true", help="drop full trees' visibility band (debugging)")
+    p.add_argument("--no-light-occlusion", action="store_true", help="without the baked light occlusion")
+    p.add_argument("--sub", action="append", default=[], metavar="REGEX=>REPLACEMENT",
+                   help="edit the world with a regular expression (debugging)")
     p.add_argument("--pref", action="append", default=[], metavar="GROUP/KEY=VALUE",
                    help="Webots preference for this run only, e.g. OpenGL/GTAO=0 (the user's own stay untouched)")
     p.add_argument("--lights", choices=["all", "sky", "main", "secondary"], default="all",
@@ -107,6 +110,11 @@ def main():
                 world = world[:sun.start()] + block + world[sun.end():]
         if args.lights != "sky":
             world = world.replace("luminosity 1", "luminosity 0", 1)
+    for sub in args.sub:
+        pattern, replacement = sub.split("=>", 1)
+        world = re.sub(pattern, replacement, world)
+    if args.no_light_occlusion:
+        world = re.sub(r"\n  lightOcclusion\w+ [^\n]*", "", world)
     if args.no_bands:
         world = world.replace("visibilityRange 0 150.0", "visibilityRange 0 0")
     if args.png_textures:

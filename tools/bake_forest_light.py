@@ -66,6 +66,10 @@ records=json.loads((world/'visual_instances.json').read_text())
 groups={}
 for r in records:groups.setdefault((r['mesh'],r['texture']),[]).append(r)
 tree=instancer();prototype_socket=tree.interface.items_tree['Prototype'].identifier
+# The layers below are what every surface reads its light from, at its own position: cover lower
+# than this (rocks, ferns, logs, branches) would shade itself there. It shades the ground in the
+# terrain bake; in the world, near the viewer, the shadow maps and GTAO shade what it covers.
+LAYER_OCCLUDER_HEIGHT=3.0;low_cover=[]
 for (url,texture),placed in groups.items():
  prototype=bpy.data.objects.new('prototype',mesh(url,texture))  # referenced, never linked to the scene
  points=bpy.data.meshes.new('placements');points.vertices.add(len(placed))
@@ -75,7 +79,9 @@ for (url,texture),placed in groups.items():
  points.attributes.new('scl','FLOAT_VECTOR','POINT').data.foreach_set('vector',[c for r in placed for c in r['scale']])
  ob=bpy.data.objects.new('instances',points);scene.collection.objects.link(ob)
  modifier=ob.modifiers.new('instancer','NODES');modifier.node_group=tree;modifier[prototype_socket]=prototype
-print('LIGHT_INSTANCES',len(records),'in',len(groups),'instancers',flush=True)
+ zs=[v.co.z for v in prototype.data.vertices]
+ if (max(zs)-min(zs))*max(max(r['scale']) for r in placed)<LAYER_OCCLUDER_HEIGHT:low_cover.append(ob)
+print('LIGHT_INSTANCES',len(records),'in',len(groups),'instancers',len(low_cover),'of them low cover',flush=True)
 terrain=[]
 for x in range(2):
  for y in range(2):
@@ -101,6 +107,7 @@ for x,y,ob in terrain:
 # hides the bright low sky first, so a uniform sky overstated it. G, B, A: the SHADOW pass of that
 # sun alone (1 lit, 0 shadowed).
 LAYERS=[0.0,3.0,8.0,16.0,28.0];RES=512
+for ob in low_cover:ob.hide_render=True
 second=bpy.data.objects.new('second sun',bpy.data.lights.new('second sun','SUN'));scene.collection.objects.link(second)
 second.data.angle=.0262  # the source's sun_secondary
 second.rotation_euler=Vector((-.148121,-.845642,-.512786)).to_track_quat('-Z','Y').to_euler()
