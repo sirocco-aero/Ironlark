@@ -130,6 +130,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0035-camera-fog** | Robot `Camera` devices (color) render the scattering fog; `WbFog` provides the medium to every view, headless ones included. | unverified |
 | **0036-range-sensors-see-foliage** | Range sensors (RangeFinder, Lidar) draw instanced shapes (they skipped them all) and cut alpha-masked texels as the color pass does; impostors stay out. | unverified |
 | **0037-normal-map-degenerate-frame** | A degenerate normal-map frame (tiny triangles in a pixel quad) falls back to the surface normal instead of NaN: no black foliage. | — |
+| **0038-reflections-blocked-by-scene** | A reflected ray that passes behind the scene (under a crown, behind a trunk) takes that geometry's colour instead of missing to the sky map, which has no forest: the river shows its bed and banks, not a pale sheen. | river close-up matches Cycles by eye |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,

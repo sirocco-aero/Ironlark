@@ -126,11 +126,10 @@ Handoff state (2026-09-26), partly unverified:
   reverted) and a 4× normal offset are ruled out. The rocks of `set_01`, as small but
   ~950 per mesh, shade correctly. Repro: `/tmp`-style world with the terrain, lights
   and one `rock07` instance (instance 729 at −21.01, 32.14, −0.92), `--lights main`.
-- Next, in order: the river up close (Webots water reads pale grey-green where
-  Cycles shows the bed and the bank's reflections: suspect screen-space reflections
-  missing and falling back to the sky); terrain detail maps (read the source's
-  `main_terrain` material first: tiled textures under masks; the bake is 2.5 cm per
-  texel); GTAO-off missing trees; shimmer.
+- River close up: done (0038). The water shows its sunlit bed and the banks.
+- Next, in order: terrain detail maps (read the source's `main_terrain` material
+  first: tiled textures under masks; the bake is 2.5 cm per texel); GTAO-off missing
+  trees; shimmer. Then verify 0035 and 0036 while building the sensor rig.
 
 ### 2. Sensor rig and ROS 2
 
