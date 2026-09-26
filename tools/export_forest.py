@@ -27,7 +27,7 @@ BAKE_SIZE = 2048
 
 
 def log(*args):
-    print("LOITER_EXPORT", *args, flush=True)
+    print("IRONLARK_EXPORT", *args, flush=True)
 
 
 def to_webots(x, y, z):
@@ -51,7 +51,7 @@ def mesh_world_verts(obj, mesh):
 def write_obj(path, verts, faces, uvs=None, normals=None):
     """Minimal OBJ writer. faces: list of (vert_idx, uv_idx, nrm_idx) loops."""
     with open(path, "w") as f:
-        f.write("# Loiter forest export\n")
+        f.write("# Ironlark forest export\n")
         for v in verts:
             f.write("v %.5f %.5f %.5f\n" % tuple(v))
         if uvs is not None:
@@ -203,7 +203,7 @@ def bake_terrain(obj, mesh, keep_tris, loop_vert, world, uv_data, kind="DIFFUSE"
     UVs, path/river mask attributes and material, no modifiers, alone in a
     throwaway scene.
     """
-    sub = bpy.data.meshes.new("loiter_bake_terrain")
+    sub = bpy.data.meshes.new("ironlark_bake_terrain")
     used, faces_idx = {}, []
     for tri in keep_tris:
         face = []
@@ -245,8 +245,8 @@ def bake_terrain(obj, mesh, keep_tris, loop_vert, world, uv_data, kind="DIFFUSE"
     for poly in sub.polygons:
         poly.use_smooth = True
 
-    tmp = bpy.data.objects.new("loiter_bake_obj", sub)
-    bake_scene = bpy.data.scenes.new("loiter_bake")
+    tmp = bpy.data.objects.new("ironlark_bake_obj", sub)
+    bake_scene = bpy.data.scenes.new("ironlark_bake")
     bake_scene.collection.objects.link(tmp)
     prev_scene = bpy.context.window.scene
     bpy.context.window.scene = bake_scene
@@ -254,15 +254,15 @@ def bake_terrain(obj, mesh, keep_tris, loop_vert, world, uv_data, kind="DIFFUSE"
     try:
         mat = bpy.data.materials["main_terrain"]
         nodes = mat.node_tree.nodes
-        img = bpy.data.images.get("loiter_terrain_bake")
+        img = bpy.data.images.get("ironlark_terrain_bake")
         if img is None:
-            img = bpy.data.images.new("loiter_terrain_bake", BAKE_SIZE, BAKE_SIZE)
+            img = bpy.data.images.new("ironlark_terrain_bake", BAKE_SIZE, BAKE_SIZE)
         if kind == "NORMAL":
             img.colorspace_settings.name = "Non-Color"
-        tex = nodes.get("LoiterBake")
+        tex = nodes.get("IronlarkBake")
         if tex is None:
             tex = nodes.new("ShaderNodeTexImage")
-            tex.name = "LoiterBake"
+            tex.name = "IronlarkBake"
         tex.image = img
         for n in nodes:
             n.select = n == tex

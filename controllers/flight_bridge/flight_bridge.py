@@ -10,7 +10,7 @@ import time
 root = Path(__file__).resolve().parents[2]
 upstream = root / ".cache/Webots_Python/controllers/ardupilot_vehicle_controller"
 if not upstream.is_dir():
-    raise SystemExit("Missing ArduPilot assets. Run ./loiter setup first.")
+    raise SystemExit("Missing ArduPilot assets. Run ./ironlark setup first.")
 sys.path.insert(0, str(upstream))
 
 from webots_vehicle import WebotsArduVehicle

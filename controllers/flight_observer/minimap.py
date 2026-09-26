@@ -45,7 +45,7 @@ class WorldView:
         self.display = robot.getDevice('world map')
         self.keyboard = robot.getKeyboard()
         self.keyboard.enable(100)
-        self.view = robot.getFromDef('LOITER_VIEW')
+        self.view = robot.getFromDef('IRONLARK_VIEW')
         self.trail = []
         self.state = 'INITIALIZING'
         self.camera = 'drone'
@@ -104,7 +104,7 @@ class WorldView:
 
     def set_camera(self, mode):
         camera = self.scene['cameras'][mode]
-        self.view.getField('follow').setSFString('Loiter Iris' if mode == 'drone' else '')
+        self.view.getField('follow').setSFString('Ironlark Iris' if mode == 'drone' else '')
         self.view.getField('position').setSFVec3f(camera['eye'])
         self.view.getField('orientation').setSFRotation(look_at(camera['eye'], camera['target']))
         self.camera = mode

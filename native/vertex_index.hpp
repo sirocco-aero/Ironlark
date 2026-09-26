@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace loiter {
+namespace ironlark {
 struct Attribute {
   const void *data;
   size_t stride;
@@ -65,4 +65,4 @@ template<typename T> void compact(std::vector<T> &values, const VertexIndex &ind
 template<typename T> void release(std::vector<T> &values) {
   std::vector<T>().swap(values);
 }
-}  // namespace loiter
+}  // namespace ironlark

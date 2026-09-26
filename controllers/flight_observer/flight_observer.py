@@ -8,12 +8,12 @@ from controller import Supervisor
 
 
 robot = Supervisor()
-drone = robot.getFromDef("LOITER_DRONE")
-destination = os.environ.get("LOITER_RUN_DIR")
+drone = robot.getFromDef("IRONLARK_DRONE")
+destination = os.environ.get("IRONLARK_RUN_DIR")
 if destination is None:
-    raise SystemExit("Start this world through ./loiter so its evaluation output has a destination.")
+    raise SystemExit("Start this world through ./ironlark so its evaluation output has a destination.")
 
-scene_path = os.environ.get("LOITER_SCENE")
+scene_path = os.environ.get("IRONLARK_SCENE")
 world_view = None
 if scene_path:
     from minimap import WorldView

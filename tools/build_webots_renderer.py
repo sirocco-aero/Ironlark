@@ -1,4 +1,4 @@
-"""Build Loiter's rendering-only Webots patch against the installed R2025a SDK."""
+"""Build Ironlark's rendering-only Webots patch against the installed R2025a SDK."""
 
 import hashlib
 import json
@@ -113,7 +113,7 @@ def main():
     # a stamp avoids reapplying (and recompiling) them.
     patches = sorted((SIM / "native/patches").glob("*.patch"))
     series = hashlib.sha256(b"".join(p.read_bytes() for p in patches)).hexdigest()
-    stamp = source / ".loiter-patches"
+    stamp = source / ".ironlark-patches"
     if not stamp.exists() or stamp.read_text().strip() != series:
         # Reapplying resets the sources: never discard edits not yet saved as a patch.
         unsaved = subprocess.check_output(
@@ -225,7 +225,7 @@ def main():
             (SIM / "native/vertex_index.hpp").read_bytes()
         ).hexdigest(),
     }
-    (runtime / "loiter-renderer.json").write_text(json.dumps(manifest, indent=2))
+    (runtime / "ironlark-renderer.json").write_text(json.dumps(manifest, indent=2))
     print(f"Patched Webots ready: {runtime}", flush=True)
 
 

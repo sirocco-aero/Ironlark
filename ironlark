@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch Loiter's first simulated-flight integration check (Linux)."""
+"""Launch Ironlark's first simulated-flight integration check (Linux)."""
 
 import argparse
 import fcntl
@@ -17,7 +17,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent
 CACHE = ROOT / ".cache"
-IMAGE = "loiter-sitl:copter-4.7.1"
+IMAGE = "ironlark-sitl:copter-4.7.1"
 COMMIT = "dbe792162d06cab66c3475fd5556bf7a120f119e"
 UPSTREAM = "/opt/ardupilot/libraries/SITL/examples/Webots_Python"
 
@@ -29,14 +29,14 @@ def call(*args, **kwargs):
 def webots_home():
     """WEBOTS_HOME, else the patched build if present, else stock ./webots."""
     patched = CACHE / "webots-renderer"
-    default = patched if (patched / "loiter-renderer.json").is_file() else ROOT / "webots"
+    default = patched if (patched / "ironlark-renderer.json").is_file() else ROOT / "webots"
     return Path(os.environ.get("WEBOTS_HOME", default)).resolve()
 
 
 def setup():
     for executable in ("docker", "uv"):
         if not shutil.which(executable):
-            raise RuntimeError(f"Install {executable} before running ./loiter setup.")
+            raise RuntimeError(f"Install {executable} before running ./ironlark setup.")
     call("docker", "build", "-t", IMAGE, str(ROOT / "docker"))
     CACHE.mkdir(exist_ok=True)
     stamp = CACHE / "ardupilot-commit"
@@ -67,7 +67,7 @@ def setup():
         "Pillow==12.3.0",
         "etcpak==0.9.15",
     )
-    print("Setup complete. Run ./loiter doctor, then ./loiter run.")
+    print("Setup complete. Run ./ironlark doctor, then ./ironlark run.")
 
 
 def doctor():
@@ -148,7 +148,7 @@ def stage_world(run, world):
     source = ROOT / "worlds/pine_forest/pine_forest.wbt"
     if not source.is_file():
         raise RuntimeError(
-            "Forest world is not built. Run ./loiter build-world first "
+            "Forest world is not built. Run ./ironlark build-world first "
             "(or copy .cache/forest-build from another machine)."
         )
     # Flat layout: Webots resolves controllers from <project>/controllers,
@@ -175,7 +175,7 @@ def build_world(skip_export):
 def run_tool(name, *args):
     python = ROOT / ".venv/bin/python"
     if not python.is_file():
-        raise RuntimeError("Run ./loiter setup first.")
+        raise RuntimeError("Run ./ironlark setup first.")
     call(str(python), str(ROOT / "tools" / name), *args)
 
 
@@ -186,7 +186,7 @@ def flight(headless, editor=False, world="forest"):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise RuntimeError("Another Loiter flight is running.") from exc
+            raise RuntimeError("Another Ironlark flight is running.") from exc
         check_ports()
         if headless and not shutil.which("xvfb-run"):
             raise RuntimeError("Headless checks require xvfb-run.")
@@ -199,7 +199,7 @@ def flight(headless, editor=False, world="forest"):
                     "webots": "R2025a",
                     "webots_patches": (
                         json.loads(renderer.read_text())
-                        if (renderer := webots_home() / "loiter-renderer.json").is_file()
+                        if (renderer := webots_home() / "ironlark-renderer.json").is_file()
                         else None
                     ),
                     "estimator": "EKF3",
@@ -224,12 +224,12 @@ def flight(headless, editor=False, world="forest"):
         env["WEBOTS_HOME"] = str(webots_home())
         env["PATH"] = str(ROOT / ".venv/bin") + os.pathsep + env.get("PATH", "")
         env["PYTHONUNBUFFERED"] = "1"
-        env["LOITER_RUN_DIR"] = str(run)
+        env["IRONLARK_RUN_DIR"] = str(run)
         # Webots saves GUI perspectives beside the world. Give each run its own
         # project so watching a flight never rewrites versioned source files.
         world_path, scene_path = stage_world(run, world)
         if scene_path is not None:
-            env["LOITER_SCENE"] = str(scene_path)
+            env["IRONLARK_SCENE"] = str(scene_path)
         (run / "controllers").symlink_to(ROOT / "controllers", target_is_directory=True)
         command = [
             str(webots_home() / "webots"),
@@ -246,7 +246,7 @@ def flight(headless, editor=False, world="forest"):
         elif not editor:
             command.append("--fullscreen")
         command.append(str(world_path))
-        name = f"loiter-sitl-{os.getpid()}"
+        name = f"ironlark-sitl-{os.getpid()}"
         webots = sitl = mission = None
         with (
             (run / "webots.log").open("w") as webots_log,
@@ -274,7 +274,7 @@ def flight(headless, editor=False, world="forest"):
                         "--mount",
                         f"type=bind,src={ROOT},dst=/project,readonly",
                         "--mount",
-                        f"type=bind,src={run},dst=/run/loiter",
+                        f"type=bind,src={run},dst=/run/ironlark",
                         IMAGE,
                         "/opt/ardupilot/build/sitl/bin/arducopter",
                         "--model",
@@ -337,7 +337,7 @@ def flight(headless, editor=False, world="forest"):
                         "python3",
                         "/project/tests/flight_smoke.py",
                         "--output",
-                        "/run/loiter/result.json",
+                        "/run/ironlark/result.json",
                     ],
                     start_new_session=True,
                 )
@@ -422,5 +422,5 @@ if __name__ == "__main__":
         print("\nSimulation stopped.", file=sys.stderr)
         sys.exit(130)
     except (RuntimeError, subprocess.CalledProcessError, OSError) as error:
-        print(f"Loiter: {error}", file=sys.stderr)
+        print(f"Ironlark: {error}", file=sys.stderr)
         sys.exit(1)

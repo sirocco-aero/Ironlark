@@ -69,7 +69,7 @@ def main():
  # small plant at a time, never the scatter or the original forest.
  meshes={name:bpy.data.meshes.new_from_object(bpy.data.objects[name].evaluated_get(dg),preserve_all_data_layers=True,depsgraph=dg) for name in names}
  textures={name:asset_textures(bpy.data.objects[name]) for name in names}
- scene=bpy.data.scenes.new('Loiter floor photographs');bpy.context.window.scene=scene
+ scene=bpy.data.scenes.new('Ironlark floor photographs');bpy.context.window.scene=scene
  scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.device='CPU';scene.cycles.transparent_max_bounces=16
  scene.render.film_transparent=True;scene.render.resolution_x=512;scene.render.resolution_y=512
  scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA'

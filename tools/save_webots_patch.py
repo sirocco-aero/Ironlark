@@ -7,7 +7,7 @@
 The patch is the difference between the sources as the earlier patches leave them
 (rebuilt in a scratch repository from upstream files, never touching the working
 sources) and the working sources now. The series is then staged in the working
-sources, so ./loiter build-renderer can reapply it safely.
+sources, so ./ironlark build-renderer can reapply it safely.
 """
 import subprocess
 import sys
@@ -51,7 +51,7 @@ def main():
         git("add", "-A", cwd=base)
         for patch in earlier:
             git("apply", "--index", str(patch), cwd=base)
-        git("-c", "user.name=loiter", "-c", "user.email=loiter@localhost", "commit", "-q", "--allow-empty", "-m", "earlier",
+        git("-c", "user.name=ironlark", "-c", "user.email=ironlark@localhost", "commit", "-q", "--allow-empty", "-m", "earlier",
             cwd=base)
         for name in changed:
             current, copy = SOURCE / name, base / name

@@ -1,4 +1,4 @@
-"""Build the Loiter pine-forest Webots world from export_forest.py output.
+"""Build the Ironlark pine-forest Webots world from export_forest.py output.
 
 Usage:
     python3 build_forest_world.py --build <forest-build> --source <textures>
@@ -113,16 +113,16 @@ WORLD_TEMPLATE = """#VRML_SIM R2025a utf8
 EXTERNPROTO "../.cache/Webots_Python/protos/Iris.proto"
 
 WorldInfo {{
-  title "Loiter — pine forest"
+  title "Ironlark — pine forest"
   basicTimeStep 2
   FPS 30
   randomSeed 7
   coordinateSystem "ENU"
 }}
-DEF LOITER_VIEW Viewpoint {{
+DEF IRONLARK_VIEW Viewpoint {{
   orientation {view_ori}
   position {view_pos}
-  follow "Loiter Iris"
+  follow "Ironlark Iris"
   fieldOfView 1.0
   # The source's view: Filmic "Medium High Contrast" at exposure +1 (x2), and no bloom (Cycles has none).
   exposure 2.0
@@ -202,9 +202,9 @@ Solid {{
   ]
   name "home pad"
 }}
-DEF LOITER_DRONE Iris {{
+DEF IRONLARK_DRONE Iris {{
   translation 0 0 {drone_y:.3f}
-  name "Loiter Iris"
+  name "Ironlark Iris"
   controller "flight_bridge"
 }}
 Robot {{

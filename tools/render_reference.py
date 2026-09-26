@@ -5,7 +5,7 @@ of view and resolution, with the source's own lights, world, fog and Filmic
 view untouched. Needs more RAM than the simulator (about 16 GB); it does not
 need a built world.
 
-    ./loiter render-reference [--views forest backlit]   ->  runs/reference/*.png
+    ./ironlark render-reference [--views forest backlit]   ->  runs/reference/*.png
 """
 import argparse
 import subprocess

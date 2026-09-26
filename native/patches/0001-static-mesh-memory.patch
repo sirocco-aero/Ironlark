@@ -18,7 +18,7 @@ index a33e349..048a70e 100644
 +
 +    // The Webots mesh converter expands every triangle into three vertices.
 +    // Re-index exact attribute tuples; seams, normals and all triangles remain.
-+    const auto index = loiter::indexVertices(mCoords.size(), {
++    const auto index = ironlark::indexVertices(mCoords.size(), {
 +      {mCoords.data(), sizeof(glm::vec3)},
 +      {mNormals.empty() ? nullptr : mNormals.data(), sizeof(glm::vec3)},
 +      {mTexCoords.empty() ? nullptr : mTexCoords.data(), sizeof(glm::vec2)},
@@ -26,11 +26,11 @@ index a33e349..048a70e 100644
 +      {mColors.empty() ? nullptr : mColors.data(), sizeof(glm::vec3)}
 +    });
 +    for (auto &vertex : mIndices) vertex = index.remap[vertex];
-+    loiter::compact(mCoords, index);
-+    loiter::compact(mNormals, index);
-+    loiter::compact(mTexCoords, index);
-+    loiter::compact(mUnwrappedTexCoords, index);
-+    loiter::compact(mColors, index);
++    ironlark::compact(mCoords, index);
++    ironlark::compact(mNormals, index);
++    ironlark::compact(mTexCoords, index);
++    ironlark::compact(mUnwrappedTexCoords, index);
++    ironlark::compact(mColors, index);
 +
      glGenVertexArrays(1, &mCacheData->mGlNameVertexArrayObject);
      glGenBuffers(1, &mCacheData->mGlNameBufferIndices);
@@ -92,12 +92,12 @@ index a33e349..048a70e 100644
 -    mNormals.clear();
 -    mTexCoords.clear();
 -    mColors.clear();
-+    loiter::release(mCoords);
-+    loiter::release(mIndices);
-+    loiter::release(mNormals);
-+    loiter::release(mTexCoords);
-+    loiter::release(mColors);
-+    loiter::release(mUnwrappedTexCoords);
++    ironlark::release(mCoords);
++    ironlark::release(mIndices);
++    ironlark::release(mNormals);
++    ironlark::release(mTexCoords);
++    ironlark::release(mColors);
++    ironlark::release(mUnwrappedTexCoords);
    }
  
    void StaticMesh::cleanupGl() {

@@ -45,7 +45,7 @@ obj=bpy.data.objects['terrain_main']
 # The terrain group joins millions of scatter instances to this surface.
 # Request ONLY its landscape output before dependency-graph evaluation.
 g=bpy.data.node_groups['terrain'];g.links.new(g.nodes['landscape_subdivide'].outputs['Geometry'],g.nodes['Group Output'].inputs['Geometry'])
-scene=bpy.data.scenes.new('Loiter terrain only');scene.collection.objects.link(obj);bpy.context.window.scene=scene
+scene=bpy.data.scenes.new('Ironlark terrain only');scene.collection.objects.link(obj);bpy.context.window.scene=scene
 bpy.context.view_layer.update();dg=bpy.context.evaluated_depsgraph_get();ev=obj.evaluated_get(dg);m=bpy.data.meshes.new_from_object(ev,preserve_all_data_layers=True,depsgraph=dg);m.calc_loop_triangles()
 world=base.mesh_world_verts(obj,m);lv=base.loop_vert_indices(m);uv=base.loop_uvs(m)
 # Generated coordinates normally depend on the evaluated object's full bounds.
@@ -71,9 +71,9 @@ base.HOME=(*base.HOME[:2],json.loads((out/'manifest.json').read_text())['home_gr
 for kind,size in [('diff',4096),('normal',2048)]:
  if (out/f'terrain_{tx}_{ty}_{kind}.png').exists():continue
  base.BAKE_SIZE=size
- old=bpy.data.images.get('loiter_terrain_bake')
+ old=bpy.data.images.get('ironlark_terrain_bake')
  if old:bpy.data.images.remove(old)
  base.bake_terrain(obj,m,keep,lv,world,uv,kind='NORMAL' if kind=='normal' else 'DIFFUSE')
- img=bpy.data.images['loiter_terrain_bake'];img.filepath_raw=str(out/f'terrain_{tx}_{ty}_{kind}.png');img.file_format='PNG'
+ img=bpy.data.images['ironlark_terrain_bake'];img.filepath_raw=str(out/f'terrain_{tx}_{ty}_{kind}.png');img.file_format='PNG'
  img.save();print('TERRAIN_TILE',tx,ty,kind,flush=True)
 bpy.data.meshes.remove(m)

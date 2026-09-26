@@ -17,15 +17,15 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER = """import json,os,sys,time
 from pathlib import Path
 from controller import Supervisor
-sys.path.insert(0, os.environ['LOITER_OBSERVER'])
+sys.path.insert(0, os.environ['IRONLARK_OBSERVER'])
 from minimap import look_at
 r = Supervisor()
 report = {'first_step_wall': time.time()}
-view = r.getFromDef('LOITER_VIEW')
+view = r.getFromDef('IRONLARK_VIEW')
 view.getField('follow').setSFString('')
-scene = json.loads(Path(os.environ['LOITER_SCENE']).read_text())
+scene = json.loads(Path(os.environ['IRONLARK_SCENE']).read_text())
 step = int(r.getBasicTimeStep())
-seconds = float(os.environ['LOITER_SECONDS'])
+seconds = float(os.environ['IRONLARK_SECONDS'])
 views = []
 for name, pose in scene['cameras'].items():
     rotation = look_at(pose['eye'], pose['target'])
@@ -61,7 +61,7 @@ wall = time.monotonic() - wall0
 views.append({'view': 'moving', 'sim_seconds': round(r.getTime() - sim0, 3), 'wall_seconds': round(wall, 3),
               'real_time_factor': round((r.getTime() - sim0) / wall, 3)})
 report['views'] = views
-Path(os.environ['LOITER_REPORT']).write_text(json.dumps(report))
+Path(os.environ['IRONLARK_REPORT']).write_text(json.dumps(report))
 r.simulationQuit(0)
 """
 
@@ -125,10 +125,10 @@ def main():
     env = os.environ | {
         "XDG_CONFIG_HOME": str(private_preferences(out, [])),
         "PATH": str(ROOT / ".venv/bin") + ":" + os.environ.get("PATH", ""),
-        "LOITER_OBSERVER": str(ROOT / "controllers/flight_observer"),
-        "LOITER_SCENE": str(source / "scene.json"),
-        "LOITER_REPORT": str(out / "controller.json"),
-        "LOITER_SECONDS": str(args.seconds),
+        "IRONLARK_OBSERVER": str(ROOT / "controllers/flight_observer"),
+        "IRONLARK_SCENE": str(source / "scene.json"),
+        "IRONLARK_REPORT": str(out / "controller.json"),
+        "IRONLARK_SECONDS": str(args.seconds),
     }
     cmd = [str(home / "webots"), "--batch", "--mode=realtime", "--fullscreen",
            "--log-performance=" + str(out / "performance.log"), "--stdout", "--stderr", str(target)]

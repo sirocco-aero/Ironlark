@@ -3,7 +3,7 @@
 EXTERNPROTO "../.cache/Webots_Python/protos/Iris.proto"
 
 WorldInfo {
-  title "Loiter — flight foundation"
+  title "Ironlark — flight foundation"
   basicTimeStep 2
   FPS 30
   randomSeed 7
@@ -11,7 +11,7 @@ WorldInfo {
 Viewpoint {
   orientation -0.174545 0.356882 0.917698 0.979312
   position -7 -9 6
-  follow "Loiter Iris"
+  follow "Ironlark Iris"
 }
 Background {
   skyColor [ 0.65 0.78 0.9 ]
@@ -51,9 +51,9 @@ Solid {
   ]
   name "home pad"
 }
-DEF LOITER_DRONE Iris {
+DEF IRONLARK_DRONE Iris {
   translation 0 0 0.09
-  name "Loiter Iris"
+  name "Ironlark Iris"
   controller "flight_bridge"
 }
 Robot {

@@ -62,7 +62,7 @@ def simple_material(species):
     out = next(n for n in ns if n.type == "OUTPUT_MATERIAL")
     principled = next(n for n in ns if n.type == "BSDF_PRINCIPLED")
     emission = ns.new("ShaderNodeEmission")
-    emission.name = "Loiter photograph"
+    emission.name = "Ironlark photograph"
     transparent = ns.new("ShaderNodeBsdfTransparent")
     mix = ns.new("ShaderNodeMixShader")
     for name, target in [
@@ -98,7 +98,7 @@ def bake_twig(obj, species, index, scene, camera):
         source_uv = loop_uvs(mesh)
         if source_uv is None:
             raise RuntimeError(f"{obj.name}: source twig UVs are missing")
-        layer = mesh.uv_layers.new(name="LoiterSourceUV")
+        layer = mesh.uv_layers.new(name="IronlarkSourceUV")
         layer.data.foreach_set("uv", source_uv.astype(np.float32).ravel())
     ob = bpy.data.objects.new("bake_twig", mesh)
     scene.collection.objects.link(ob)
@@ -132,7 +132,7 @@ def bake_twig(obj, species, index, scene, camera):
         # the flat card. Encode them in this projection's tangent basis.
         mat = MATERIALS[species]
         nodes, links = mat.node_tree.nodes, mat.node_tree.links
-        emit = nodes["Loiter photograph"]
+        emit = nodes["Ironlark photograph"]
         color_socket = emit.inputs[0].links[0].from_socket
         bsdf = next(n for n in nodes if n.type == "BSDF_PRINCIPLED")
         normal_socket = bsdf.inputs["Normal"].links[0].from_socket
@@ -178,7 +178,7 @@ def bake_twig(obj, species, index, scene, camera):
 
 
 def replacement(obj, cards, species):
-    mesh = bpy.data.meshes.new("loiter_" + obj.name)
+    mesh = bpy.data.meshes.new("ironlark_" + obj.name)
     verts, faces = [], []
     for card in cards:
         n = len(verts)
@@ -196,7 +196,7 @@ def replacement(obj, cards, species):
                 (col + 0.003 + u * 0.994) / 4,
                 1 - (row + 1) / 4 + (0.003 + v * 0.994) / 4,
             )
-    new = bpy.data.objects.new("loiter_" + obj.name, mesh)
+    new = bpy.data.objects.new("ironlark_" + obj.name, mesh)
     new.matrix_world = obj.matrix_world.copy()
     for col in list(obj.users_collection):
         col.objects.unlink(obj)
@@ -260,7 +260,7 @@ def export_variant(name, scene):
     foliage_materials = [
         i
         for i, m in enumerate(mesh.materials)
-        if m and ("twig" in m.name or "loiter_cards" in m.name)
+        if m and ("twig" in m.name or "ironlark_cards" in m.name)
     ]
     foliage_vertices = lv[
         triangle_loops[np.isin(material_indices, foliage_materials)].ravel()
@@ -292,7 +292,7 @@ def export_variant(name, scene):
             continue
         inputs = source_textures.get(mat.name, {})
         foliage = (
-            mat.name.startswith("loiter_cards_")
+            mat.name.startswith("ironlark_cards_")
             or "twig" in mat.name
             or bool(inputs.get("alpha"))
         )
@@ -391,7 +391,7 @@ def main():
         }
     )
     (OUT / "material_images.json").write_text(json.dumps(material_images, indent=1))
-    scene = bpy.data.scenes.new("Loiter isolated asset bake")
+    scene = bpy.data.scenes.new("Ironlark isolated asset bake")
     bpy.context.window.scene = scene
     scene.render.engine = "CYCLES"
     scene.cycles.samples = 8
@@ -415,7 +415,7 @@ def main():
         else None
     )
     MATERIALS = {s: simple_material(s) for s in names} if procedural else {}
-    CARD_MATERIALS = {s: bpy.data.materials.new("loiter_cards_" + s) for s in names}
+    CARD_MATERIALS = {s: bpy.data.materials.new("ironlark_cards_" + s) for s in names}
     atlas = {}
     for species, objects in names.items() if procedural else []:
         atlas[species] = []

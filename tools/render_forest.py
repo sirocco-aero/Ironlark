@@ -19,17 +19,17 @@ SIM = Path(__file__).resolve().parents[1]
 CONTROLLER = """import json,os,sys,time
 from pathlib import Path
 from controller import Supervisor
-sys.path.insert(0, os.environ['LOITER_OBSERVER'])
+sys.path.insert(0, os.environ['IRONLARK_OBSERVER'])
 from minimap import look_at
 r=Supervisor()
-view=r.getFromDef('LOITER_VIEW'); view.getField('follow').setSFString('')
-scene=json.loads(Path(os.environ['LOITER_SCENE']).read_text())
+view=r.getFromDef('IRONLARK_VIEW'); view.getField('follow').setSFString('')
+scene=json.loads(Path(os.environ['IRONLARK_SCENE']).read_text())
 for name,pose in scene['cameras'].items():
     view.getField('position').setSFVec3f(pose['eye'])
     view.getField('orientation').setSFRotation(look_at(pose['eye'],pose['target']))
     start=time.monotonic()
     for _ in range(10):r.step(int(r.getBasicTimeStep())*16)
-    r.exportImage(os.environ['LOITER_PREVIEW']+'/'+name+'.png',100)
+    r.exportImage(os.environ['IRONLARK_PREVIEW']+'/'+name+'.png',100)
     print('PREVIEW',name,'seconds',time.monotonic()-start,flush=True)
 r.simulationQuit(0)
 """
@@ -126,9 +126,9 @@ def main():
     env["QT_QPA_PLATFORM"] = "xcb"
     env["PATH"] = str(SIM / ".venv/bin") + ":" + env.get("PATH", "")
     env.update(
-        LOITER_OBSERVER=str(SIM / "controllers/flight_observer"),
-        LOITER_SCENE=str(source / "scene.json"),
-        LOITER_PREVIEW=str(out),
+        IRONLARK_OBSERVER=str(SIM / "controllers/flight_observer"),
+        IRONLARK_SCENE=str(source / "scene.json"),
+        IRONLARK_PREVIEW=str(out),
     )
     cmd = [
         str(args.webots_home.resolve() / "webots"),

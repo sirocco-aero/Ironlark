@@ -58,7 +58,7 @@ def main():
         uv = loop_uvs(mesh)
         if uv is None:
             raise RuntimeError(f'{material.name}: source UVMap was lost')
-        target_uv = mesh.uv_layers.new(name='LoiterBake')
+        target_uv = mesh.uv_layers.new(name='IronlarkBake')
         target_uv.data.foreach_set('uv', uv.astype(np.float32).ravel())
         mesh.uv_layers.active = target_uv
         target_uv.active_render = True

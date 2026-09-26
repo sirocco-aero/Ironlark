@@ -32,4 +32,4 @@ RUN git apply --check /tmp/webots-clock.patch \
     && ./waf copter -j2
 
 ENV PYTHONUNBUFFERED=1
-WORKDIR /run/loiter
+WORKDIR /run/ironlark

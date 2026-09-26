@@ -1,4 +1,4 @@
-# Loiter
+# Ironlark
 
 A playable Linux world where real drone autonomy software perceives, plans and
 flies. Missions will span departure, outdoor travel, GPS-denied exploration,
@@ -16,11 +16,11 @@ Needs Linux x86-64, OpenGL, Docker, [uv](https://docs.astral.sh/uv/),
 extracted to `./webots/` (or set `WEBOTS_HOME`).
 
 ```sh
-./loiter setup           # pinned ArduPilot image, Python env
-./loiter build-world     # forest world (downloads Blender and the scene)
-./loiter build-renderer  # optional: Loiter's patched Webots
-./loiter run             # watch a flight, fullscreen
-./loiter check           # same flight, headless, pass/fail
+./ironlark setup           # pinned ArduPilot image, Python env
+./ironlark build-world     # forest world (downloads Blender and the scene)
+./ironlark build-renderer  # optional: Ironlark's patched Webots
+./ironlark run             # watch a flight, fullscreen
+./ironlark check           # same flight, headless, pass/fail
 ```
 
 | Command | Does |
@@ -42,7 +42,7 @@ Configure in files, not panels; restart to apply:
 [`worlds/flight_foundation.wbt`](worlds/flight_foundation.wbt) (empty-world scene, vehicle, camera, timestep),
 [`config/flight.parm`](config/flight.parm) (autopilot overrides),
 [`tests/flight_smoke.py`](tests/flight_smoke.py) (the flight check),
-[`loiter`](loiter) (startup, versions, cleanup),
+[`ironlark`](ironlark) (startup, versions, cleanup),
 [`tools/`](tools) (the forest pipeline).
 
 ## What `check` proves
@@ -67,7 +67,7 @@ wall clock, repeatedly adding elapsed time to the autopilot. The patch keeps the
 timestamp across delays and rebases only when Webots time goes backwards.
 
 **Localization boundary.** The Iris example uses simulator truth
-(`AHRS_EKF_TYPE=10`); Loiter sets EKF3 (`3`), and the check rejects truth mode.
+(`AHRS_EKF_TYPE=10`); Ironlark sets EKF3 (`3`), and the check rejects truth mode.
 Position still comes from simulated GPS, which ArduPilot synthesizes from the
 physical state Webots reports. GPS denial must be cut at the measurement layer,
 never by removing that state. Feeding evaluator pose in as odometry is not
@@ -81,10 +81,10 @@ recovery policy.
 
 ## Webots patches
 
-Loiter patches Webots where Webots is the bottleneck, rather than degrading
+Ironlark patches Webots where Webots is the bottleneck, rather than degrading
 assets to suit it. No fork: [`native/patches/`](native/patches) is a series
 applied in filename order to [R2025a](https://github.com/cyberbotics/webots/tree/c6793d8f7230a311c4bc2a3101d9f1a8bc0aa01b)
-(`c6793d8`, Apache 2.0). `./loiter build-renderer` fetches sparse sources and
+(`c6793d8`, Apache 2.0). `./ironlark build-renderer` fetches sparse sources and
 matching headers, compiles `glad`, `wren` and `webots` against the installed
 R2025a libraries, and installs to `.cache/webots-renderer/`, beside the
 untouched stock `./webots/`. Unchanged patches are not reapplied or recompiled.
@@ -130,7 +130,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,
-`./loiter build-renderer`, `./loiter check`, `./loiter check --world forest`,
+`./ironlark build-renderer`, `./ironlark check`, `./ironlark check --world forest`,
 and note here what it fixes and how it was measured. The builder refuses to
 reapply the series over edits not saved as a patch. Keep each patch clean enough to
 become an upstream pull request.

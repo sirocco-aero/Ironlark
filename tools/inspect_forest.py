@@ -10,7 +10,7 @@ for o in bpy.data.objects:
  for m in o.modifiers:
   row['mods'].append({'name':m.name,'type':m.type,'show_viewport':m.show_viewport,'show_render':m.show_render,'properties':dict(m.items()) if m.type=='NODES'else {}})
  rows.append(row)
-Path('/tmp/loiter-blender-objects.json').write_text(json.dumps(rows,indent=2,default=str))
+Path('/tmp/ironlark-blender-objects.json').write_text(json.dumps(rows,indent=2,default=str))
 print('OBJECTS',len(rows),flush=True)
 for r in rows:
  if r['mods']or r['polys']>100000:print(json.dumps(r,default=str),flush=True)

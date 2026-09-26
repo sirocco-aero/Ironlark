@@ -10,7 +10,7 @@ never the reason to reject an environment.
 ### Now
 
 [Poly Haven Pine Forest](https://polyhaven.com/collections/pine_forest) (CC0),
-built from its Blender scene by `./loiter build-world`: authored tree variants
+built from its Blender scene by `./ironlark build-world`: authored tree variants
 and saplings, source placements, cover, river, terrain, sky and baked canopy
 light. Goal: match the source renders. Rule: no enshittification. Fix engine
 and pipeline bottlenecks; don't cut asset quality.
@@ -45,7 +45,7 @@ source's lights, `tools/render_lighting_reference.py` and `tools/compare_views.p
 - **Bounced light**: Webots has none; under the canopy Cycles' sunlight bounces
   off leaves and ground. Inside the forest the fog adds ×1.67 light to Cycles' ×1.37.
 - **Fog**: robot `Camera` devices lack it; calibrate against
-  `./loiter render-reference` (needs more than ~26 GB RAM).
+  `./ironlark render-reference` (needs more than ~26 GB RAM).
 - **Terrain**: four 4K baked tiles (~100 m each). The source tiles its ground
   materials under masks; matching that needs a Webots detail-map patch, and
   would be sharper up close with far less VRAM.
@@ -113,7 +113,7 @@ Start with 3D LiDAR, IMU and RGB camera. LiDAR and IMU drive first
 localization; the camera serves viewing now and object understanding later.
 First localization must not depend on cave lighting.
 
-- A Loiter vehicle PROTO around the Iris flight model, with sensor poses and
+- A Ironlark vehicle PROTO around the Iris flight model, with sensor poses and
   settings in versioned config, and a look to match the forest (the stock Iris
   looks crude).
 - LiDAR honours `alphaCutoff`: foliage cards must not read as solid planes.
