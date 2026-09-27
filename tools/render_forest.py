@@ -28,7 +28,7 @@ for name,pose in scene['cameras'].items():
     view.getField('position').setSFVec3f(pose['eye'])
     view.getField('orientation').setSFRotation(look_at(pose['eye'],pose['target']))
     start=time.monotonic()
-    for _ in range(10):r.step(int(r.getBasicTimeStep())*16)
+    for _ in range(int(os.environ.get('IRONLARK_PREVIEW_FRAMES','10'))):r.step(int(r.getBasicTimeStep())*16)
     r.exportImage(os.environ['IRONLARK_PREVIEW']+'/'+name+'.png',100)
     print('PREVIEW',name,'seconds',time.monotonic()-start,flush=True)
 r.simulationQuit(0)
@@ -71,6 +71,8 @@ def main():
     p.add_argument("--no-alpha-cutoff", action="store_true", help="draw alpha-masked materials opaque (debugging)")
     p.add_argument("--png-textures", action="store_true", help="the PNGs kept beside compressed textures (debugging)")
     p.add_argument("--no-bands", action="store_true", help="drop full trees' visibility band (debugging)")
+    p.add_argument("--view", action="append", default=[], metavar="NAME:X,Y,Z:X,Y,Z",
+                   help="render this view (eye, target) instead of the pinned cameras; repeatable")
     p.add_argument("--no-light-occlusion", action="store_true", help="without the baked light occlusion")
     p.add_argument("--sub", action="append", default=[], metavar="REGEX=>REPLACEMENT",
                    help="edit the world with a regular expression (debugging)")
@@ -128,6 +130,16 @@ def main():
         world = re.sub(r"\n  exposure [\d.]+", f"\n  exposure {args.exposure}", world, count=1)
     if args.fog_density is not None:
         world = re.sub(r"(\nFog \{.*?\n  density )[\d.e-]+", lambda m: m.group(1) + str(args.fog_density), world, flags=re.S)
+    scene = source / "scene.json"
+    if args.view:
+        cameras = {}
+        for view in args.view:
+            name, eye, look = view.split(":")
+            cameras[name] = {"eye": [float(v) for v in eye.split(",")], "target": [float(v) for v in look.split(",")]}
+        data = json.loads(scene.read_text())
+        data["cameras"] = cameras
+        scene = out / "scene.json"
+        scene.write_text(json.dumps(data))
     target = worlds / "preview.wbt"
     target.write_text(world)
     # The world's perspective: hidden device overlays, disabled interactions.
@@ -138,7 +150,7 @@ def main():
     env["PATH"] = str(SIM / ".venv/bin") + ":" + env.get("PATH", "")
     env.update(
         IRONLARK_OBSERVER=str(SIM / "controllers/flight_observer"),
-        IRONLARK_SCENE=str(source / "scene.json"),
+        IRONLARK_SCENE=str(scene),
         IRONLARK_PREVIEW=str(out),
     )
     cmd = [

@@ -142,7 +142,9 @@ Handoff state (2026-09-26), partly unverified:
   GTAO), yet leave no pixel with the alpha test off, nor with the depth test off: their
   vertices likely land off screen. Not the far plane, fog, BC7, texture binding cache or
   the scene copy (0030). Parked: it needs a GPU capture of one twig draw.
-- Next: shimmer.
+- Shimmer: done (0041, temporal anti-aliasing in the main view; 4x multisampling with
+  alpha to coverage, 0025, had cut it only by a quarter). Robot cameras keep single
+  frames: supersample them if vision needs it.
 
 ### 2. Sensor rig and ROS 2
 

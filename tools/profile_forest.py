@@ -100,6 +100,8 @@ def main():
     p.add_argument("--webots-home", type=Path, default=None)
     p.add_argument("--seconds", type=float, default=5.0, help="sim seconds per view")
     p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--pref", action="append", default=[], metavar="GROUP/KEY=VALUE",
+                   help="Webots preference for this run only")
     p.add_argument("--without", action="append", default=[], metavar="TEXT",
                    help="drop every Shape whose text contains TEXT, to attribute its cost (repeatable)")
     args = p.parse_args()
@@ -123,7 +125,7 @@ def main():
     from render_forest import private_preferences
 
     env = os.environ | {
-        "XDG_CONFIG_HOME": str(private_preferences(out, [])),
+        "XDG_CONFIG_HOME": str(private_preferences(out, args.pref)),
         "PATH": str(ROOT / ".venv/bin") + ":" + os.environ.get("PATH", ""),
         "IRONLARK_OBSERVER": str(ROOT / "controllers/flight_observer"),
         "IRONLARK_SCENE": str(source / "scene.json"),
