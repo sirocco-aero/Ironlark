@@ -134,7 +134,15 @@ Handoff state (2026-09-26), partly unverified:
   terrain's bounds, blended by its `path` and `river` attributes, baked as
   `terrain_*_mask.png`) add detail within 15–40 m over the 2.5 cm bake. Built; verify
   up close against the checkpoint and Cycles.
-- Next: GTAO-off missing trees; shimmer.
+- GTAO off (`OpenGL/GTAO` 0) strips the big trees' crowns in the main view (their
+  twig-card shapes; impostors vanish too); sensors are unaffected (the drone camera has
+  its own ambient occlusion and sees full crowns, the LiDAR returns off them). Old: in
+  the 09-25 checkpoint too. Established with a logging build: the twig shapes are drawn
+  (same instance counts, program, depth, blend, colour mask and framebuffer as with
+  GTAO), yet leave no pixel with the alpha test off, nor with the depth test off: their
+  vertices likely land off screen. Not the far plane, fog, BC7, texture binding cache or
+  the scene copy (0030). Parked: it needs a GPU capture of one twig draw.
+- Next: shimmer.
 
 ### 2. Sensor rig and ROS 2
 
