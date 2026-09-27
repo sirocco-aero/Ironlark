@@ -97,8 +97,9 @@ class SensorStream:
         now_ms = int(round(self.robot.getTime() * 1000))
         stamp = now_ms * 1_000_000
         if now_ms % 5000 == 0:
-            print(f"sensing: {self.sent} sent, {self.dropped} dropped, {self.queue.qsize()} queued at {now_ms / 1000:.0f} s",
-                  flush=True)
+            # Webots and wall time side by side: the launcher derives sensing's cost from them.
+            print(f"sensing: {self.sent} sent, {self.dropped} dropped, {self.queue.qsize()} queued "
+                  f"at {now_ms / 1000:.0f} s, wall {time.monotonic():.3f}", flush=True)
         self._put(protocol.pack(protocol.CLOCK, stamp))
         if now_ms % self.imu_period == 0:
             q = self.attitude.getQuaternion()

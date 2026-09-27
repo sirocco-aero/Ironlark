@@ -37,14 +37,18 @@ class Bridge(Node):
     def __init__(self, config):
         super().__init__("ironlark_bridge")
         self.config = config
-        reliable = QoSProfile(depth=20, reliability=ReliabilityPolicy.RELIABLE)
-        self.clock = self.create_publisher(Clock, "/clock", reliable)
-        self.imu = self.create_publisher(Imu, "/imu/data", reliable)
-        self.points = self.create_publisher(PointCloud2, "/lidar/points", reliable)
-        self.image = self.create_publisher(Image, "/camera/image_raw", reliable)
-        self.camera_info = self.create_publisher(CameraInfo, "/camera/camera_info", reliable)
-        self.truth_pose = self.create_publisher(PoseStamped, "/ground_truth/pose", reliable)
-        self.truth_velocity = self.create_publisher(Vector3Stamped, "/ground_truth/velocity", reliable)
+        # Reliable, and deep: a subscriber (the recorder) that falls behind loses nothing. Depths
+        # match ros/record_qos.yaml: large for small high-rate messages, modest for images.
+        def reliable(depth):
+            return QoSProfile(depth=depth, reliability=ReliabilityPolicy.RELIABLE)
+
+        self.clock = self.create_publisher(Clock, "/clock", reliable(20000))
+        self.imu = self.create_publisher(Imu, "/imu/data", reliable(10000))
+        self.points = self.create_publisher(PointCloud2, "/lidar/points", reliable(200))
+        self.image = self.create_publisher(Image, "/camera/image_raw", reliable(200))
+        self.camera_info = self.create_publisher(CameraInfo, "/camera/camera_info", reliable(200))
+        self.truth_pose = self.create_publisher(PoseStamped, "/ground_truth/pose", reliable(10000))
+        self.truth_velocity = self.create_publisher(Vector3Stamped, "/ground_truth/velocity", reliable(10000))
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.static_tf = self.create_publisher(TFMessage, "/tf_static", latched)

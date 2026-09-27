@@ -19,6 +19,9 @@ ROOT = Path(__file__).resolve().parent
 CACHE = ROOT / ".cache"
 IMAGE = "ironlark-sitl:copter-4.7.1"
 ROS_IMAGE = "ironlark-ros:humble"
+# Recorded by name, so the recorder subscribes to each before the first message (-a discovers late).
+ROS_TOPICS = ("/clock /imu/data /lidar/points /camera/image_raw /camera/camera_info /tf_static "
+              "/ground_truth/pose /ground_truth/velocity")
 COMMIT = "dbe792162d06cab66c3475fd5556bf7a120f119e"
 UPSTREAM = "/opt/ardupilot/libraries/SITL/examples/Webots_Python"
 
@@ -182,6 +185,27 @@ def run_tool(name, *args):
     call(str(python), str(ROOT / "tools" / name), *args)
 
 
+def sensing_cost(run):
+    """Sensing's cost in a recorded run, from the stream's log lines (Webots and wall time). Webots
+    runs in real time unless rendering falls behind: time past real time is what sensing added."""
+    import re
+
+    lines = re.findall(r"sensing: (\d+) sent, (\d+) dropped, \d+ queued at (\d+) s, wall ([\d.]+)",
+                       (run / "webots.log").read_text(errors="replace"))
+    if len(lines) < 2:
+        return None
+    (_, _, sim0, wall0), (sent, dropped, sim1, wall1) = lines[0], lines[-1]
+    simulated, wall = int(sim1) - int(sim0), float(wall1) - float(wall0)
+    return {
+        "messages_sent": int(sent),
+        "messages_dropped": int(dropped),
+        "simulated_s": simulated,
+        "wall_s": round(wall, 2),
+        "realtime_factor": round(simulated / wall, 3),
+        "added_wall_time": round(max(0.0, wall / simulated - 1.0), 3),
+    }
+
+
 def ros_container(name, run, command):
     """The ROS 2 container: host network (DDS kept to localhost), the project read-only, the run's
     folder for bags and logs."""
@@ -196,15 +220,22 @@ def ros_container(name, run, command):
 
 
 def replay(run):
-    """Play a recorded flight's bag, publishing its /clock."""
+    """Play a recorded flight's bag. Its /clock topic carries Webots time: the player adds no clock
+    of its own (rosbag2's would count the recording's wall time)."""
     run = Path(run).resolve()
     if not (run / "bag").is_dir():
         raise RuntimeError(f"No bag in {run}. Record one with ./ironlark run --record.")
-    call(*ros_container(f"ironlark-replay-{os.getpid()}", run, "ros2 bag info bag && ros2 bag play bag --clock"))
+    call(*ros_container(f"ironlark-replay-{os.getpid()}", run, "ros2 bag info bag && ros2 bag play bag"))
 
 
 def build_drone():
     run_tool("build_drone.py")
+
+
+def check_replay(run):
+    """A recorded flight replayed: same messages, stamps and transforms (tools/check_replay.py)."""
+    run = Path(run).resolve()
+    call(*ros_container(f"ironlark-replay-check-{os.getpid()}", run, "python3 /project/tools/check_replay.py /run/ironlark"))
 
 
 def check_recording(run):
@@ -300,7 +331,7 @@ def flight(headless, editor=False, world="forest", record=False):
                             ros_name,
                             run,
                             "python3 /project/ros/ironlark_bridge.py & bridge=$!; "
-                            "ros2 bag record -a -o bag & recorder=$!; "
+                            f"ros2 bag record -o bag --qos-profile-overrides-path /project/ros/record_qos.yaml {ROS_TOPICS} & recorder=$!; "
                             "trap 'kill -INT $recorder; wait $recorder; kill $bridge' INT TERM; wait",
                         ),
                         stdout=(run / "ros.log").open("w"),
@@ -410,6 +441,12 @@ def flight(headless, editor=False, world="forest", record=False):
                 if mission.returncode:
                     raise RuntimeError(f"Flight check failed. Inspect {run}.")
                 print(f"PASS: takeoff, hover, landing. Report: {run / 'result.json'}")
+                if record and (cost := sensing_cost(run)):
+                    report = json.loads((run / "result.json").read_text())
+                    report["sensing"] = cost
+                    (run / "result.json").write_text(json.dumps(report, indent=2) + "\n")
+                    print(f"Sensing: {cost['messages_sent']} messages, {cost['messages_dropped']} dropped; "
+                          f"{cost['realtime_factor']}x real time (+{cost['added_wall_time']:.0%} wall time)")
                 if not headless:
                     print(
                         "World left open (keys 1–4 switch views). Ctrl+C to exit.",
@@ -439,7 +476,7 @@ def main():
     parser.add_argument(
         "command",
         choices=("setup", "doctor", "run", "check", "build-world", "build-drone", "build-renderer",
-                 "render-reference", "replay", "check-recording"),
+                 "render-reference", "replay", "check-recording", "check-replay"),
     )
     parser.add_argument("run_dir", nargs="?", help="replay, check-recording: a flight's run folder (runs/...)")
     parser.add_argument(
@@ -469,10 +506,10 @@ def main():
         parser.error("--world is only available with run and check")
     if args.record and args.command not in ("run", "check"):
         parser.error("--record is only available with run and check")
-    if args.command in ("replay", "check-recording"):
+    if args.command in ("replay", "check-recording", "check-replay"):
         if not args.run_dir:
             parser.error(f"{args.command} needs a run folder")
-        (replay if args.command == "replay" else check_recording)(args.run_dir)
+        {"replay": replay, "check-recording": check_recording, "check-replay": check_replay}[args.command](args.run_dir)
     elif args.command == "setup":
         setup()
     elif args.command == "doctor":

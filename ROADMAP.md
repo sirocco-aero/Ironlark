@@ -138,65 +138,27 @@ Handoff state (2026-09-26), partly unverified:
 
 ### 2. Sensor rig and ROS 2
 
-Verified 2026-09-26: the drone (`tools/build_drone.py`, `protos/IronlarkDrone.proto`, the Iris
-flight model with a new body and the rig of `config/sensors.json`) passes the flight check in both
-worlds. `./ironlark check --record` records a clean rosbag2: every topic at its rate for the whole
-flight (61.4 s: `/clock` 500 Hz, IMU and ground truth 250 Hz, camera 20 Hz, LiDAR 10 Hz), stamps
-strictly increasing, nothing dropped. `./ironlark check-recording RUN` against the empty world's
-calibration wall (face at x = 5.9 m): LiDAR distance 5.897 m (2.9 mm off), normal 0.6° off, plane
-residual 2.3 cm (the configured 2 cm noise); 99% of the wall's returns land on its red in the camera
-frame of the same instant. Added cost: +6% wall time in the empty world; in the forest the flight
-takes 1.72× as long (131 s against 76 s) and Webots time slows rather than drops data.
+Done (2026-09-27). The drone (`tools/build_drone.py`, `protos/IronlarkDrone.proto`: the Iris
+flight model, a new body, the rig of `config/sensors.json`) passes the flight check in both worlds
+and carries a Mid-360-class LiDAR, an IMU and a front camera. `./ironlark check --record`:
+
+- records a complete rosbag2 (every message the controller sent, on Webots time, stamps strictly
+  increasing) and adds sensing's cost to `result.json`: 0.82× real time in the empty world
+  (+22% wall time), 0.58× in the forest (+72%); Webots time slows, nothing is dropped;
+- `check-recording`: the calibration wall reads at 5.897 m (face at 5.9 m), its normal within 0.6°,
+  and 99.9% of its LiDAR returns land on its red in the camera frame of the same instant;
+- `check-replay`: replayed, every topic keeps its messages, stamps and order, and the static
+  transforms are equal.
 
 Found on the way: Webots misplaces a 360° Lidar's returns when `tiltAngle` is set (the multi-camera
-merge ignores it: rays span ±29.5° but are labelled −7°…+52°, and shift ~22° in azimuth), so the rig
-renders 56 layers over ±52.3° and the stream keeps the top 32 (+52.3° to −6.7°); and rclpy checks
-`bytes` assigned to `uint8[]` fields element by element (the bridge managed 320 messages/s until it
-passed `array('B')`: now ~840/s).
+merge ignores it: rays span ±29.5° but are labelled −7°…+52°, shifted ~22° in azimuth), so the rig
+renders 56 layers over ±52.3° and the stream keeps the top 32 (+52.3° to −6.7°); rclpy checks
+`bytes` assigned to `uint8[]` fields byte by byte (the bridge reached 320 messages/s until it passed
+`array('B')`: now ~840/s); `ros2 bag record -a` and replay with `--clock` both mislead (late
+subscriptions; a wall-time clock beside the bag's Webots `/clock`).
 
-Next: make sensing cheaper in the forest (engine-side: the LiDAR's sub-cameras render the whole scene
-with full shading); the camera's overlay is hidden (patch 0040); `replay` checked by hand.
-
-Start with 3D LiDAR, IMU and RGB camera. LiDAR and IMU drive first
-localization; the camera serves viewing now and object understanding later.
-First localization must not depend on cave lighting.
-
-- A Ironlark vehicle PROTO around the Iris flight model, with sensor poses and
-  settings in versioned config, and a look to match the forest (the stock Iris
-  looks crude).
-  Plan: `config/sensors.json` is the one source of mounts, rates, ranges and noise;
-  a Blender script generates the PROTO (carbon arms, machined motor bells, two-blade
-  props with a fastHelix blur disc, legs ending at the Iris box bottom, z −0.055) and
-  keeps the Iris physics, bounding box, motor names and its noiseless
-  accelerometer/gyro/inertial unit/GPS for ArduPilot (also ground truth). Sensors: a
-  Mid-360-class LiDAR on top (360° × 59°, `verticalFieldOfView` 1.03, `tiltAngle`
-  +0.39 for −7°…52°; check the sign on a wall), 0.1–40 m, 10 Hz; a separate noisy IMU
-  at 250 Hz (2 ms physics step); a front camera, 640×480 at 20 Hz.
-- LiDAR honours `alphaCutoff`: foliage cards must not read as solid planes.
-- ROS 2 Humble with a bridge publishing `/clock`, IMU, point clouds, images,
-  camera calibration and transforms. Webots' Python controller and the ROS
-  environment stay independently reproducible.
-- Webots time throughout. One place defines Webots ↔ ENU/FLU ↔ NED/FRD.
-  Pausing must not advance sensor time; slow rendering must not invent it.
-- Configurable noise and rates. If the odometry needs per-return LiDAR timing,
-  model acquisition; never fake scan timing on an instantaneous range image.
-- rosbag2 record and replay. Ground truth never reaches autonomy topics.
-
-  Plan: `flight_bridge` steps the robot every 2 ms in lockstep with SITL; hook a
-  sampler after each step (Webots time; numpy wraps `wb_lidar_get_point_cloud` and
-  camera buffers without copies) streaming framed messages (magic, type, sim time
-  ns, length) over localhost TCP from a sender thread with a bounded queue (drop and
-  count, never stall physics). A `ros:humble-ros-base` container (image already
-  pulled; `--network host`) runs an rclpy node publishing `/clock`, IMU, PointCloud2,
-  images (bgra8 → bgr8), camera_info and static TF from `config/sensors.json`, ground
-  truth under `/ground_truth/*` only; `./ironlark run --record` adds `ros2 bag record`
-  into the run folder, `./ironlark replay RUN` plays it with `--clock`. Webots frames
-  are ENU/FLU = REP-103; one module documents Webots ↔ ENU/FLU ↔ NED/FRD.
-
-**Done when** one recorded flight holds synchronized sensor data; a known wall
-reads at the right distance and orientation; camera and LiDAR agree; replay
-keeps timestamps and transforms; the flight check, with sensing on, reports its
-added cost.
+Next: sensing cheaper in the forest (engine-side: the LiDAR's sub-cameras render the whole scene with
+full shading); per-return LiDAR timing if the odometry needs it (model acquisition, never fake it).
 
 ## Later: regions
 
