@@ -167,8 +167,16 @@ renders 56 layers over ±52.3° and the stream keeps the top 32 (+52.3° to −6
 `array('B')`: now ~840/s); `ros2 bag record -a` and replay with `--clock` both mislead (late
 subscriptions; a wall-time clock beside the bag's Webots `/clock`).
 
-Next: sensing cheaper in the forest (engine-side: the LiDAR's sub-cameras render the whole scene with
-full shading); per-return LiDAR timing if the odometry needs it (model acquisition, never fake it).
+Sensing's cost in the forest is the camera's (alone: 0.57× real time; the LiDAR alone: 0.76×). Its
+640 × 480 frame at takeoff takes 75 ms: 57 ms of opaque geometry, ~115 M triangles (from the ground
+it sees ~700 full trees of 120–160 k triangles; trees are full out to 150 m), and 13 ms for the near
+shadow cascade (4.9 M). Vertex-bound: 160 × 120 saves 14%; shadows, fog and GTAO off change ≤ 7%.
+Switching level of detail at equal on-screen size (the 150 m impostor switch is set for 1920 px
+over 1 rad, so ~30 m for this camera) cut the frame to 32 ms, but impostors are visibly flatter and
+lighter than trees at 30–150 m, where no haze hides them: rejected. Left: occlusion culling (exact,
+large), or the source's own lod1 trees at the on-screen size it switches them at (check the .blend).
+
+Next: per-return LiDAR timing if the odometry needs it (model acquisition, never fake it).
 
 ## Later: regions
 
