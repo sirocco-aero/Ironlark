@@ -1,0 +1,274 @@
+diff --git a/src/webots/engine/WbSimulationWorld.cpp b/src/webots/engine/WbSimulationWorld.cpp
+index 3f08efe..3becb83 100644
+--- a/src/webots/engine/WbSimulationWorld.cpp
++++ b/src/webots/engine/WbSimulationWorld.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "WbBoundingSphere.hpp"
+ #include "WbDownloadManager.hpp"
++#include "WbImagePrefetch.hpp"
+ #include "WbLog.hpp"
+ #include "WbMassChecker.hpp"
+ #include "WbNodeOperations.hpp"
+@@ -108,7 +109,9 @@ WbSimulationWorld::WbSimulationWorld(WbTokenizer *tokenizer) :
+   }
+ 
+   setIsLoading(true);
++  WbImagePrefetch::start(root());
+   root()->finalize();
++  WbImagePrefetch::finish();
+   finalize();
+   setIsLoading(false);
+ 
+diff --git a/src/webots/nodes/WbBackground.cpp b/src/webots/nodes/WbBackground.cpp
+index ce41314..608a54d 100644
+--- a/src/webots/nodes/WbBackground.cpp
++++ b/src/webots/nodes/WbBackground.cpp
+@@ -21,6 +21,7 @@
+ #include "WbField.hpp"
+ #include "WbFieldChecker.hpp"
+ #include "WbGroup.hpp"
++#include "WbImageTexture.hpp"
+ #include "WbMFVector2.hpp"
+ #include "WbMFColor.hpp"
+ #include "WbMFDouble.hpp"
+@@ -285,6 +286,19 @@ void WbBackground::activate() {
+ // square layers stacked; terrainDetailMaskUrl the layers' blend weights (R, G) over the light
+ // occlusion rectangle, mirrored as it is; terrainDetailTiles each layer's tile size, the tiling
+ // origin, then the texel size of the material's own (baked) maps in x, in metres.
++void WbBackground::prefetch() const {
++  for (int k = 0; k < mTerrainDetailUrl->size(); ++k)
++    WbImageTexture::prefetchImage(WbUrl::computePath(this, "terrainDetailUrl", mTerrainDetailUrl->item(k), true));
++  if (mTerrainDetailMaskUrl->size() > 0)
++    WbImageTexture::prefetchImage(WbUrl::computePath(this, "terrainDetailMaskUrl", mTerrainDetailMaskUrl->item(0), true));
++  if (mLightOcclusionUrl->size() > 0)
++    WbImageTexture::prefetchImage(WbUrl::computePath(this, "lightOcclusionUrl", mLightOcclusionUrl->item(0), true));
++}
++
++static bool loadImage(QImage &image, const QString &path) {
++  return WbImageTexture::takePrefetchedImage(path, &image) || image.load(path);
++}
++
+ void WbBackground::updateTerrainDetail() {
+   WbWrenOpenGlContext::makeWrenCurrent();
+   QList<QByteArray> layers;
+@@ -294,7 +308,7 @@ void WbBackground::updateTerrainDetail() {
+   for (int k = 0; valid && k < 3; ++k) {
+     const QString path = WbUrl::computePath(this, "terrainDetailUrl", mTerrainDetailUrl->item(k), true);
+     QImage image;
+-    if (!image.load(path) || image.height() != 3 * image.width() || (size && image.width() != size)) {
++    if (!loadImage(image, path) || image.height() != 3 * image.width() || (size && image.width() != size)) {
+       warn(tr("Terrain detail image '%1' must stack three square layers of one size.").arg(path));
+       valid = false;
+       break;
+@@ -310,7 +324,7 @@ void WbBackground::updateTerrainDetail() {
+   }
+   if (valid) {
+     const QString path = WbUrl::computePath(this, "terrainDetailMaskUrl", mTerrainDetailMaskUrl->item(0), true);
+-    if (!mask.load(path)) {
++    if (!loadImage(mask, path)) {
+       warn(tr("Cannot load terrain detail mask '%1'.").arg(path));
+       valid = false;
+     } else
+@@ -339,7 +353,7 @@ void WbBackground::updateLightOcclusion() {
+   QImage image;
+   if (mLightOcclusionUrl->size() > 0 && layers > 0 && layers <= 8) {
+     const QString path = WbUrl::computePath(this, "lightOcclusionUrl", mLightOcclusionUrl->item(0), true);
+-    if (!image.load(path))
++    if (!loadImage(image, path))
+       warn(tr("Cannot load light occlusion image '%1'.").arg(path));
+     else if (image.height() % (layers + 1))
+       warn(tr("The light occlusion image must stack %1 layers and a ground layer of equal height.").arg(layers));
+diff --git a/src/webots/nodes/WbBackground.hpp b/src/webots/nodes/WbBackground.hpp
+index 3ad19dc..84b7bee 100644
+--- a/src/webots/nodes/WbBackground.hpp
++++ b/src/webots/nodes/WbBackground.hpp
+@@ -48,6 +48,7 @@ public:
+   int nodeType() const override { return WB_NODE_BACKGROUND; }
+   void downloadAssets() override;
+   void preFinalize() override;
++  void prefetch() const;  // the terrain detail and light occlusion images (see WbImageTexture::prefetch)
+   void postFinalize() override;
+   void createWrenObjects() override;
+ 
+diff --git a/src/webots/nodes/WbImageTexture.cpp b/src/webots/nodes/WbImageTexture.cpp
+index e7cc308..7433bdb 100644
+--- a/src/webots/nodes/WbImageTexture.cpp
++++ b/src/webots/nodes/WbImageTexture.cpp
+@@ -17,10 +17,12 @@
+ #include "WbAbstractAppearance.hpp"
+ #include "WbApplication.hpp"
+ #include "WbApplicationInfo.hpp"
++#include "WbBackground.hpp"
+ #include "WbDownloadManager.hpp"
+ #include "WbDownloader.hpp"
+ #include "WbField.hpp"
+ #include "WbFieldChecker.hpp"
++#include "WbImagePrefetch.hpp"
+ #include "WbLog.hpp"
+ #include "WbMFString.hpp"
+ #include "WbMathsUtilities.hpp"
+@@ -35,7 +37,9 @@
+ #include "WbWrenOpenGlContext.hpp"
+ 
+ #include <QtCore/QFileInfo>
++#include <QtCore/QHash>
+ #include <QtCore/QIODevice>
++#include <QtCore/QThreadPool>
+ #include <QtGui/QImageReader>
+ 
+ #include <wren/gl_state.h>
+@@ -46,8 +50,53 @@
+ 
+ #include <assimp/material.h>
+ 
++#include <future>
++#include <memory>
+ #include <utility>
+ 
++static QHash<QString, std::shared_future<QImage>> gPrefetchedImages;
++
++void WbImageTexture::prefetchImage(const QString &path) {
++  const QString suffix = QFileInfo(path).suffix().toLower();
++  if (path.isEmpty() || gPrefetchedImages.contains(path) || (suffix != "png" && suffix != "jpg" && suffix != "jpeg") ||
++      !QFileInfo::exists(path))
++    return;
++  auto promise = std::make_shared<std::promise<QImage>>();
++  gPrefetchedImages.insert(path, promise->get_future().share());
++  QThreadPool::globalInstance()->start([promise, path]() {
++    QImage image;
++    QImageReader(path).read(&image);
++    promise->set_value(image);
++  });
++}
++
++bool WbImageTexture::takePrefetchedImage(const QString &path, QImage *image) {
++  const auto it = gPrefetchedImages.find(path);
++  if (it == gPrefetchedImages.end())
++    return false;
++  *image = it.value().get();
++  gPrefetchedImages.erase(it);
++  return !image->isNull();
++}
++
++void WbImagePrefetch::start(const WbNode *root) {
++  foreach (const WbNode *node, root->subNodes(true)) {
++    if (const WbImageTexture *texture = dynamic_cast<const WbImageTexture *>(node))
++      texture->prefetch();
++    else if (const WbBackground *background = dynamic_cast<const WbBackground *>(node))
++      background->prefetch();
++  }
++}
++
++void WbImagePrefetch::finish() {
++  gPrefetchedImages.clear();
++}
++
++void WbImageTexture::prefetch() const {
++  if (mUrl->size() > 0 && !WbUrl::isWeb(WbUrl::computePath(this, "url", mUrl->item(0))))
++    prefetchImage(path());
++}
++
+ void WbImageTexture::init() {
+   mWrenTexture = NULL;
+   mWrenBackgroundTexture = NULL;
+@@ -161,6 +210,9 @@ bool WbImageTexture::loadTexture() {
+     return false;
+ 
+   const QString filePath = isWebAsset ? WbNetwork::instance()->get(completeUrl) : path();
++  QImage decoded;
++  if (!isWebAsset && takePrefetchedImage(filePath, &decoded))
++    return loadTextureData(NULL, &decoded);
+   QFile file(filePath);
+   if (!file.open(QIODevice::ReadOnly)) {
+     warn(tr("Texture file could not be read: '%1'").arg(filePath));
+@@ -191,11 +243,11 @@ bool WbImageTexture::loadCompressed(const QByteArray &file) {
+   return true;
+ }
+ 
+-bool WbImageTexture::loadTextureData(QIODevice *device) {
+-  if (device->peek(4) == "DDS ")
++bool WbImageTexture::loadTextureData(QIODevice *device, QImage *decoded) {
++  if (!decoded && device->peek(4) == "DDS ")
+     return loadCompressed(device->readAll());
+-  QImageReader imageReader(device);
+-  QSize textureSize = imageReader.size();
++  std::unique_ptr<QImageReader> imageReader(decoded ? NULL : new QImageReader(device));
++  QSize textureSize = decoded ? decoded->size() : imageReader->size();
+   const int imageWidth = textureSize.width();
+   const int imageHeight = textureSize.height();
+   int w = WbMathsUtilities::nextPowerOf2(imageWidth);
+@@ -222,8 +274,10 @@ bool WbImageTexture::loadTextureData(QIODevice *device) {
+   delete mImage;
+   mImage = new QImage();
+ 
+-  if (!imageReader.read(mImage)) {
+-    warn(tr("Cannot load texture '%1': %2.").arg(path()).arg(imageReader.errorString()));
++  if (decoded)
++    mImage->swap(*decoded);
++  else if (!imageReader->read(mImage)) {
++    warn(tr("Cannot load texture '%1': %2.").arg(path()).arg(imageReader->errorString()));
+     return false;
+   }
+ 
+diff --git a/src/webots/nodes/WbImageTexture.hpp b/src/webots/nodes/WbImageTexture.hpp
+index 4d286fb..5e2d435 100644
+--- a/src/webots/nodes/WbImageTexture.hpp
++++ b/src/webots/nodes/WbImageTexture.hpp
+@@ -70,6 +70,13 @@ public:
+ 
+   const QString path() const;
+ 
++  // A world's local image files are decoded ahead, in parallel on a thread pool, while its nodes finalize one after the
++  // other (WbSimulationWorld); a node takes its file's image when it needs it. The decoder is the one a node reading the
++  // file itself uses, so the image is the same.
++  void prefetch() const;
++  static void prefetchImage(const QString &path);
++  static bool takePrefetchedImage(const QString &path, QImage *image);
++
+   void setRole(const QString &role) { mRole = role; }
+ 
+   void exportShallowNode(const WbWriter &writer) const;
+@@ -119,7 +126,7 @@ private:
+   void applyTextureParams();
+   void destroyWrenTexture();
+   bool loadTexture();
+-  bool loadTextureData(QIODevice *device);
++  bool loadTextureData(QIODevice *device, QImage *decoded = NULL);
+ 
+ private slots:
+   void updateUrl();
+diff --git a/src/webots/nodes/utils/WbImagePrefetch.hpp b/src/webots/nodes/utils/WbImagePrefetch.hpp
+new file mode 100644
+index 0000000..37a2630
+--- /dev/null
++++ b/src/webots/nodes/utils/WbImagePrefetch.hpp
+@@ -0,0 +1,28 @@
++// Copyright 1996-2024 Cyberbotics Ltd.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#ifndef WB_IMAGE_PREFETCH_HPP
++#define WB_IMAGE_PREFETCH_HPP
++
++class WbNode;
++
++// A world's local image files (ImageTexture, Background layers) are decoded ahead, in parallel on a thread pool,
++// while its nodes finalize one after the other; each node takes its file's image when it needs it (see
++// WbImageTexture::takePrefetchedImage). Implemented in WbImageTexture.cpp.
++namespace WbImagePrefetch {
++  void start(const WbNode *root);
++  void finish();  // drops the images no node took
++}  // namespace WbImagePrefetch
++
++#endif
