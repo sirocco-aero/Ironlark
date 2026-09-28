@@ -312,6 +312,10 @@ def flight(headless, editor=False, world="forest", record=False):
         env["IRONLARK_RUN_DIR"] = str(run)
         if record:
             env["IRONLARK_SENSING"] = "1"
+        else:
+            # The pre-arm wait runs as fast as the machine allows (flight_observer.py); recorded runs
+            # stay in real time, so sensing's measured cost means what it says.
+            env["IRONLARK_FAST_START"] = "1"
         # Webots saves GUI perspectives beside the world. Give each run its own
         # project so watching a flight never rewrites versioned source files.
         world_path, scene_path = stage_world(run, world)

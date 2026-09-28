@@ -31,7 +31,7 @@ extracted to `./webots/` (or set `WEBOTS_HOME`).
 | `build-drone` | Models the drone in Blender and writes `protos/IronlarkDrone.proto` (also run by `build-world`, and by `run`/`check` when missing). |
 | `build-renderer` | Builds patched Webots into `.cache/webots-renderer/`. See [Webots patches](#webots-patches). |
 | `render-reference` | Cycles renders of the source scene at the preview cameras, into `runs/reference/`: the ground truth for looks. Needs more than ~26 GB RAM (15 GB + zram was not enough); needs no built world. |
-| `run` | Flies over the forest in a fullscreen window, then exits. `--world empty` for the bare test area; `--editor` for Webots' UI; `--record` streams the sensors to ROS 2 and records a rosbag2 in the run folder. |
+| `run` | Flies over the forest in a fullscreen window, then exits. Until the autopilot can arm (EKF3 learning its gyro biases, ~40 s of simulated time) the simulation runs as fast as it can, the view at 10 fps; takeoff comes ~20 s after launch. `--world empty` for the bare test area; `--editor` for Webots' UI; `--record` streams the sensors to ROS 2 and records a rosbag2 in the run folder (in real time throughout). |
 | `replay RUN` | Plays a recorded run's bag in the ROS 2 container; its `/clock` topic carries Webots time. |
 | `check-recording RUN` | Checks a recorded empty-world flight against the calibration wall: LiDAR distance and orientation, camera ↔ LiDAR agreement. |
 | `check-replay RUN` | Replays a recorded flight while recording it again and compares: same messages, stamps and static transforms. |
