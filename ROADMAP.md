@@ -196,6 +196,16 @@ Tried and dropped:
   time, were slower; its cost is in reads of the baked light layers (4–11 ms of its 7–15).
 - The PBR shader's light-layer search without variable indexing (as 0045 for the fog): within noise.
 - Culling back faces of the saplings: their needles are open cards, seen from both sides.
+- Keeping every instance's transform on the GPU and sending only indices per draw: neutral in time,
+  +32 MB of GPU memory.
+- Drawing a view's instances front to back: slower.
+- Faster GPS detection (`GPS_DRV_OPTIONS 4`): the GPS is ready sooner, but arming waits on EKF3
+  learning the gyro biases (~41 s of simulated time), so takeoff comes no earlier.
+- Immutable storage for mesh buffers (`glBufferStorage`): the driver reserves a RAM copy of every
+  `glBufferData` buffer but never touches it, so resident memory is unchanged.
+- Leaving the pen code out of the PBR fragment shader as well (0058 changes the vertex shaders):
+  faster, but the driver then shades distant impostors ~12% brighter in the high view, a difference
+  from code that never runs. The fragment shader is left as is.
 
 ## Later: regions
 
