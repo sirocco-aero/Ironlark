@@ -153,8 +153,8 @@ flight model, a new body, the rig of `config/sensors.json`) passes the flight ch
 and carries a Mid-360-class LiDAR, an IMU and a front camera. `./ironlark check --record`:
 
 - records a complete rosbag2 (every message the controller sent, on Webots time, stamps strictly
-  increasing) and adds sensing's cost to `result.json`: 0.82× real time in the empty world
-  (+22% wall time), 0.58× in the forest (+72%); Webots time slows, nothing is dropped;
+  increasing) and adds sensing's cost to `result.json`: real time in the empty world
+  (patch 0043), 0.47× in the forest; Webots time slows, nothing is dropped;
 - `check-recording`: the calibration wall reads at 5.897 m (face at 5.9 m), its normal within 0.6°,
   and 99.9% of its LiDAR returns land on its red in the camera frame of the same instant;
 - `check-replay`: replayed, every topic keeps its messages, stamps and order, and the static
