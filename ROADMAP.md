@@ -185,8 +185,12 @@ Next: per-return LiDAR timing if the odometry needs it (model acquisition, never
 
 Measured with the frame log (patch 0042, `tools/frame_log.py`), headless at 1920×1080 on the GTX 1060;
 images and sensor data compared with the approved look (`looks-good-2026-09-28`) built in a worktree.
-Frames are GPU-bound, and vertex-bound: the forest view draws ~80 M triangles a frame, the small
-saplings (120–157 k triangles of open needle cards each) half of them.
+Frames are GPU-bound, by pixels more than vertices: at a quarter of the pixels the forest view takes
+35 ms instead of 65, the drone view 11 instead of 33. Foliage overdraws heavily: the opaque passes run
+the fragment shader 7–23 times per pixel (sub-pixel needle cards, each quad shaded whole), and PBR
+lighting is 6–19 ms of a view. The forest view also draws ~80 M triangles, the small saplings
+(120–157 k triangles of open needle cards each) half of them. Robot cameras (640×480) and the LiDAR
+(106 M triangles a scan into 287×110 faces) are vertex-bound.
 
 Tried and dropped:
 
@@ -203,6 +207,11 @@ Tried and dropped:
   learning the gyro biases (~41 s of simulated time), so takeoff comes no earlier.
 - Immutable storage for mesh buffers (`glBufferStorage`): the driver reserves a RAM copy of every
   `glBufferData` buffer but never touches it, so resident memory is unchanged.
+- A depth pre-pass for instanced foliage (alpha-tested depth first, then shading at equal depth): the
+  shading pass drops ~11 ms in the forest view but the pre-pass costs ~32 (all the vertex work again,
+  and its own alpha-tested overdraw); a visibility buffer would pay the same first pass.
+- Discarding masked texels before normal and material maps are read: no faster, and neighbours'
+  derivatives change (up to 17% of a view's pixels by more than 8 levels).
 - Leaving the pen code out of the PBR fragment shader as well (0058 changes the vertex shaders):
   faster, but the driver then shades distant impostors ~12% brighter in the high view, a difference
   from code that never runs. The fragment shader is left as is.
