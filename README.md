@@ -107,7 +107,8 @@ applied in filename order to [R2025a](https://github.com/cyberbotics/webots/tree
 (`c6793d8`, Apache 2.0). `./ironlark build-renderer` fetches sparse sources and
 matching headers, compiles `glad`, `wren` and `webots` against the installed
 R2025a libraries, and installs to `.cache/webots-renderer/`, beside the
-untouched stock `./webots/`. Unchanged patches are not reapplied or recompiled.
+untouched stock `./webots/`. Unchanged patches are not reapplied or recompiled; with
+`ccache` installed, a changed series recompiles only the files it touches (275 → 10 s).
 
 Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 

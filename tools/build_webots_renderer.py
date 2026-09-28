@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -194,6 +195,13 @@ def main():
     link(source / "lib", installed / "lib")
     link(source / "dependencies/libOIS.so", installed / "lib/webots/libOIS-1.4.0.so")
     logs = CACHE / "build-logs"
+    # Reapplying the series rewrites every source file, so without a compiler cache any patch change
+    # recompiles all of Webots. ccache, when installed, recompiles only what a patch changed.
+    compilers = []
+    if shutil.which("ccache"):
+        os.environ.setdefault("CCACHE_DIR", str(CACHE / "ccache"))
+        os.environ.setdefault("CCACHE_MAXSIZE", "1G")
+        compilers = ["CC=ccache gcc", "CXX=ccache g++"]
     for name in ("glad", "wren", "webots"):
         print(f"Compiling {name} (two jobs)", flush=True)
         run_stage(
@@ -205,6 +213,7 @@ def main():
                 "release",
                 "WEBOTS_HOME=" + str(source),
                 "LD_FLAGS=-rdynamic -L" + str(source / "dependencies"),
+                *compilers,
             ],
             logs / f"{name}-build.log",
         )
