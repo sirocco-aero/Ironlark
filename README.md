@@ -162,6 +162,14 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0047-instance-culling-cost** | Instances are grouped by 16 m sub-cell within their 64 m cells, and each one's bounding sphere is computed once, not every pass; a draw looks up its uniforms once per program, not per draw. Culling a LiDAR face walked thousands of cover instances with a matrix product and square root each. Same instances drawn. | LiDAR scan CPU 22 → 14 ms; forest with sensing 0.61× → 0.62× |
 | **0048-mesh-cache** | `WEBOTS_MESH_CACHE=DIR`: a mesh file's parse (assimp's output, as floats) is kept in DIR, keyed by the file's real path, size and time; later loads read it instead of parsing OBJ text, which was half the forest's load. The launcher and tools use `.cache/mesh-cache` (116 MB); the first load after `build-world` fills it. Same arrays: images and LiDAR returns unchanged. | forest load 24 → 13 s; takeoff 68 → 56 s after launch |
 | **0049-system-zlib-first** | `webots-bin` links the system zlib ahead of assimp, which exports an old bundled copy that PNG decoding otherwise bound to (where the system's is zlib-ng, several times faster). Same decoded pixels. | forest load 12.8 → 11.0 s |
+| **0050-lazy-shadow-volumes** | Stencil shadow volumes (point and spot lights, or a sun without shadow maps) are built from a mesh's uploaded buffers the first time a light needs them, not for every mesh at load. The forest's sun uses the shadow maps. Stencil shadows unchanged. | GPU −16 MB, RAM −65 MB |
+| **0051-detail-texture-formats** | The terrain detail roughness and blend mask are stored in the channels the shader reads (R8, RG8), not RGBA8. Same sampling. | GPU −56 MB |
+| **0052-shared-texcoord-buffer** | A mesh's pen-painting texture coordinates reuse its texture-coordinate buffer when the bytes are equal (in the forest, every mesh), instead of a copy. | GPU −19 MB |
+| **0053-mesh-copies-trimmed** | Webots' CPU copy of a file mesh (for collision, picking, the pen) no longer holds a second, "scaled" set of coordinates, recomputed before use anyway, nor a second set of texture coordinates; its arrays are sized once instead of doubling. Physics bit-identical. | RAM 1750 → 1400 MB; load 10.6 → 9.7 s |
+| **0054-texture-images-freed** | Decoded PNG textures are freed once uploaded; infra-red distance sensors, the one later reader, already reload the file. | RAM 1400 → 1065 MB |
+| **0055-mesh-attributes-per-vertex** | That CPU copy keeps a file mesh's normals and texture coordinates per vertex, looked up through its triangle indices, not per triangle corner (3.8 corners per vertex in the forest). Same values. | RAM 1065 → 764 MB |
+| **0056-instance-memory** | A Shape re-reads its instances file when a renderable lacks them instead of keeping every transform; instance cells use 32-bit indices, trimmed to size. | RAM 764 → 719 MB |
+| **0057-vertex-cache-order** | Each triangle mesh's GPU copy is ordered for the post-transform vertex cache ([meshoptimizer](https://github.com/zeux/meshoptimizer), vendored in [`native/meshoptimizer/`](native/meshoptimizer)), vertices in order of first use; orders are kept in the mesh cache (37 MB). Same triangles: only depth ties between intersecting cards resolve differently (≤0.02% of pixels, less than two runs of one build differ). | vertex shader runs per triangle 1.28 → 0.82; forest view 70.0 → 67.1 ms |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,
@@ -198,4 +206,5 @@ browser; source links need internet.
 [GPS/non-GPS transitions](https://ardupilot.org/copter/docs/common-non-gps-to-gps.html)
 
 ArduPilot, Webots, Blender, Poly Haven and saved research material keep their
-own terms; setup saves ArduPilot's license beside its cache.
+own terms; setup saves ArduPilot's license beside its cache. meshoptimizer (MIT)
+is vendored with its license in [`native/meshoptimizer/`](native/meshoptimizer).

@@ -13,6 +13,11 @@ from forest_process import run_stage
 SIM = Path(__file__).resolve().parents[1]
 CACHE = SIM / ".cache"
 COMMIT = "c6793d8f7230a311c4bc2a3101d9f1a8bc0aa01b"
+# Compiled into WREN beside the patched sources: Ironlark's vertex indexer, and meshoptimizer's vertex cache
+# optimizer (MIT, zeux/meshoptimizer 9e1f07b).
+NATIVE_SOURCES = [SIM / "native/vertex_index.hpp"] + [
+    SIM / "native/meshoptimizer" / name for name in ("meshoptimizer.h", "vcacheoptimizer.cpp", "allocator.cpp")
+]
 PACKAGES = {
     "libOIS.1.4.tar.bz2": "ec13db6efd6901e80e9c4b437319c7949253a47fee768515a3aa1e6ca122225d",
     "libassimp-5.2.3.tar.bz2": "31c12e4e9f6bf52259dc599c8fcdb77c511c170e18cdc70543b10903aa28c697",
@@ -138,9 +143,8 @@ def main():
         for patch in patches:
             call("git", "-C", source, "apply", "--index", patch)
         stamp.write_text(series + "\n")
-    shutil.copyfile(
-        SIM / "native/vertex_index.hpp", source / "src/wren/vertex_index.hpp"
-    )
+    for path in NATIVE_SOURCES:
+        shutil.copyfile(path, source / "src/wren" / path.name)
     for name, expected in PACKAGES.items():
         archive = source / "dependencies" / name
         if not archive.exists():
@@ -221,8 +225,8 @@ def main():
         "upstream_commit": COMMIT,
         "patches": [p.name for p in patches],
         "series_sha256": series,
-        "vertex_index_sha256": hashlib.sha256(
-            (SIM / "native/vertex_index.hpp").read_bytes()
+        "native_sha256": hashlib.sha256(
+            b"".join(path.read_bytes() for path in NATIVE_SOURCES)
         ).hexdigest(),
     }
     (runtime / "ironlark-renderer.json").write_text(json.dumps(manifest, indent=2))
