@@ -1,0 +1,185 @@
+diff --git a/src/wren/StaticMesh.cpp b/src/wren/StaticMesh.cpp
+index 179cc2e..7211d46 100644
+--- a/src/wren/StaticMesh.cpp
++++ b/src/wren/StaticMesh.cpp
+@@ -1802,56 +1802,89 @@ namespace wren {
+     }
+   }
+ 
+-  void StaticMesh::computeTrianglesAndEdges() {
+-    assert(mCacheData);
+-
++  static void computeTrianglesAndEdges(cache::MeshData *cacheData, const std::vector<glm::vec3> &coords,
++                                       std::vector<unsigned int> &indices) {
+     // only triangle-list meshes are allowed to cast shadows
+-    if (mIndices.size() % 3 != 0)
++    if (indices.size() % 3 != 0)
+       return;
+ 
+     // Merge indices
+     std::unordered_map<glm::vec3, unsigned int> coordIndexMap;
+-    for (size_t i = 0; i < mIndices.size(); ++i) {
+-      const glm::vec3 coord = mCoords[mIndices[i]];
++    for (size_t i = 0; i < indices.size(); ++i) {
++      const glm::vec3 coord = coords[indices[i]];
+       auto itCoordIndex = coordIndexMap.find(coord);
+       if (itCoordIndex == coordIndexMap.end())
+-        coordIndexMap[coord] = mIndices[i];
++        coordIndexMap[coord] = indices[i];
+       else
+-        mIndices[i] = itCoordIndex->second;
++        indices[i] = itCoordIndex->second;
+     }
+ 
+-    const size_t triangleCount = mIndices.size() / 3;
+-    mCacheData->mTriangles.reserve(triangleCount);
+-    mCacheData->mEdges.reserve(triangleCount);
++    const size_t triangleCount = indices.size() / 3;
++    cacheData->mTriangles.reserve(triangleCount);
++    cacheData->mEdges.reserve(triangleCount);
+     std::unordered_map<std::pair<size_t, size_t>, Mesh::Edge> edgeMap;
+     for (size_t startingIndex = 0, triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex) {
+-      const size_t index0 = 2 * mIndices[startingIndex++];
+-      const size_t index1 = 2 * mIndices[startingIndex++];
+-      const size_t index2 = 2 * mIndices[startingIndex++];
+-      const glm::vec3 &v0 = mCacheData->mShadowCoords[index0];
+-      const glm::vec3 &v1 = mCacheData->mShadowCoords[index1];
+-      const glm::vec3 &v2 = mCacheData->mShadowCoords[index2];
++      const size_t index0 = 2 * indices[startingIndex++];
++      const size_t index1 = 2 * indices[startingIndex++];
++      const size_t index2 = 2 * indices[startingIndex++];
++      const glm::vec3 &v0 = cacheData->mShadowCoords[index0];
++      const glm::vec3 &v1 = cacheData->mShadowCoords[index1];
++      const glm::vec3 &v2 = cacheData->mShadowCoords[index2];
+ 
+       // eliminate degenerate triangles
+       if (v0 == v1 || v1 == v2 || v2 == v0)
+         continue;
+ 
+       // insert triangle into list (compute normal)
+-      size_t currentTriangleIndex = mCacheData->mTriangles.size();
++      size_t currentTriangleIndex = cacheData->mTriangles.size();
+       glm::vec3 normal = glm::cross(v1 - v0, v2 - v0);
+-      mCacheData->mTriangles.push_back(Mesh::Triangle(index0, index1, index2, normal));
++      cacheData->mTriangles.push_back(Mesh::Triangle(index0, index1, index2, normal));
+ 
+-      createOrCompleteEdge(currentTriangleIndex, index0, index1, edgeMap, mCacheData);
+-      createOrCompleteEdge(currentTriangleIndex, index1, index2, edgeMap, mCacheData);
+-      createOrCompleteEdge(currentTriangleIndex, index2, index0, edgeMap, mCacheData);
++      createOrCompleteEdge(currentTriangleIndex, index0, index1, edgeMap, cacheData);
++      createOrCompleteEdge(currentTriangleIndex, index1, index2, edgeMap, cacheData);
++      createOrCompleteEdge(currentTriangleIndex, index2, index0, edgeMap, cacheData);
+     }
+ 
+-    // DEBUG("Total triangles: " << mCacheData->mTriangles.size());
+-    // DEBUG("Total shared edges: " << mCacheData->mEdges.size());
++    // DEBUG("Total triangles: " << cacheData->mTriangles.size());
++    // DEBUG("Total shared edges: " << cacheData->mEdges.size());
+     // DEBUG("Edges belonging to a single triangle (non-closed mesh): " << edgeMap.size());
+ 
+     for (const auto &it : edgeMap)
+-      mCacheData->mEdges.push_back(it.second);
++      cacheData->mEdges.push_back(it.second);
++  }
++
++  void StaticMesh::prepareShadowVolume() const {
++    if (!mCacheData->mSupportShadows || mCacheData->mGlNameVertexArrayObjectShadow)
++      return;
++
++    // The copy-read target leaves the bound vertex array and its element buffer alone.
++    std::vector<glm::vec3> coords(mCacheData->mVertexCount);
++    std::vector<unsigned int> indices(mCacheData->mIndexCount);
++    glBindBuffer(GL_COPY_READ_BUFFER, mCacheData->mGlNameBufferCoords);
++    glGetBufferSubData(GL_COPY_READ_BUFFER, 0, coords.size() * sizeof(glm::vec3), coords.data());
++    glBindBuffer(GL_COPY_READ_BUFFER, mCacheData->mGlNameBufferIndices);
++    glGetBufferSubData(GL_COPY_READ_BUFFER, 0, indices.size() * sizeof(unsigned int), indices.data());
++    glBindBuffer(GL_COPY_READ_BUFFER, 0);
++
++    // shadow volume buffers (coords and indices)
++    glGenVertexArrays(1, &mCacheData->mGlNameVertexArrayObjectShadow);
++    glstate::bindVertexArrayObject(mCacheData->mGlNameVertexArrayObjectShadow);
++
++    // even indices store original vertex coord, odd indices store vertex coord to be extruded in vertex shader
++    mCacheData->mShadowCoords.resize(coords.size() * 2);
++    for (size_t i = 0; i < coords.size(); ++i) {
++      mCacheData->mShadowCoords[2 * i] = glm::vec4(coords[i], 1.0f);
++      mCacheData->mShadowCoords[2 * i + 1] = glm::vec4(coords[i], 0.0f);
++    }
++
++    glGenBuffers(1, &mCacheData->mGlNameBufferShadowCoords);
++    glBindBuffer(GL_ARRAY_BUFFER, mCacheData->mGlNameBufferShadowCoords);
++    glBufferData(GL_ARRAY_BUFFER, mCacheData->mShadowCoords.size() * sizeof(glm::vec4), &mCacheData->mShadowCoords[0],
++                 GL_STATIC_DRAW);
++    glVertexAttribPointer(GlslLayout::gLocationCoords, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), NULL);
++    glEnableVertexAttribArray(GlslLayout::gLocationCoords);
++
++    computeTrianglesAndEdges(mCacheData, coords, indices);
+   }
+ 
+   void StaticMesh::prepareGl() {
+@@ -1937,28 +1970,6 @@ namespace wren {
+     }
+ 
+     mCacheData->mSupportShadows = supportsShadows;
+-    if (mCacheData->mSupportShadows) {
+-      // shadow volume buffers (coords and indices)
+-      glGenVertexArrays(1, &mCacheData->mGlNameVertexArrayObjectShadow);
+-
+-      bindShadowVolume();
+-
+-      // even indices store original vertex coord, odd indices store vertex coord to be extruded in vertex shader
+-      mCacheData->mShadowCoords.resize(mCoords.size() * 2);
+-      for (size_t i = 0; i < mCoords.size(); ++i) {
+-        mCacheData->mShadowCoords[2 * i] = glm::vec4(mCoords[i], 1.0f);
+-        mCacheData->mShadowCoords[2 * i + 1] = glm::vec4(mCoords[i], 0.0f);
+-      }
+-
+-      glGenBuffers(1, &mCacheData->mGlNameBufferShadowCoords);
+-      glBindBuffer(GL_ARRAY_BUFFER, mCacheData->mGlNameBufferShadowCoords);
+-      glBufferData(GL_ARRAY_BUFFER, mCacheData->mShadowCoords.size() * sizeof(glm::vec4), &mCacheData->mShadowCoords[0],
+-                   GL_STATIC_DRAW);
+-      glVertexAttribPointer(GlslLayout::gLocationCoords, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), NULL);
+-      glEnableVertexAttribArray(GlslLayout::gLocationCoords);
+-
+-      computeTrianglesAndEdges();
+-    }
+ 
+     // only the number of indices needs to be known in order to render the mesh
+     // vertex count kept for mesh export
+diff --git a/src/wren/StaticMesh.hpp b/src/wren/StaticMesh.hpp
+index 1843492..0887dfe 100644
+--- a/src/wren/StaticMesh.hpp
++++ b/src/wren/StaticMesh.hpp
+@@ -58,9 +58,18 @@ namespace wren {
+ 
+     bool isCachePersistent() const { return mIsCachePersistent; }
+ 
+-    const std::vector<glm::vec4> &shadowCoords() const override { return mCacheData->mShadowCoords; }
+-    const std::vector<Mesh::Edge> &edges() const override { return mCacheData->mEdges; }
+-    const std::vector<Mesh::Triangle> &triangles() const override { return mCacheData->mTriangles; }
++    const std::vector<glm::vec4> &shadowCoords() const override {
++      prepareShadowVolume();
++      return mCacheData->mShadowCoords;
++    }
++    const std::vector<Mesh::Edge> &edges() const override {
++      prepareShadowVolume();
++      return mCacheData->mEdges;
++    }
++    const std::vector<Mesh::Triangle> &triangles() const override {
++      prepareShadowVolume();
++      return mCacheData->mTriangles;
++    }
+     const Mesh::Triangle &triangle(size_t index) const override { return mCacheData->mTriangles[index]; }
+ 
+     void readData(float *coordData, float *normalData, float *texCoordData, unsigned int *indexData);
+@@ -88,7 +97,9 @@ namespace wren {
+     virtual ~StaticMesh() override {}
+ 
+   private:
+-    void computeTrianglesAndEdges();
++    // Stencil shadow volumes are built from the uploaded buffers on first use: a scene whose lights cast through the
++    // shadow map never draws them.
++    void prepareShadowVolume() const;
+ 
+     void prepareGl() override;
+     void cleanupGl() override;
