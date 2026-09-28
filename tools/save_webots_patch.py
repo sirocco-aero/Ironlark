@@ -40,7 +40,7 @@ def main():
     changed = set(git("diff", "--name-only", "HEAD", "--", *TREES).split())
     files = changed | set().union(*(touched(p) for p in earlier)) if earlier else changed
 
-    with tempfile.TemporaryDirectory() as scratch:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as scratch:
         base = Path(scratch)
         git("init", "-q", cwd=base)
         for name in files:

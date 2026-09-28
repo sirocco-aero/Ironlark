@@ -1,0 +1,121 @@
+diff --git a/src/webots/nodes/WbMesh.cpp b/src/webots/nodes/WbMesh.cpp
+index f2cc552..e1b5510 100644
+--- a/src/webots/nodes/WbMesh.cpp
++++ b/src/webots/nodes/WbMesh.cpp
+@@ -35,9 +35,84 @@
+ #include <assimp/scene.h>
+ #include <assimp/Importer.hpp>
+ 
++#include <QtCore/QDateTime>
++#include <QtCore/QDir>
+ #include <QtCore/QEventLoop>
+ #include <QtCore/QFile>
++#include <QtCore/QFileInfo>
+ #include <QtCore/QIODevice>
++#include <QtCore/QSaveFile>
++
++#include <vector>
++
++namespace {
++  // Parsed meshes, cached (WEBOTS_MESH_CACHE: a directory): what assimp made of a local file, as the float arrays it
++  // produced, keyed by the file's real path, size and modification time. Parsing a text mesh is most of a large world's load.
++  const quint32 MESH_CACHE_MAGIC = 0x4853454d;  // "MESH"
++  const quint32 MESH_CACHE_VERSION = 1;
++
++  QString meshCachePath(const QString &filePath) {
++    const QString directory = qEnvironmentVariable("WEBOTS_MESH_CACHE");
++    if (directory.isEmpty())
++      return QString();
++    const QFileInfo info(filePath);
++    // The canonical path: runs link the same meshes from different folders.
++    const QByteArray key = (info.canonicalFilePath() + '\n' + QString::number(info.size()) + '\n' +
++                            QString::number(info.lastModified().toMSecsSinceEpoch()) + '\n' + QString::number(MESH_CACHE_VERSION))
++                             .toUtf8();
++    return directory + '/' + QString::number(WbTriangleMeshCache::sipHash13x(key.constData(), key.size()), 16) + ".mesh";
++  }
++
++  struct MeshCacheHeader {
++    quint32 magic, version;
++    qint32 vertices, indices;
++  };
++
++  // Arrays as WbTriangleMesh::init takes them; false when there is no valid cache.
++  bool readMeshCache(const QString &path, std::vector<double> &coords, std::vector<double> &normals,
++                     std::vector<double> &texCoords, std::vector<unsigned int> &indices) {
++    QFile file(path);
++    if (path.isEmpty() || !file.open(QIODevice::ReadOnly))
++      return false;
++    MeshCacheHeader header;
++    if (file.read(reinterpret_cast<char *>(&header), sizeof(header)) != sizeof(header) || header.magic != MESH_CACHE_MAGIC ||
++        header.version != MESH_CACHE_VERSION || header.vertices < 0 || header.indices < 0)
++      return false;
++    const qint64 floats = 8LL * header.vertices;
++    if (file.size() != static_cast<qint64>(sizeof(header)) + 4 * floats + 4LL * header.indices)
++      return false;
++    std::vector<float> data(floats);
++    indices.resize(header.indices);
++    if (file.read(reinterpret_cast<char *>(data.data()), 4 * floats) != 4 * floats ||
++        file.read(reinterpret_cast<char *>(indices.data()), 4LL * header.indices) != 4LL * header.indices)
++      return false;
++    const size_t n = header.vertices;
++    coords.assign(data.begin(), data.begin() + 3 * n);
++    normals.assign(data.begin() + 3 * n, data.begin() + 6 * n);
++    texCoords.assign(data.begin() + 6 * n, data.begin() + 8 * n);
++    return true;
++  }
++
++  // The arrays hold floats (assimp's), widened: narrowing them back is exact.
++  void writeMeshCache(const QString &path, const double *coords, const double *normals, const double *texCoords,
++                      const unsigned int *indices, int vertices, int indexCount) {
++    if (path.isEmpty() || !QDir().mkpath(QFileInfo(path).path()))
++      return;
++    QSaveFile file(path);
++    if (!file.open(QIODevice::WriteOnly))
++      return;
++    const MeshCacheHeader header = {MESH_CACHE_MAGIC, MESH_CACHE_VERSION, vertices, indexCount};
++    std::vector<float> data;
++    data.reserve(8 * static_cast<size_t>(vertices));
++    data.insert(data.end(), coords, coords + 3 * vertices);
++    data.insert(data.end(), normals, normals + 3 * vertices);
++    data.insert(data.end(), texCoords, texCoords + 2 * vertices);
++    file.write(reinterpret_cast<const char *>(&header), sizeof(header));
++    file.write(reinterpret_cast<const char *>(data.data()), 4 * data.size());
++    file.write(reinterpret_cast<const char *>(indices), 4LL * indexCount);
++    file.commit();
++  }
++}  // namespace
+ 
+ void WbMesh::init() {
+   mUrl = findMFString("url");
+@@ -130,6 +205,23 @@ void WbMesh::updateTriangleMesh(bool issueWarnings) {
+     return;
+   }
+ 
++  const QString cachePath = !WbUrl::isWeb(filePath) && !mIsCollada ? meshCachePath(filePath) : QString();
++  {
++    std::vector<double> coords, normals, texCoords;
++    std::vector<unsigned int> indices;
++    if (readMeshCache(cachePath, coords, normals, texCoords, indices)) {
++      mTriangleMeshError = mTriangleMesh->init(coords.data(), normals.data(), texCoords.data(), indices.data(),
++                                               static_cast<int>(coords.size() / 3), static_cast<int>(indices.size()));
++      if (issueWarnings) {
++        foreach (const QString &warning, mTriangleMesh->warnings())
++          warn(warning);
++        if (!mTriangleMeshError.isEmpty())
++          warn(tr("Cannot create IndexedFaceSet because: \"%1\".").arg(mTriangleMeshError));
++      }
++      return;
++    }
++  }
++
+   Assimp::Importer importer;
+   importer.SetPropertyInteger(AI_CONFIG_PP_RVC_FLAGS, aiComponent_CAMERAS | aiComponent_LIGHTS | aiComponent_BONEWEIGHTS |
+                                                         aiComponent_ANIMATIONS | aiComponent_TEXTURES | aiComponent_COLORS);
+@@ -283,6 +375,7 @@ void WbMesh::updateTriangleMesh(bool issueWarnings) {
+     return;
+   }
+ 
++  writeMeshCache(cachePath, coordData, normalData, texCoordData, indexData, totalVertices, currentIndexIndex);
+   mTriangleMeshError = mTriangleMesh->init(coordData, normalData, texCoordData, indexData, totalVertices, currentIndexIndex);
+ 
+   if (issueWarnings) {

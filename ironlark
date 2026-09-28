@@ -305,6 +305,8 @@ def flight(headless, editor=False, world="forest", record=False):
         env["WEBOTS_HOME"] = str(webots_home())
         env["PATH"] = str(ROOT / ".venv/bin") + os.pathsep + env.get("PATH", "")
         env["PYTHONUNBUFFERED"] = "1"
+        # Patched Webots keeps parsed meshes here (patch 0048): later loads skip parsing the OBJ text.
+        env.setdefault("WEBOTS_MESH_CACHE", str(CACHE / "mesh-cache"))
         env["IRONLARK_RUN_DIR"] = str(run)
         if record:
             env["IRONLARK_SENSING"] = "1"

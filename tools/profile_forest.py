@@ -129,6 +129,7 @@ def main():
 
     env = os.environ | {
         "XDG_CONFIG_HOME": str(private_preferences(out, args.pref)),
+        "WEBOTS_MESH_CACHE": os.environ.get("WEBOTS_MESH_CACHE", str(ROOT / ".cache/mesh-cache")),
         "PATH": str(ROOT / ".venv/bin") + ":" + os.environ.get("PATH", ""),
         "IRONLARK_OBSERVER": str(ROOT / "controllers/flight_observer"),
         "IRONLARK_SCENE": str(source / "scene.json"),
