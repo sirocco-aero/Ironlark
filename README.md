@@ -185,6 +185,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0066-outer-light-occlusion** | `Background.lightOcclusionOuter*`: light visibility layers at the same heights over a larger rectangle, not mirrored, used past the first. The land past the region lies up to 100 m lower: read against the mirrored ground, its trees took the light of the canopy's floor. | — |
 | **0067-occlusion-retry** | A view that stopped culling because it hid too little (looking out over the cloud) tries again as soon as it draws 10 M more instanced triangles than it did then, not 30 frames later. | moving view 54.5 → 48.6 ms, p99 67 → 55–61 ms |
 | **0068-camera-frustum** | A camera's culling frustum follows it again. Reading its view matrix first (instance culling does) cleared the flag the frustum waited on, so a robot camera that had moved or turned since its first frame culled with its old frustum and lost trees, rocks and cover: 44–83% of pixels at three of five probe poses. The main view and LiDAR were unaffected. | — |
+| **0069-cloud-footprint-in-cameras** | Robot cameras render upside down, with a negative vertical projection term: the cloud took a negative pixel footprint there and sampled its finest level at every distance. | — |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,
