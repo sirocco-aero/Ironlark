@@ -125,14 +125,25 @@ def check_ports():
 
 
 def stop_process(proc):
-    if proc is None or proc.poll() is not None:
+    """Stop a process and its whole group: headless Webots outlives xvfb-run and ignores SIGTERM."""
+    if proc is None:
         return
-    os.killpg(proc.pid, signal.SIGTERM)
     try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait()
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 5
+    while True:
+        proc.poll()  # reap the leader, so only live members answer
+        try:
+            os.killpg(proc.pid, 0)
+        except ProcessLookupError:
+            break
+        if time.monotonic() > deadline:
+            os.killpg(proc.pid, signal.SIGKILL)
+            break
+        time.sleep(0.1)
+    proc.wait()
 
 
 def stage_world(run, world):
@@ -162,11 +173,14 @@ def stage_world(run, world):
     # dir breaks that lookup and robots silently fall back to `generic`.
     target_dir = run / "worlds"
     target_dir.mkdir()
-    # Merge the built world (wbt, meshes/, scene.json) directly into worlds/.
-    shutil.copytree(ROOT / "worlds/pine_forest", target_dir, dirs_exist_ok=True)
+    # The built world's files beside it; its meshes (1.4 GB) are linked, not copied.
+    built = ROOT / "worlds/pine_forest"
+    for name in (".pine_forest.wbproj", "scene.json"):
+        shutil.copyfile(built / name, target_dir / name)
+    (target_dir / "meshes").symlink_to(built / "meshes", target_is_directory=True)
     target = target_dir / "pine_forest.wbt"
     target.write_text(
-        target.read_text()
+        (built / "pine_forest.wbt").read_text()
         .replace("../.cache/", os.path.relpath(CACHE, target_dir) + "/")
         .replace("../protos/", os.path.relpath(ROOT / "protos", target_dir) + "/")
     )
@@ -311,6 +325,14 @@ def flight(headless, editor=False, world="forest", record=False):
             env["QT_QPA_PLATFORM"] = (
                 "xcb"  # use the virtual X display, even on Wayland hosts
             )
+            # A copy of the user's Webots preferences: the headless window's size and the run's
+            # world would otherwise be saved into theirs.
+            preferences = Path(env.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "Cyberbotics/Webots-R2025a.conf"
+            private = run / "config/Cyberbotics"
+            private.mkdir(parents=True)
+            if preferences.is_file():
+                shutil.copyfile(preferences, private / preferences.name)
+            env["XDG_CONFIG_HOME"] = str(run / "config")
             command = ["xvfb-run", "-a", *command, "--no-rendering", "--minimize"]
         elif not editor:
             command.append("--fullscreen")
