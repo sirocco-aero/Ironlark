@@ -1,0 +1,23 @@
+diff --git a/src/wren/Scene.cpp b/src/wren/Scene.cpp
+index 6f55712..632d05e 100644
+--- a/src/wren/Scene.cpp
++++ b/src/wren/Scene.cpp
+@@ -416,7 +416,8 @@ namespace wren {
+     if (!mDetailTextures[0])
+       glGenTextures(4, mDetailTextures);
+     const unsigned char *layers[3] = {color, normal, roughness};
+-    const int formats[3] = {GL_SRGB8_ALPHA8, GL_RGBA8, GL_RGBA8};
++    // The shader reads roughness from red and the mask's two weights from red and green: stored without the rest.
++    const int formats[3] = {GL_SRGB8_ALPHA8, GL_RGBA8, GL_R8};
+     for (int k = 0; k < 3; ++k) {
+       glstate::activateTextureUnit(19 + k);
+       glBindTexture(GL_TEXTURE_2D_ARRAY, mDetailTextures[k]);
+@@ -430,7 +431,7 @@ namespace wren {
+     }
+     glstate::activateTextureUnit(22);
+     glBindTexture(GL_TEXTURE_2D, mDetailTextures[3]);
+-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, maskWidth, maskHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, mask);
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, maskWidth, maskHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, mask);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
