@@ -1,4 +1,6 @@
 #include "../native/vertex_index.hpp"
+
+#include <array>
 #include <cassert>
 #include <cstring>
 #include <random>
