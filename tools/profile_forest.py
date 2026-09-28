@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Measure forest responsiveness as a viewer sees it: load time, real-time
-factor with the main view rendering, and Webots' per-step cost breakdown.
+factor with the main view rendering, each view's frames and GPU and CPU time
+per render pass (the frame log, tools/frame_log.py), and peak RAM and GPU memory.
 
-No flight runs. The main viewpoint visits each scene camera in turn.
+No flight runs. The main viewpoint visits each scene camera in turn. Headless:
+xvfb-run -a -s "-screen 0 1920x1080x24" .venv/bin/python tools/profile_forest.py --out runs/NAME
 """
 
 import argparse
@@ -40,7 +42,7 @@ for name, pose in scene['cameras'].items():
         if r.step(step) == -1:
             break
     wall = time.monotonic() - wall0
-    views.append({'view': name, 'sim_seconds': round(r.getTime() - sim0, 3),
+    views.append({'view': name, 'sim_start': sim0, 'sim_seconds': round(r.getTime() - sim0, 3),
                   'wall_seconds': round(wall, 3),
                   'real_time_factor': round((r.getTime() - sim0) / wall, 3)})
 # Moving view: fly the forest camera forward at 4 m/s, as a drone or a dragging viewer would.
@@ -58,7 +60,7 @@ while r.getTime() - sim0 < seconds:
     if r.step(step * 10) == -1:
         break
 wall = time.monotonic() - wall0
-views.append({'view': 'moving', 'sim_seconds': round(r.getTime() - sim0, 3), 'wall_seconds': round(wall, 3),
+views.append({'view': 'moving', 'sim_start': sim0, 'sim_seconds': round(r.getTime() - sim0, 3), 'wall_seconds': round(wall, 3),
               'real_time_factor': round((r.getTime() - sim0) / wall, 3)})
 report['views'] = views
 Path(os.environ['IRONLARK_REPORT']).write_text(json.dumps(report))
@@ -115,7 +117,8 @@ def main():
     meshes = out / "worlds/meshes"
     if not meshes.exists():
         meshes.symlink_to(source / "meshes", target_is_directory=True)
-    world = (source / "pine_forest.wbt").read_text().replace("../.cache/", str(ROOT / ".cache") + "/")
+    world = ((source / "pine_forest.wbt").read_text().replace("../.cache/", str(ROOT / ".cache") + "/")
+             .replace("../protos/", str(ROOT / "protos") + "/"))
     world = world.replace('controller "flight_bridge"', 'controller "<none>"')
     world = world.replace('controller "flight_observer"', 'controller "forest_profile"')
     for text in args.without:
@@ -131,7 +134,9 @@ def main():
         "IRONLARK_SCENE": str(source / "scene.json"),
         "IRONLARK_REPORT": str(out / "controller.json"),
         "IRONLARK_SECONDS": str(args.seconds),
+        "IRONLARK_FRAME_LOG": str(out / "frames.log"),
     }
+    (out / "frames.log").unlink(missing_ok=True)
     cmd = [str(home / "webots"), "--batch", "--mode=realtime", "--fullscreen",
            "--log-performance=" + str(out / "performance.log"), "--stdout", "--stderr", str(target)]
     started = time.time()
@@ -159,6 +164,17 @@ def main():
             report["webots_home"] = str(home)
             report["peak_rss_mib"] = max((s["rss_mib"] for s in samples), default=0)
             report["peak_gpu_mib"] = max((s["gpu_mib"] for s in samples), default=0)
+            if (out / "frames.log").exists():
+                # Each view's frames and render passes (tools/frame_log.py), its first simulated second left out.
+                from frame_log import parse, summarize
+                log = parse(out / "frames.log")
+                for view in report.get("views", []):
+                    start = view.pop("sim_start") + 1.0
+                    summary = summarize(*log, start, start + view["sim_seconds"] - 1.0)
+                    main = summary["views"].get("main", {})
+                    view["frames"] = summary.get("frames")
+                    view["main_gpu_ms"], view["main_cpu_ms"] = main.get("gpu_ms"), main.get("cpu_ms")
+                    view["main_passes_ms"] = main.get("passes_ms")
             (out / "samples.json").write_text(json.dumps(samples))
             (out / "profile.json").write_text(json.dumps(report, indent=2))
             print(json.dumps(report, indent=2))

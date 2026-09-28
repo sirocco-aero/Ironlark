@@ -154,6 +154,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0039-terrain-detail** | `Background.terrainDetail*` and `PBRAppearance.terrainDetail`: near the viewer the ground takes the source's tiled layers (leaves, ground, rocky trail, by its `path`/`river` masks) as detail over its 2.5 cm bake: their colour over their own colour at the bake's resolution, and their fine slopes. The bake keeps its content (the painted floor plants). | — |
 | **0040-device-overlay-perspective** | A camera or range finder's overlay, created after the world restored its perspective, takes that perspective's saved visibility, size and position instead of showing: the drone camera's hidden overlay stays hidden. | — |
 | **0041-temporal-anti-aliasing** | The main view jitters its projection by a sub-pixel Halton offset each frame and blends the frame (HDR, after the fog) with its history reprojected through depth: a Catmull-Rom history, clamped to the neighbourhood's range, rejected where its stored depth disagrees (surfaces revealed behind moving foliage), taking more of the new frame in motion. Preference `OpenGL/temporalAntiAliasing` (on); robot cameras are left single-frame. | needles flickering under a quarter-pixel turn: 3.9% → 0.36% of canopy pixels; +1.5% frame time |
+| **0042-frame-profiler** | `IRONLARK_FRAME_LOG=FILE`: each rendered view (main, robot cameras, range sensors) logs the CPU and GPU time of its passes (GPU timestamp queries, read back frames later), and each main-view frame and physics step its clock times; `IRONLARK_FRAME_LOG_DRAWS=1` times every draw. [`tools/frame_log.py`](tools/frame_log.py) summarizes. | nothing unless set |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,
@@ -167,7 +168,11 @@ source's own suns, world, fog and Filmic view (4.6 GB; the full source needs mor
 than ~26 GB); `tools/compare_views.py runs/lighting-reference runs/preview` scores
 `tools/render_forest.py` views against it.
 `tools/profile_forest.py --out runs/<name>` reports load time, real-time factor,
-per-step cost and peak RAM/GPU for the forest as a viewer sees it.
+frame rate, GPU and CPU time per render pass and peak RAM/GPU for the forest as a
+viewer sees it (headless: under `xvfb-run -a -s "-screen 0 1920x1080x24"`, which
+renders on the NVIDIA GPU; its swap waits for a readback, so frames come slower than
+on a display). Any run can log frames: `IRONLARK_FRAME_LOG=/tmp/f.log ./ironlark run`,
+then `tools/frame_log.py /tmp/f.log --from 41 --to 60` (simulated seconds).
 `tests/test_vertex_index.cpp` proves hard normals and UV seams survive indexing
 and that a large mesh's attributes reconstruct byte-for-byte:
 `g++ -std=c++11 -O2 tests/test_vertex_index.cpp -o .cache/test_vertex_index && .cache/test_vertex_index`.
