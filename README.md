@@ -54,7 +54,9 @@ Configure in files, not panels; restart to apply:
 
 Native Webots runs the physics; containerized ArduPilot SITL flies. The upstream
 bridge carries dynamics and sensors to SITL and motor outputs back; a small Iris
-adapter treats disabled outputs as stopped, not reversed. MAVLink uses TCP 5760,
+adapter treats disabled outputs as stopped, not reversed, and runs the per-step
+lockstep in C (`controllers/flight_bridge/lockstep.c`, compiled by the launcher;
+the Python loop when no compiler is found). MAVLink uses TCP 5760,
 the bridge UDP 9002–9003. Occupied ports and concurrent runs are refused.
 
 Pass requires EKF3, GPS fix, a valid position estimate, accepted commands,

@@ -1,5 +1,7 @@
 """Connect the drone (the Iris flight model) to the pinned upstream ArduPilot dynamics bridge."""
 
+import ctypes
+import os
 from pathlib import Path
 import select
 import socket
@@ -53,6 +55,9 @@ class IrisBridge(WebotsArduVehicle):
                 return
             self._after_step()
         print(f"Connected to ardupilot SITL (I{self._instance})")
+        if os.environ.get("IRONLARK_LOCKSTEP"):
+            self._lockstep_in_c(s, sitl_address, port, os.environ["IRONLARK_LOCKSTEP"])
+            return
         size = self.controls_struct_size
         while True:
             s.sendto(self._get_fdm_struct(), (sitl_address, port + 1))
@@ -71,6 +76,21 @@ class IrisBridge(WebotsArduVehicle):
             if self.robot.step(self._timestep) == -1:
                 break
             self._after_step()
+        s.close()
+        self._webots_connected = False
+        print(f"Lost connection to Webots (I{self._instance})")
+
+
+    def _lockstep_in_c(self, s, sitl_address, port, library):
+        """The loop above, in C (lockstep.c): the same packets, controls and steps, with sensing after each step."""
+        if self._sensors is None:
+            self._sensors = sensor_stream.SensorStream(self.robot) if sensor_stream.enabled() else False
+        after_step_type = ctypes.CFUNCTYPE(None)
+        after_step = after_step_type(self._sensors.after_step) if self._sensors else after_step_type()
+        motors = (ctypes.c_int * len(self._motors))(*[motor._tag for motor in self._motors])
+        ctypes.CDLL(library).ironlark_lockstep(
+            s.fileno(), sitl_address.encode(), port, self._timestep, motors, len(self._motors),
+            self.gyro._tag, self.accel._tag, self.imu._tag, self.gps._tag, after_step)
         s.close()
         self._webots_connected = False
         print(f"Lost connection to Webots (I{self._instance})")

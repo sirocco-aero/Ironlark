@@ -39,6 +39,28 @@ def webots_home():
     return Path(os.environ.get("WEBOTS_HOME", default)).resolve()
 
 
+def build_lockstep():
+    """The flight bridge's per-step loop in C (controllers/flight_bridge/lockstep.c), compiled when its source
+    changed. Without a C compiler the bridge runs the same loop in Python."""
+    source = ROOT / "controllers/flight_bridge/lockstep.c"
+    library = CACHE / "flight_lockstep.so"
+    if library.exists() and library.stat().st_mtime >= source.stat().st_mtime:
+        return library
+    compiler = shutil.which("cc") or shutil.which("gcc")
+    if compiler is None:
+        return None
+    home = webots_home()
+    built = subprocess.run(
+        [compiler, "-O2", "-shared", "-fPIC", str(source), "-I", str(home / "include/controller/c"),
+         "-L", str(home / "lib/controller"), "-lController", "-o", str(library)],
+        capture_output=True, text=True,
+    )
+    if built.returncode:
+        print(f"Flight bridge in Python: the C loop did not compile:\n{built.stderr}", flush=True)
+        return None
+    return library
+
+
 def setup():
     for executable in ("docker", "uv"):
         if not shutil.which(executable):
@@ -310,6 +332,9 @@ def flight(headless, editor=False, world="forest", record=False):
         # Patched Webots keeps parsed meshes here (patch 0048): later loads skip parsing the OBJ text.
         env.setdefault("WEBOTS_MESH_CACHE", str(CACHE / "mesh-cache"))
         env["IRONLARK_RUN_DIR"] = str(run)
+        lockstep = build_lockstep()
+        if lockstep:
+            env["IRONLARK_LOCKSTEP"] = str(lockstep)
         if record:
             env["IRONLARK_SENSING"] = "1"
         else:
