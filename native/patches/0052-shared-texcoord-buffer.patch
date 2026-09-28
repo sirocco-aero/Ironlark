@@ -1,0 +1,36 @@
+diff --git a/src/wren/StaticMesh.cpp b/src/wren/StaticMesh.cpp
+index 7211d46..aaa323f 100644
+--- a/src/wren/StaticMesh.cpp
++++ b/src/wren/StaticMesh.cpp
+@@ -25,6 +25,7 @@
+ #include <wren/static_mesh.h>
+ 
+ #include <cstdio>
++#include <cstring>
+ 
+ #ifdef __EMSCRIPTEN__
+ #include <GL/gl.h>
+@@ -1958,13 +1959,19 @@ namespace wren {
+       glEnableVertexAttribArray(GlslLayout::gLocationColors);
+     }
+ 
+-    // Non recursive texCoords (optional)
++    // Non recursive texCoords (optional): mostly a copy of texCoords, whose buffer then serves both.
+     if (mUnwrappedTexCoords.size()) {
+       assert(mUnwrappedTexCoords.size() == mCoords.size());
+ 
+-      glGenBuffers(1, &mCacheData->mGlNameBufferUnwrappedTexCoords);
+-      glBindBuffer(GL_ARRAY_BUFFER, mCacheData->mGlNameBufferUnwrappedTexCoords);
+-      glBufferData(GL_ARRAY_BUFFER, mUnwrappedTexCoords.size() * sizeof(glm::vec2), &mUnwrappedTexCoords[0], GL_STATIC_DRAW);
++      if (mTexCoords.size() == mUnwrappedTexCoords.size() &&
++          !memcmp(&mTexCoords[0], &mUnwrappedTexCoords[0], mTexCoords.size() * sizeof(glm::vec2)))
++        glBindBuffer(GL_ARRAY_BUFFER, mCacheData->mGlNameBufferTexCoords);
++      else {
++        glGenBuffers(1, &mCacheData->mGlNameBufferUnwrappedTexCoords);
++        glBindBuffer(GL_ARRAY_BUFFER, mCacheData->mGlNameBufferUnwrappedTexCoords);
++        glBufferData(GL_ARRAY_BUFFER, mUnwrappedTexCoords.size() * sizeof(glm::vec2), &mUnwrappedTexCoords[0],
++                     GL_STATIC_DRAW);
++      }
+       glVertexAttribPointer(GlslLayout::gLocationUnwrappedTexCoords, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), NULL);
+       glEnableVertexAttribArray(GlslLayout::gLocationUnwrappedTexCoords);
+     }
