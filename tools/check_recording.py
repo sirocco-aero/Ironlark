@@ -15,7 +15,8 @@ import struct
 import sys
 from pathlib import Path
 
-import rosbag2_py
+import rosbag2_py  # noqa: F401 (StorageFilter)
+from bag_reader import open_bag
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 
@@ -66,9 +67,7 @@ def solve3(m, v):
 
 def main():
     run = Path(sys.argv[1])
-    reader = rosbag2_py.SequentialReader()
-    reader.open(rosbag2_py.StorageOptions(uri=str(run / "bag"), storage_id="sqlite3"),
-                rosbag2_py.ConverterOptions("cdr", "cdr"))
+    reader = open_bag(run / "bag")
     types = {t.name: t.type for t in reader.get_all_topics_and_types()}
     reader.set_filter(rosbag2_py.StorageFilter(topics=["/tf_static", "/ground_truth/pose", "/ground_truth/velocity",
                                                        "/lidar/points", "/camera/image_raw", "/camera/camera_info"]))

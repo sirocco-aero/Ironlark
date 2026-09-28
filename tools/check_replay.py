@@ -17,7 +17,8 @@ import sys
 import time
 from pathlib import Path
 
-import rosbag2_py
+import rosbag2_py  # noqa: F401 (StorageFilter)
+from bag_reader import open_bag
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 
@@ -27,8 +28,7 @@ TOPICS = ["/clock", "/imu/data", "/lidar/points", "/camera/image_raw", "/camera/
 
 def stamps(bag):
     """Per topic: the header stamps (ns) in order; for /tf_static, the transforms."""
-    reader = rosbag2_py.SequentialReader()
-    reader.open(rosbag2_py.StorageOptions(uri=str(bag), storage_id="sqlite3"), rosbag2_py.ConverterOptions("cdr", "cdr"))
+    reader = open_bag(bag)
     types = {t.name: t.type for t in reader.get_all_topics_and_types()}
     reader.set_filter(rosbag2_py.StorageFilter(topics=[t for t in TOPICS if t in types]))
     out = {}

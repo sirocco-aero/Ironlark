@@ -96,7 +96,7 @@ TCP ([`sensing/protocol.py`](sensing/protocol.py)); a full queue drops and count
 physics, and pausing stops the clock. A ROS 2 Humble container ([`ros/`](ros)) publishes `/clock`,
 `/imu/data`, `/lidar/points` (x, y, z, ring, time), `/camera/image_raw` (bgra8),
 `/camera/camera_info` and `/tf_static`, ground truth only on `/ground_truth/pose` and
-`/ground_truth/velocity`, and records all of it with rosbag2 (reliable, deep queues: `ros/record_qos.yaml`). A recorded check adds sensing's cost to `result.json` (real-time factor, messages sent and dropped). Frames are REP-103: Webots' world is
+`/ground_truth/velocity`, and records all of it with rosbag2 (reliable, deep queues: `ros/record_qos.yaml`; each message compressed with zstd, losslessly: a forest flight's minute is 1.2 GB, the empty world's 0.16 GB). A recorded check adds sensing's cost to `result.json` (real-time factor, messages sent and dropped). Frames are REP-103: Webots' world is
 ENU and bodies FLU; [`sensing/frames.py`](sensing/frames.py) is the one place for ENU/FLU ↔ NED/FRD.
 
 ## Webots patches

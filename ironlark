@@ -22,6 +22,8 @@ ROS_IMAGE = "ironlark-ros:humble"
 # Recorded by name, so the recorder subscribes to each before the first message (-a discovers late).
 ROS_TOPICS = ("/clock /imu/data /lidar/points /camera/image_raw /camera/camera_info /tf_static "
               "/ground_truth/pose /ground_truth/velocity")
+# Each message compressed (zstd, lossless) by two threads, queued deep enough that none is dropped.
+ROS_BAG_OPTIONS = "--compression-mode message --compression-format zstd --compression-threads 2 --compression-queue-size 20000"
 COMMIT = "dbe792162d06cab66c3475fd5556bf7a120f119e"
 UPSTREAM = "/opt/ardupilot/libraries/SITL/examples/Webots_Python"
 
@@ -355,7 +357,7 @@ def flight(headless, editor=False, world="forest", record=False):
                             ros_name,
                             run,
                             "python3 /project/ros/ironlark_bridge.py & bridge=$!; "
-                            f"ros2 bag record -o bag --qos-profile-overrides-path /project/ros/record_qos.yaml {ROS_TOPICS} & recorder=$!; "
+                            f"ros2 bag record -o bag --qos-profile-overrides-path /project/ros/record_qos.yaml {ROS_BAG_OPTIONS} {ROS_TOPICS} & recorder=$!; "
                             "trap 'kill -INT $recorder; wait $recorder; kill $bridge' INT TERM; wait",
                         ),
                         stdout=(run / "ros.log").open("w"),
