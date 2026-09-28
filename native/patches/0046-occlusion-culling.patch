@@ -1,0 +1,651 @@
+diff --git a/src/wren/Occlusion.cpp b/src/wren/Occlusion.cpp
+new file mode 100644
+index 0000000..8ab48e5
+--- /dev/null
++++ b/src/wren/Occlusion.cpp
+@@ -0,0 +1,285 @@
++// Copyright 1996-2024 Cyberbotics Ltd.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#include "Occlusion.hpp"
++
++#include "Camera.hpp"
++#include "FrameBuffer.hpp"
++#include "GlState.hpp"
++#include "TextureRtt.hpp"
++#include "Viewport.hpp"
++
++#ifdef __EMSCRIPTEN__
++#include <GLES3/gl3.h>
++#else
++#include <glad/glad.h>
++#endif
++
++#include <algorithm>
++#include <cmath>
++#include <cstdlib>
++#include <cstring>
++
++namespace wren {
++
++  Occlusion::Phase Occlusion::cPhase = Occlusion::OFF;
++  const Occlusion *Occlusion::cCurrent = NULL;
++  long long Occlusion::cCulledTriangles = 0;
++
++  namespace {
++    // Culling pays when it hides more triangles than the GPU draws while the CPU waits and tests (a few ms).
++    const long long MIN_CULLED_TRIANGLES = 10000000;
++    const int RETRY_FRAMES = 30;
++  }  // namespace
++
++  namespace {
++    // The depth buffer's maximum over each 2x2 block (clamped at the edges): the pyramid's first level.
++    const char *VERTEX_SHADER = "#version 330 core\n"
++                                "void main() {\n"
++                                "  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);\n"
++                                "  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
++                                "}\n";
++    const char *FRAGMENT_SHADER = "#version 330 core\n"
++                                  "uniform sampler2D depth;\n"
++                                  "layout(location = 0) out float result;\n"
++                                  "void main() {\n"
++                                  "  ivec2 last = textureSize(depth, 0) - 1;\n"
++                                  "  ivec2 p = ivec2(gl_FragCoord.xy) * 2;\n"
++                                  "  result = max(max(texelFetch(depth, min(p, last), 0).r,\n"
++                                  "                   texelFetch(depth, min(p + ivec2(1, 0), last), 0).r),\n"
++                                  "               max(texelFetch(depth, min(p + ivec2(0, 1), last), 0).r,\n"
++                                  "                   texelFetch(depth, min(p + ivec2(1, 1), last), 0).r));\n"
++                                  "}\n";
++    unsigned int gProgram = 0;
++    unsigned int gVertexArray = 0;
++
++    unsigned int compile(unsigned int type, const char *source) {
++      const unsigned int shader = glCreateShader(type);
++      glShaderSource(shader, 1, &source, NULL);
++      glCompileShader(shader);
++      return shader;
++    }
++
++    bool setupProgram() {
++      if (gProgram)
++        return true;
++      const unsigned int vertex = compile(GL_VERTEX_SHADER, VERTEX_SHADER);
++      const unsigned int fragment = compile(GL_FRAGMENT_SHADER, FRAGMENT_SHADER);
++      gProgram = glCreateProgram();
++      glAttachShader(gProgram, vertex);
++      glAttachShader(gProgram, fragment);
++      glLinkProgram(gProgram);
++      glDeleteShader(vertex);
++      glDeleteShader(fragment);
++      GLint linked = 0;
++      glGetProgramiv(gProgram, GL_LINK_STATUS, &linked);
++      if (!linked) {
++        glDeleteProgram(gProgram);
++        gProgram = 0;
++        return false;
++      }
++      glGenVertexArrays(1, &gVertexArray);
++      return true;
++    }
++  }  // namespace
++
++  bool Occlusion::isEnabled() {
++    static const bool enabled = [] {
++      const char *value = getenv("IRONLARK_OCCLUSION");
++      return !value || strcmp(value, "0");
++    }();
++    return enabled;
++  }
++
++  void Occlusion::startFrame() {
++    if (mSkipFrames > 0)
++      --mSkipFrames;
++    cCulledTriangles = 0;
++  }
++
++  void Occlusion::endFrame() {
++    ++mFrame;
++    if (cCulledTriangles < MIN_CULLED_TRIANGLES)
++      mSkipFrames = RETRY_FRAMES;
++  }
++
++  Occlusion::Occlusion() :
++    mFrame(0),
++    mSkipFrames(0),
++    mFrameBuffer(0),
++    mTexture(0),
++    mWidth(0),
++    mHeight(0),
++    mScaleX(0.0f),
++    mScaleY(0.0f),
++    mOffsetX(0.0f),
++    mOffsetY(0.0f),
++    mNear(0.0f) {
++  }
++
++  Occlusion::~Occlusion() {
++    if (mFrameBuffer)
++      glDeleteFramebuffers(1, &mFrameBuffer);
++    if (mTexture)
++      glDeleteTextures(1, &mTexture);
++  }
++
++  bool Occlusion::build(const Viewport *viewport) {
++#ifdef __EMSCRIPTEN__
++    return false;
++#else
++    const FrameBuffer *frameBuffer = viewport->frameBuffer();
++    const Camera *camera = viewport->camera();
++    if (!frameBuffer || !frameBuffer->depthTexture() || !frameBuffer->depthTexture()->glName() ||
++        camera->projectionMode() != WR_CAMERA_PROJECTION_MODE_PERSPECTIVE || FrameBuffer::isMultisampling() ||
++        !GLAD_GL_ARB_clip_control || !setupProgram())
++      return false;
++
++    const int width = frameBuffer->width(), height = frameBuffer->height();
++    const int halfWidth = (width + 1) / 2, halfHeight = (height + 1) / 2;
++    if (width != mWidth || height != mHeight) {
++      if (!mFrameBuffer) {
++        glGenFramebuffers(1, &mFrameBuffer);
++        glGenTextures(1, &mTexture);
++      }
++      glstate::activateTextureUnit(0);
++      glstate::bindTexture(mTexture, 0);
++      glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, halfWidth, halfHeight, 0, GL_RED, GL_FLOAT, NULL);
++      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++      glstate::bindTexture(0, 0);
++      glstate::bindFrameBuffer(mFrameBuffer);
++      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mTexture, 0);
++      mWidth = width;
++      mHeight = height;
++    }
++
++    // The first level on the GPU: a quarter of the pixels to read back.
++    const unsigned int previousProgram = glstate::activeProgram();
++    glstate::bindFrameBuffer(mFrameBuffer);
++    const unsigned int attachment = GL_COLOR_ATTACHMENT0;
++    glDrawBuffers(1, &attachment);
++    glViewport(0, 0, halfWidth, halfHeight);
++    glstate::setDepthTest(false);
++    glstate::setDepthMask(false);
++    glstate::setStencilTest(false);
++    glstate::setBlend(false);
++    glstate::setCullFace(false);
++    glstate::setColorMask(true, true, true, true);
++    glstate::bindProgram(gProgram);
++    glstate::activateTextureUnit(0);
++    glstate::bindTexture(frameBuffer->depthTexture()->glName(), 0);
++    glUniform1i(glGetUniformLocation(gProgram, "depth"), 0);
++    glstate::bindVertexArrayObject(gVertexArray);
++    glDrawArrays(GL_TRIANGLES, 0, 3);
++
++    if (mLevelWidths.empty() || mLevelWidths[0] != halfWidth || mLevelHeights[0] != halfHeight) {
++      mLevels.clear();
++      mLevelWidths.clear();
++      mLevelHeights.clear();
++      for (int w = halfWidth, h = halfHeight;; w = (w + 1) / 2, h = (h + 1) / 2) {
++        mLevels.emplace_back(static_cast<size_t>(w) * h);
++        mLevelWidths.push_back(w);
++        mLevelHeights.push_back(h);
++        if (w == 1 && h == 1)
++          break;
++      }
++    }
++    glstate::bindReadFrameBuffer(mFrameBuffer);
++    glReadBuffer(GL_COLOR_ATTACHMENT0);
++    glstate::bindPixelPackBuffer(0);
++    glReadPixels(0, 0, halfWidth, halfHeight, GL_RED, GL_FLOAT, mLevels[0].data());
++
++    // Coarser levels on the CPU, each texel the maximum of the (up to) 2x2 below it.
++    for (size_t k = 1; k < mLevels.size(); ++k) {
++      const float *below = mLevels[k - 1].data();
++      float *level = mLevels[k].data();
++      const int w = mLevelWidths[k - 1], h = mLevelHeights[k - 1];
++      const int nw = mLevelWidths[k], nh = mLevelHeights[k];
++      for (int y = 0; y < nh; ++y) {
++        const float *row0 = below + static_cast<size_t>(2 * y) * w;
++        const float *row1 = below + static_cast<size_t>(std::min(2 * y + 1, h - 1)) * w;
++        for (int x = 0; x < nw; ++x) {
++          const int x1 = std::min(2 * x + 1, w - 1);
++          level[static_cast<size_t>(y) * nw + x] = std::max(std::max(row0[2 * x], row0[x1]), std::max(row1[2 * x], row1[x1]));
++        }
++      }
++    }
++
++    // Restore what WREN expects bound: the viewport's framebuffer and program.
++    viewport->bind();
++    glstate::bindProgram(previousProgram);
++
++    // Projection used to place spheres: the unjittered one (a pixel of margin covers the jitter).
++    mView = camera->view();
++    const glm::mat4 projection = camera->unjitteredViewProjection() * glm::inverse(mView);
++    mScaleX = 0.5f * width * projection[0][0];
++    mScaleY = 0.5f * height * projection[1][1];
++    mOffsetX = 0.5f * width;
++    mOffsetY = 0.5f * height;
++    mNear = camera->nearDistance();
++    return true;
++#endif
++  }
++
++  bool Occlusion::isOccluded(const glm::vec3 &center, float radius) const {
++    // View space, z towards the scene.
++    const glm::vec4 v = mView * glm::vec4(center, 1.0f);
++    const float cx = v.x, cy = v.y, cz = -v.z;
++    if (cz - radius <= mNear)
++      return false;  // reaches the near plane
++
++    // Screen bounds of the sphere's projection (tangent planes, exact for a symmetric perspective).
++    const float czr2 = cz * cz - radius * radius;
++    const float vx = std::sqrt(cx * cx + czr2), vy = std::sqrt(cy * cy + czr2);
++    const float x0 = (vx * cx - cz * radius) / (vx * cz + cx * radius), x1 = (vx * cx + cz * radius) / (vx * cz - cx * radius);
++    const float y0 = (vy * cy - cz * radius) / (vy * cz + cy * radius), y1 = (vy * cy + cz * radius) / (vy * cz - cy * radius);
++    // Pixels, a pixel of margin for the sub-pixel jitter and rounding.
++    float px0 = mOffsetX + mScaleX * x0, px1 = mOffsetX + mScaleX * x1;
++    float py0 = mOffsetY + mScaleY * y0, py1 = mOffsetY + mScaleY * y1;
++    if (px0 > px1)
++      std::swap(px0, px1);
++    if (py0 > py1)
++      std::swap(py0, py1);
++    px0 -= 1.0f;
++    py0 -= 1.0f;
++    px1 += 1.0f;
++    py1 += 1.0f;
++    if (px1 < 0.0f || py1 < 0.0f || px0 >= mWidth || py0 >= mHeight)
++      return false;  // off screen: left to the frustum test
++    const int ix0 = std::max(0, static_cast<int>(std::floor(px0))), iy0 = std::max(0, static_cast<int>(std::floor(py0)));
++    const int ix1 = std::min(mWidth - 1, static_cast<int>(std::floor(px1))),
++              iy1 = std::min(mHeight - 1, static_cast<int>(std::floor(py1)));
++
++    // The nearest depth the sphere can have, as the depth buffer stores it (infinite projection, zero-to-one clip
++    // depth: 1 - near / distance).
++    const float nearest = 1.0f - mNear / (cz - radius);
++
++    // The level where the bounds span at most four texels a side.
++    size_t level = 0;
++    int scale = 2;  // pixels per texel a side
++    while (level + 1 < mLevels.size() && (ix1 / scale - ix0 / scale >= 4 || iy1 / scale - iy0 / scale >= 4)) {
++      ++level;
++      scale *= 2;
++    }
++    const std::vector<float> &texels = mLevels[level];
++    const int w = mLevelWidths[level];
++    for (int y = iy0 / scale; y <= iy1 / scale; ++y)
++      for (int x = ix0 / scale; x <= ix1 / scale; ++x)
++        if (texels[static_cast<size_t>(y) * w + x] >= nearest - 1e-6f)
++          return false;
++    return true;
++  }
++
++}  // namespace wren
+diff --git a/src/wren/Occlusion.hpp b/src/wren/Occlusion.hpp
+new file mode 100644
+index 0000000..67090ba
+--- /dev/null
++++ b/src/wren/Occlusion.hpp
+@@ -0,0 +1,79 @@
++// Copyright 1996-2024 Cyberbotics Ltd.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#ifndef OCCLUSION_HPP
++#define OCCLUSION_HPP
++
++#include "Constants.hpp"
++
++#include <vector>
++
++namespace wren {
++
++  class Viewport;
++
++  // Occlusion culling of instances, in two phases per view. The view first draws what it saw last frame; a
++  // max-depth pyramid of that depth is read back; then it draws the other instances unless their bounding sphere
++  // lies wholly behind the pyramid. What is culled is hidden by geometry already drawn: the image is unchanged.
++  class Occlusion {
++  public:
++    enum Phase { OFF, FIRST, SECOND };
++
++    // IRONLARK_OCCLUSION=0 turns it off (comparisons).
++    static bool isEnabled();
++    static Phase phase() { return cPhase; }
++    static void setPhase(Phase phase) { cPhase = phase; }
++    // The pyramid of the view drawing its second phase, or NULL (then nothing is culled).
++    static const Occlusion *current() { return cCurrent; }
++    static void setCurrent(const Occlusion *occlusion) { cCurrent = occlusion; }
++
++    Occlusion();
++    ~Occlusion();
++
++    // Build the pyramid from the viewport's depth as drawn so far and read it to the CPU (waits for the GPU).
++    bool build(const Viewport *viewport);
++    // Whether a world-space sphere is wholly behind what the pyramid holds.
++    bool isOccluded(const glm::vec3 &center, float radius) const;
++
++    // Whether this view culls this frame: a view whose last culling frame hid too little to pay for the wait on
++    // the first phase draws in one phase, and tries again some frames later.
++    bool isActive() const { return mSkipFrames == 0; }
++    void startFrame();
++    void endFrame();
++    // Frames culled so far: seen instances are retested in turn, a quarter of them each frame.
++    unsigned int frame() const { return mFrame; }
++    static void countCulled(long long triangles) { cCulledTriangles += triangles; }
++
++  private:
++    static Phase cPhase;
++    static const Occlusion *cCurrent;
++    static long long cCulledTriangles;
++
++    unsigned int mFrame;
++    int mSkipFrames;
++
++    unsigned int mFrameBuffer;
++    unsigned int mTexture;
++    int mWidth, mHeight;  // of the depth buffer
++    // Levels of the pyramid on the CPU: level k's texel covers 2^(k+1) pixels a side (level 0 is half resolution).
++    std::vector<std::vector<float>> mLevels;
++    std::vector<int> mLevelWidths, mLevelHeights;
++    glm::mat4 mView;
++    float mScaleX, mScaleY, mOffsetX, mOffsetY;  // view-space x/z, y/z to pixels (unjittered)
++    float mNear;
++  };
++
++}  // namespace wren
++
++#endif  // OCCLUSION_HPP
+diff --git a/src/wren/Renderable.cpp b/src/wren/Renderable.cpp
+index 5c49e69..237e182 100644
+--- a/src/wren/Renderable.cpp
++++ b/src/wren/Renderable.cpp
+@@ -14,6 +14,8 @@
+ 
+ #include "Renderable.hpp"
+ 
++#include "Occlusion.hpp"
++
+ #include <algorithm>
+ #include <cmath>
+ #include <tuple>
+@@ -97,11 +99,22 @@ namespace wren {
+ 
+     assert(mMesh);
+ 
++    // Occlusion culling's second phase draws only instances: the rest was drawn in the first.
++    if (Occlusion::phase() == Occlusion::SECOND && !isInstanced())
++      return;
++
+     const ShaderProgram *effectiveProgram = program ? program : mEffectiveMaterial->effectiveProgram();
+     // Programs that cannot place instances (picking, segmentation, range sensors...) would draw
+     // every instance stacked at the renderable's origin: skip them.
+     if (isInstanced() && (!effectiveProgram || glGetUniformLocation(effectiveProgram->glName(), "instanceTransforms") == -1))
+       return;
++    // Instances are collected before the material binds: nothing visible, nothing bound.
++    if (isInstanced() && !program) {
++      const Camera *camera = Scene::instance()->currentViewport()->camera();
++      if (!collectVisibleInstances(glm::vec3(glm::inverse(camera->view())[3]), camera->frustum()))
++        return;
++      mInstancesCollected = true;
++    }
+ 
+     // Range sensors' programs cut alpha-masked texels as the color pass does: as renderShadow, the
+     // renderable's own material binds its textures and uniform buffers, then that program draws.
+@@ -233,6 +246,8 @@ namespace wren {
+     mReceiveShadows(true),
+     mSceneCulling(true),
+     mInstanceBoundsMesh(NULL),
++    mInstanceTriangles(0),
++    mInstancesCollected(false),
+     mInstanceBuffer(0),
+     mInstanceTexture(0),
+     mMirroredInstancesStart(0),
+@@ -305,9 +320,18 @@ namespace wren {
+   }
+ 
+   int Renderable::uploadVisibleInstances(const ShaderProgram *program, const glm::vec3 &eye, const Frustum &frustum) {
++    const int count = collectVisibleInstances(eye, frustum);
++    if (count)
++      uploadInstances(program);
++    return count;
++  }
++
++  int Renderable::collectVisibleInstances(const glm::vec3 &eye, const Frustum &frustum) {
+     if (mInstanceBoundsMesh != mMesh) {
+       mInstanceBounds = mMesh->recomputeBoundingSphere(gVec3Ones);
+       mInstanceBoundsMesh = mMesh;
++      const StaticMesh *staticMesh = dynamic_cast<const StaticMesh *>(mMesh);
++      mInstanceTriangles = staticMesh ? staticMesh->indexCount() / 3 : 0;
+     }
+     const glm::vec4 c(mInstanceBounds.mCenter, 1.0f);
+     const float minDistance2 = mVisibilityRange.x * mVisibilityRange.x;
+@@ -316,6 +340,21 @@ namespace wren {
+     mVisibleInstances.clear();
+     mVisibleMirroredInstances = 0;
+     const float reach = glm::length(mInstanceBounds.mCenter) + mInstanceBounds.mRadius;  // per unit of scale
++    // Occlusion culling (see Occlusion): the first phase draws the instances this view saw last frame; the second,
++    // those it did not, unless the depth drawn so far hides them, and remembers which are not hidden.
++    const Occlusion::Phase phase = Occlusion::phase();
++    // Light meshes (impostors) are not worth a test per instance: they draw in the second phase, whole cells culled.
++    const bool light = mInstanceTriangles < 64;
++    if (phase == Occlusion::FIRST && light)
++      return 0;
++    unsigned char *seen = NULL;
++    if (phase != Occlusion::OFF && !light) {
++      std::vector<unsigned char> &memory = mSeenInstances[Scene::instance()->currentViewport()];
++      memory.resize(mInstances.size() / 12, 0);
++      seen = memory.data();
++    }
++    const Occlusion *occlusion = phase == Occlusion::SECOND ? Occlusion::current() : NULL;
++    const size_t retestOffset = occlusion ? occlusion->frame() : 0;
+     for (const InstanceCell &cell : mInstanceCells) {
+       // Level of detail follows the instance origin, as scattering tools measure it: the
+       // nearest and farthest origins a cell can hold bound its distances.
+@@ -331,6 +370,12 @@ namespace wren {
+       const bool inBand = near2 >= minDistance2 && far2 < maxDistance2;
+       const bool inView = frustum.contains(bounds);
+       const bool mirrored = 12 * cell.first >= mMirroredInstancesStart;
++      if (occlusion && occlusion->isOccluded(bounds.mCenter, bounds.mRadius)) {
++        if (seen)
++          std::fill(seen + cell.first, seen + cell.end, 0);
++        Occlusion::countCulled(static_cast<long long>(mInstanceTriangles) * (cell.end - cell.first));
++        continue;
++      }
+       for (size_t i = cell.first; i < cell.end; ++i) {
+         const float *m = &mInstances[12 * i];
+         if (!inBand) {
+@@ -339,13 +384,36 @@ namespace wren {
+           if (distance2 < minDistance2 || distance2 >= maxDistance2)
+             continue;
+         }
+-        if (!inView) {
++        if (phase == Occlusion::FIRST && !seen[i])
++          continue;
++        // Instances the first phase drew are retested in turn, a quarter each frame (only the next frame's first
++        // phase depends on it); the others every frame, so none newly visible is missed.
++        if (occlusion && seen && seen[i] && (i + retestOffset) % 4)
++          continue;
++        const bool test = occlusion && seen;
++        if (!inView || test) {
+           const glm::vec3 center(glm::dot(glm::make_vec4(m), c), glm::dot(glm::make_vec4(m + 4), c),
+                                  glm::dot(glm::make_vec4(m + 8), c));
+           const float scale =
+             std::sqrt(std::max({m[0] * m[0] + m[4] * m[4] + m[8] * m[8], m[1] * m[1] + m[5] * m[5] + m[9] * m[9],
+                                 m[2] * m[2] + m[6] * m[6] + m[10] * m[10]}));
+-          if (!frustum.isInside(primitive::Sphere(center, mInstanceBounds.mRadius * scale)))
++          const float radius = mInstanceBounds.mRadius * scale;
++          if (!inView && !frustum.isInside(primitive::Sphere(center, radius)))
++            continue;
++          if (test) {
++            const bool drawn = seen[i];
++            seen[i] = !occlusion->isOccluded(center, radius);
++            if (!seen[i])
++              Occlusion::countCulled(mInstanceTriangles);
++            if (drawn || !seen[i])
++              continue;
++          }
++        }
++        if (phase == Occlusion::SECOND && seen && !occlusion) {
++          // No depth to test against: draw what the first phase did not, and remember it all as seen.
++          const bool drawn = seen[i];
++          seen[i] = 1;
++          if (drawn)
+             continue;
+         }
+         mVisibleInstances.insert(mVisibleInstances.end(), m, m + 12);
+@@ -354,10 +422,10 @@ namespace wren {
+       }
+     }
+ 
+-    const int visible = static_cast<int>(mVisibleInstances.size() / 12);
+-    if (!visible)
+-      return 0;
++    return static_cast<int>(mVisibleInstances.size() / 12);
++  }
+ 
++  void Renderable::uploadInstances(const ShaderProgram *program) {
+     if (!mInstanceBuffer) {
+       glGenBuffers(1, &mInstanceBuffer);
+       glGenTextures(1, &mInstanceTexture);
+@@ -371,7 +439,6 @@ namespace wren {
+     const GLint location = glGetUniformLocation(program->glName(), "instanceTransforms");
+     if (location != -1)
+       glUniform1i(location, INSTANCE_TEXTURE_UNIT);
+-    return visible;
+   }
+ 
+   void Renderable::setupAndRender(const ShaderProgram *program) {
+@@ -409,7 +476,13 @@ namespace wren {
+ 
+     if (isInstanced()) {
+       const Camera *camera = Scene::instance()->currentViewport()->camera();
+-      const int count = uploadVisibleInstances(program, glm::vec3(glm::inverse(camera->view())[3]), camera->frustum());
++      int count;
++      if (mInstancesCollected) {
++        count = static_cast<int>(mVisibleInstances.size() / 12);
++        uploadInstances(program);
++        mInstancesCollected = false;
++      } else
++        count = uploadVisibleInstances(program, glm::vec3(glm::inverse(camera->view())[3]), camera->frustum());
+       const int unmirrored = count - mVisibleMirroredInstances;
+       const GLint offset = glGetUniformLocation(program->glName(), "instanceOffset");
+       if (offset != -1)
+diff --git a/src/wren/Renderable.hpp b/src/wren/Renderable.hpp
+index 5554556..227feb0 100644
+--- a/src/wren/Renderable.hpp
++++ b/src/wren/Renderable.hpp
+@@ -137,6 +137,7 @@ namespace wren {
+     std::vector<float> mVisibleInstances;
+     primitive::Sphere mInstanceBounds;  // mesh bounding sphere, in mesh space
+     const Mesh *mInstanceBoundsMesh;
++    int mInstanceTriangles;  // per instance
+     unsigned int mInstanceBuffer;
+     unsigned int mInstanceTexture;
+     size_t mMirroredInstancesStart;  // instances are stored unmirrored first, then mirrored
+@@ -148,9 +149,15 @@ namespace wren {
+       float scale;             // largest instance scale
+     };
+     std::vector<InstanceCell> mInstanceCells;
++    // Per view, the instances it saw at its last frame (occlusion culling, see Occlusion).
++    std::unordered_map<const void *, std::vector<unsigned char>> mSeenInstances;
+     glm::vec2 mVisibilityRange;
+ 
++    // The instances to draw (culled by distance band, frustum and occlusion), then their upload for the program.
++    int collectVisibleInstances(const glm::vec3 &eye, const Frustum &frustum);
++    void uploadInstances(const ShaderProgram *program);
+     int uploadVisibleInstances(const ShaderProgram *program, const glm::vec3 &eye, const Frustum &frustum);
++    bool mInstancesCollected;  // render() collected them for the current viewport
+     bool mInViewSpace;
+     bool mZSortedRendering;
+     bool mFaceCulling;
+diff --git a/src/wren/Scene.cpp b/src/wren/Scene.cpp
+index 2f235ce..6f55712 100644
+--- a/src/wren/Scene.cpp
++++ b/src/wren/Scene.cpp
+@@ -26,6 +26,7 @@
+ #include "Id.hpp"
+ #include "Material.hpp"
+ #include "Node.hpp"
++#include "Occlusion.hpp"
+ #include "Overlay.hpp"
+ #include "PbrMaterial.hpp"
+ #include "PhongMaterial.hpp"
+@@ -695,7 +696,28 @@ namespace wren {
+       renderStencilWithoutProgram(firstWithoutStencilProgram, firstCulledRenderable);
+     } else {
+       profiler::mark("sky");
+-      renderDefault(firstOpaqueRenderable, firstCulledRenderable);
++      std::unique_ptr<Occlusion> *culling = NULL;
++      if (Occlusion::isEnabled()) {
++        culling = &mOcclusions[mCurrentViewport];
++        if (!*culling)
++          culling->reset(new Occlusion());
++        (*culling)->startFrame();
++      }
++      if (culling && (*culling)->isActive()) {
++        // Occlusion culling: what the view saw last frame, then what the depth drawn so far does not hide.
++        std::unique_ptr<Occlusion> &occlusion = *culling;
++        Occlusion::setPhase(Occlusion::FIRST);
++        renderDefault(firstOpaqueRenderable, firstCulledRenderable);
++        profiler::mark("opaque-seen");
++        Occlusion::setCurrent(occlusion->build(mCurrentViewport) ? occlusion.get() : NULL);
++        profiler::mark("occlusion");
++        Occlusion::setPhase(Occlusion::SECOND);
++        renderDefault(firstOpaqueRenderable, firstCulledRenderable);
++        Occlusion::setPhase(Occlusion::OFF);
++        Occlusion::setCurrent(NULL);
++        occlusion->endFrame();
++      } else
++        renderDefault(firstOpaqueRenderable, firstCulledRenderable);
+       profiler::mark("opaque");
+       // Opaque geometry done: average the samples into the textures ambient occlusion,
+       // translucent objects and post-processing read.
+diff --git a/src/wren/Scene.hpp b/src/wren/Scene.hpp
+index 39d2f36..2f6bfa6 100644
+--- a/src/wren/Scene.hpp
++++ b/src/wren/Scene.hpp
+@@ -18,12 +18,16 @@
+ #include "GlslLayout.hpp"
+ #include "Primitive.hpp"
+ 
++#include <memory>
++#include <unordered_map>
+ #include <vector>
+ 
+ #include <wren/scene.h>
+ 
+ namespace wren {
+ 
++  class Occlusion;
++
+   class ShadowMap;
+ 
+   class Camera;
+@@ -182,6 +186,8 @@ namespace wren {
+     unsigned int mSceneCopyDepth;
+     int mSceneCopyWidth, mSceneCopyHeight;
+     unsigned int mSceneCopyDepthFormat;
++    // Occlusion culling state of each view (see Occlusion).
++    std::unordered_map<const Viewport *, std::unique_ptr<Occlusion>> mOcclusions;
+ 
+     void renderShadowMap();
+     int stencilShadowLights() const;

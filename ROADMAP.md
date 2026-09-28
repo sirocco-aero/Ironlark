@@ -173,10 +173,29 @@ it sees ~700 full trees of 120–160 k triangles; trees are full out to 150 m), 
 shadow cascade (4.9 M). Vertex-bound: 160 × 120 saves 14%; shadows, fog and GTAO off change ≤ 7%.
 Switching level of detail at equal on-screen size (the 150 m impostor switch is set for 1920 px
 over 1 rad, so ~30 m for this camera) cut the frame to 32 ms, but impostors are visibly flatter and
-lighter than trees at 30–150 m, where no haze hides them: rejected. Left: occlusion culling (exact,
-large), or the source's own lod1 trees at the on-screen size it switches them at (check the .blend).
+lighter than trees at 30–150 m, where no haze hides them: rejected. The source has no lighter trees
+to use: in the .blend each tree scatter's lod1 branch instances the same full collection as lod0 (its
+proxies show in the viewport only). Occlusion culling (patch 0046) now draws only what is not hidden:
+the frame at takeoff draws 62 M triangles instead of 130 M, 59 ms instead of 82, and the forest runs
+with sensing at 0.61× real time instead of 0.49×.
 
 Next: per-return LiDAR timing if the odometry needs it (model acquisition, never fake it).
+
+### 3. Performance
+
+Measured with the frame log (patch 0042, `tools/frame_log.py`), headless at 1920×1080 on the GTX 1060;
+images and sensor data compared with the approved look (`looks-good-2026-09-28`) built in a worktree.
+Frames are GPU-bound, and vertex-bound: the forest view draws ~80 M triangles a frame, the small
+saplings (120–157 k triangles of open needle cards each) half of them.
+
+Tried and dropped:
+
+- Culling the LiDAR's six faces by occlusion (as 0046 does for cameras): a 40 m scan hides only 8% of
+  its triangles, and waiting on six small faces cost more (38 → 40 ms of GPU a scan).
+- Scattering fog: hoisting its per-step terms out of the march, and batching its reads four steps at a
+  time, were slower; its cost is in reads of the baked light layers (4–11 ms of its 7–15).
+- The PBR shader's light-layer search without variable indexing (as 0045 for the fog): within noise.
+- Culling back faces of the saplings: their needles are open cards, seen from both sides.
 
 ## Later: regions
 
