@@ -1,0 +1,84 @@
+diff --git a/src/webots/nodes/utils/WbTriangleMesh.cpp b/src/webots/nodes/utils/WbTriangleMesh.cpp
+index a9f060a..1874980 100644
+--- a/src/webots/nodes/utils/WbTriangleMesh.cpp
++++ b/src/webots/nodes/utils/WbTriangleMesh.cpp
+@@ -55,6 +55,10 @@ void WbTriangleMesh::cleanup() {
+   mNonRecursiveTextureCoordinates.reserve(0);
+   mNormals.clear();
+   mNormals.reserve(0);
++  mVertexNormals.clear();
++  mVertexNormals.reserve(0);
++  mVertexTextureCoordinates.clear();
++  mVertexTextureCoordinates.reserve(0);
+   mIsNormalCreased.clear();
+   mIsNormalCreased.reserve(0);
+ 
+@@ -222,8 +226,13 @@ QString WbTriangleMesh::init(const double *coord, const double *normal, const do
+   }
+ 
+   if (mTextureCoordinatesValid) {
+-    mTextureCoordinates.append(texCoord, 2 * numberOfVertices);
+-    mNormals.append(normal, 3 * numberOfVertices);
++    // assimp's floats, or the mesh cache's: exact in float
++    mVertexTextureCoordinates.resize(2 * numberOfVertices);
++    for (int i = 0; i < 2 * numberOfVertices; ++i)
++      mVertexTextureCoordinates[i] = static_cast<float>(texCoord[i]);
++    mVertexNormals.resize(3 * numberOfVertices);
++    for (int i = 0; i < 3 * numberOfVertices; ++i)
++      mVertexNormals[i] = static_cast<float>(normal[i]);
+   }
+ 
+   return QString("");
+diff --git a/src/webots/nodes/utils/WbTriangleMesh.hpp b/src/webots/nodes/utils/WbTriangleMesh.hpp
+index ffc1099..5b11e02 100644
+--- a/src/webots/nodes/utils/WbTriangleMesh.hpp
++++ b/src/webots/nodes/utils/WbTriangleMesh.hpp
+@@ -56,19 +56,23 @@ public:
+     return mCoordinates[coordinateIndex(triangle, vertex, component)];
+   }
+   double normal(int triangle, int vertex, int component) const {
+-    return mNormals[3 * attributeIndex(triangle, vertex) + component];
++    return mAttributesPerVertex ? mVertexNormals[3 * mCoordIndices[index(triangle, vertex)] + component] :
++                                  mNormals[3 * index(triangle, vertex) + component];
+   }
+   // Meshes read from files: one normal and texture coordinate per vertex, indexed as the coordinates.
+   bool attributesPerVertex() const { return mAttributesPerVertex; }
+   int vertexIndex(int triangle, int vertex) const { return mCoordIndices[index(triangle, vertex)]; }
+   double vertexCoordinate(int vertex, int component) const { return mCoordinates[3 * vertex + component]; }
+-  double vertexNormal(int vertex, int component) const { return mNormals[3 * vertex + component]; }
+-  double vertexTextureCoordinate(int vertex, int component) const { return mTextureCoordinates[2 * vertex + component]; }
++  double vertexNormal(int vertex, int component) const { return mVertexNormals[3 * vertex + component]; }
++  double vertexTextureCoordinate(int vertex, int component) const {
++    return mVertexTextureCoordinates[2 * vertex + component];
++  }
+   bool isNormalCreased(int triangle, int vertex) const {
+     return !mAttributesPerVertex && mIsNormalCreased[index(triangle, vertex)];
+   }
+   double textureCoordinate(int triangle, int vertex, int component) const {
+-    return mTextureCoordinates[2 * attributeIndex(triangle, vertex) + component];
++    return mAttributesPerVertex ? mVertexTextureCoordinates[2 * mCoordIndices[index(triangle, vertex)] + component] :
++                                  mTextureCoordinates[2 * index(triangle, vertex) + component];
+   }
+   double nonRecursiveTextureCoordinate(int triangle, int vertex, int component) const {
+     return mNonRecursiveTextureCoordinates[2 * index(triangle, vertex) + component];
+@@ -93,10 +97,6 @@ private:
+   int coordinateIndex(int triangle, int vertex, int component) const {
+     return 3 * mCoordIndices[index(triangle, vertex)] + component;
+   }
+-  // Normals and texture coordinates are stored per triangle corner, or per vertex for meshes read from files.
+-  int attributeIndex(int triangle, int vertex) const {
+-    return mAttributesPerVertex ? mCoordIndices[index(triangle, vertex)] : index(triangle, vertex);
+-  }
+ 
+   void cleanupTmpArrays();
+ 
+@@ -136,6 +136,9 @@ private:
+   QVarLengthArray<double, 1> mNonRecursiveTextureCoordinates;
+   // contains triplet representing the normals (either per triangle or per vertex) (match with the mIndices order)
+   QVarLengthArray<double, 1> mNormals;
++  // Meshes read from files: normal and texture coordinates per vertex, in the float precision they come in.
++  QVarLengthArray<float, 1> mVertexNormals;
++  QVarLengthArray<float, 1> mVertexTextureCoordinates;
+   QVarLengthArray<bool, 1> mIsNormalCreased;
+   // improve tesselation problems by cutting bad triangles
+   QList<QVector<int>> cutTriangleIfNeeded(const WbMFVector3 *coord, const QList<QVector<int>> &tesselatedPolygon,
