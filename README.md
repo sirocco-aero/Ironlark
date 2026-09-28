@@ -176,6 +176,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0060-shared-sun-visibility** | The PBR shader looks up the shadowed sun's maps once per pixel, not once per sun: both suns used the same lookup (four shadow taps and a matrix product). Robot cameras and LiDAR unchanged; the main view differs by rounding (≤0.21% of pixels by more than 8 levels, isolated). | forest view 65.2 → 63.4 ms, high 41.5 → 39.3 ms |
 | **0061-image-prefetch** | A world's local PNG/JPEG files (image textures, background terrain detail and light layers) start decoding on a thread pool before its nodes finalize one after the other; each node takes its file's image when it needs it. Same decoder, same pixels. | forest load 9.5 → 8.0 s |
 | **0062-indexed-file-meshes** | Meshes read from files go to WREN as stored, a vertex list and triangles indexing it, instead of expanded to one vertex per triangle corner and merged back (7.8 M corners into 2.5 M vertices in the forest). WREN numbers vertices by first use either way, and the shadow limit still counts corners: identical GPU meshes, images and sensor data. | forest load 8.0 → 7.0 s |
+| **0063-short-indices** | Static meshes whose vertices fit in 16 bits keep their indices in 16 bits on the GPU (most of the forest's meshes); reading them back (shadow volumes, export) widens them. Same triangles. | GPU −10 MB |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,

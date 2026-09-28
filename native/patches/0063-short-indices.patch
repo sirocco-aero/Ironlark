@@ -1,0 +1,108 @@
+diff --git a/src/wren/Cache.cpp b/src/wren/Cache.cpp
+index 35b4d54..17fe791 100644
+--- a/src/wren/Cache.cpp
++++ b/src/wren/Cache.cpp
+@@ -63,6 +63,7 @@ namespace wren {
+       mGlNameVertexArrayObjectShadow(0),
+       mGlNameBufferShadowCoords(0),
+       mIndexCount(0),
++      mShortIndices(false),
+       mVertexCount(0),
+       mIsCachePersistent(false),
+       mSupportShadows(true) {
+diff --git a/src/wren/Cache.hpp b/src/wren/Cache.hpp
+index cc0d7b4..63a10f1 100644
+--- a/src/wren/Cache.hpp
++++ b/src/wren/Cache.hpp
+@@ -73,6 +73,7 @@ namespace wren {
+       unsigned int mGlNameBufferShadowCoords;
+ 
+       unsigned int mIndexCount;
++      bool mShortIndices;  // 16-bit indices on the GPU
+       unsigned int mVertexCount;
+ 
+       bool mIsCachePersistent;
+diff --git a/src/wren/StaticMesh.cpp b/src/wren/StaticMesh.cpp
+index 77cf475..5e0fb7c 100644
+--- a/src/wren/StaticMesh.cpp
++++ b/src/wren/StaticMesh.cpp
+@@ -1725,7 +1725,7 @@ namespace wren {
+ 
+     bind();
+ 
+-    glDrawElements(drawingMode, mCacheData->mIndexCount, GL_UNSIGNED_INT, NULL);
++    glDrawElements(drawingMode, mCacheData->mIndexCount, mCacheData->mShortIndices ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, NULL);
+     profiler::count(mCacheData->mIndexCount / 3, 1);
+     if (profiler::drawsEnabled()) {
+       char label[32];
+@@ -1741,7 +1741,8 @@ namespace wren {
+ 
+     bind();
+ 
+-    glDrawElementsInstanced(drawingMode, mCacheData->mIndexCount, GL_UNSIGNED_INT, NULL, count);
++    glDrawElementsInstanced(drawingMode, mCacheData->mIndexCount, mCacheData->mShortIndices ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT,
++                            NULL, count);
+     profiler::count(static_cast<long long>(mCacheData->mIndexCount / 3) * count, count);
+     if (profiler::drawsEnabled()) {
+       char label[32];
+@@ -1924,6 +1925,19 @@ namespace wren {
+     permuteValues(mColors, order);
+   }
+ 
++  // A mesh's GPU indices as 32-bit values, whatever their width on the GPU; binds the index buffer to target.
++  static void readIndices(unsigned int target, const cache::MeshData *data, unsigned int *indices) {
++    glBindBuffer(target, data->mGlNameBufferIndices);
++#ifndef __EMSCRIPTEN__
++    if (data->mShortIndices) {
++      std::vector<unsigned short> shortIndices(data->mIndexCount);
++      glGetBufferSubData(target, 0, shortIndices.size() * sizeof(unsigned short), shortIndices.data());
++      std::copy(shortIndices.begin(), shortIndices.end(), indices);
++    } else
++      glGetBufferSubData(target, 0, data->mIndexCount * sizeof(unsigned int), indices);
++#endif
++  }
++
+   void StaticMesh::prepareShadowVolume() const {
+     if (!mCacheData->mSupportShadows || mCacheData->mGlNameVertexArrayObjectShadow)
+       return;
+@@ -1933,8 +1947,7 @@ namespace wren {
+     std::vector<unsigned int> indices(mCacheData->mIndexCount);
+     glBindBuffer(GL_COPY_READ_BUFFER, mCacheData->mGlNameBufferCoords);
+     glGetBufferSubData(GL_COPY_READ_BUFFER, 0, coords.size() * sizeof(glm::vec3), coords.data());
+-    glBindBuffer(GL_COPY_READ_BUFFER, mCacheData->mGlNameBufferIndices);
+-    glGetBufferSubData(GL_COPY_READ_BUFFER, 0, indices.size() * sizeof(unsigned int), indices.data());
++    readIndices(GL_COPY_READ_BUFFER, mCacheData, indices.data());
+     glBindBuffer(GL_COPY_READ_BUFFER, 0);
+ 
+     // shadow volume buffers (coords and indices)
+@@ -2005,8 +2018,13 @@ namespace wren {
+     glVertexAttribPointer(GlslLayout::gLocationCoords, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), NULL);
+     glEnableVertexAttribArray(GlslLayout::gLocationCoords);
+ 
+-    // indices
+-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, mIndices.size() * sizeof(unsigned int), &mIndices[0], GL_STATIC_DRAW);
++    // indices: 16 bits when every vertex fits (most meshes): half the memory, the same triangles
++    mCacheData->mShortIndices = mCoords.size() <= 65536;
++    if (mCacheData->mShortIndices) {
++      const std::vector<unsigned short> shortIndices(mIndices.begin(), mIndices.end());
++      glBufferData(GL_ELEMENT_ARRAY_BUFFER, shortIndices.size() * sizeof(unsigned short), &shortIndices[0], GL_STATIC_DRAW);
++    } else
++      glBufferData(GL_ELEMENT_ARRAY_BUFFER, mIndices.size() * sizeof(unsigned int), &mIndices[0], GL_STATIC_DRAW);
+ 
+     // normals (optional)
+     if (mNormals.size()) {
+@@ -2139,13 +2157,11 @@ namespace wren {
+         memcpy(indexData, &mIndices[0], indexCounter * sizeof(unsigned int));
+     } else {
+       const int vertexCounter = mCacheData->mVertexCount;
+-      const int indexCounter = mCacheData->mIndexCount;
+ 
+       bind();
+ 
+       if (indexData)
+-        copyFromBuffer(GL_ELEMENT_ARRAY_BUFFER, mCacheData->mGlNameBufferIndices, indexCounter * sizeof(unsigned int),
+-                       indexData);
++        readIndices(GL_ELEMENT_ARRAY_BUFFER, mCacheData, indexData);
+       if (coordData)
+         copyFromBuffer(GL_ARRAY_BUFFER, mCacheData->mGlNameBufferCoords, vertexCounter * sizeof(glm::vec3), coordData);
+       if (normalData)
