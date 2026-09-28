@@ -26,17 +26,21 @@ too bright at mid-grey). Light under the canopy comes from baked visibility
 layers traced through the real foliage (`tools/bake_forest_light.py`, patches
 0026–0028).
 
-The world has no visible end. The viewer is fenced inside the exported source
-terrain (203 × 200 m, patch 0012). Beyond it, the region mirrored across each
-edge of the rectangle the terrain fully covers (its edges are ragged by up to 3 m): ground and river truly mirrored (continuous at the seams), trees and cover
-at their mirrored places but turned, so none faces its twin
-(`tools/forest_backdrop.py`). Trees past 150 m are impostors captured from the
-trees as drawn (`tools/bake_impostors.py`, patch 0017), out to 2 km, where fog
-seen from the 70 m ceiling hides what lies beyond; past 400 m they thin with
-distance and widen to keep the canopy closed, as the source's scatter thins with
-camera distance. Ground past the first ring is decimated. The fog is a layer
-with a soft top (patches 0014, 0021) whose far haze meets the sky at the
-horizon (patch 0020). Rendering: 23 ms per step (19 without the far rings).
+The region is high ground above a sea of cloud. The viewer is fenced inside the
+exported source terrain (203 × 200 m, patch 0012). Past it, its ground and forest
+are mirrored across each edge of the rectangle the terrain fully covers (trees and
+cover turned, so none faces its twin; `tools/forest_backdrop.py`) and fall away
+(`tools/forest_edge.py`): level at the seam, then 30–70 m down within 100–150 m,
+with spurs and gullies, into cloud whose tops lie 25–63 m below the region. Past
+the south-east corner, where the river rises, a knoll stands up to 18 m above it
+first. What would stay in the cloud is left out: the land past the edges holds
+125 k of the world's 208 k instances. Its trees take their light from outer light
+layers, at the ground as it lies (patch 0066). The cloud is drawn with the fog
+(patch 0065): tops from a tiling height map (`tools/bake_cloud_tops.py`), lit by
+the suns and the sky, taking the horizon's colour with distance. Trees past 150 m
+are impostors captured from the trees as drawn (`tools/bake_impostors.py`, patch
+0017). The fog is a layer with a soft top (patches 0014, 0021) whose far haze
+meets the sky at the horizon (patch 0020).
 
 Open fidelity gaps against the source (Cycles lighting the same geometry with the
 source's lights, `tools/render_lighting_reference.py` and `tools/compare_views.py`:

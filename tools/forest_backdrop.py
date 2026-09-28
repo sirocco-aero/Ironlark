@@ -1,12 +1,10 @@
-"""The backdrop: the exported region mirrored across its edges.
+"""The region mirrored across its edges: where tools/forest_edge.py places the land past them.
 
 Tile (i, j) is the region reflected across x when i is odd and across y when j
 is odd, then shifted by (i, j) region sizes, so the ground meets itself at every
-seam. The viewer never leaves the region (tile 0, 0); the tiles around it are
-what it sees beyond the source's end. Mirrored instances keep their placement
-but turn a seeded random yaw about their own up axis, so no tree or rock faces
-its twin across a seam. The ground is truly mirrored: Webots patch 0015 draws
-mirrored instances.
+seam. The viewer never leaves the region (tile 0, 0). Mirrored instances keep
+their placement but turn a seeded random yaw about their own up axis, so no tree
+or rock faces its twin across a seam.
 """
 import math
 
@@ -20,17 +18,9 @@ FENCE = (AREA[0] + VIEW_MARGIN, AREA[1] - VIEW_MARGIN, AREA[2] + VIEW_MARGIN, AR
 # What is mirrored: the rectangle the terrain fully covers (forest_terrain.inner_rect),
 # set by the world builder; the terrain's ragged edges are clipped to it.
 BOUNDS = AREA
-RINGS = 1
-# Impostor trees and coarse ground reach this far: from the 70 m ceiling, fog hides
-# more than 95% of what lies past it, so the forest's end never shows.
-HORIZON_REACH = 2000.0
 
 
-def far_rings():
-    return math.ceil(HORIZON_REACH / min(BOUNDS[1] - BOUNDS[0], BOUNDS[3] - BOUNDS[2]))
-
-
-def tiles(rings=RINGS, first=1):
+def tiles(rings=1, first=1):
     """(i, j, 3x4 affine) of every backdrop tile in rings first..rings."""
     width, depth = BOUNDS[1] - BOUNDS[0], BOUNDS[3] - BOUNDS[2]
     for i in range(-rings, rings + 1):
@@ -49,7 +39,7 @@ def fence_distance(points):
     return np.hypot(dx, dy)
 
 
-def copies(rows, far=None, yaw=True, seed=0, rings=RINGS):
+def copies(rows, far=None, yaw=True, seed=0, rings=1):
     """Backdrop rows (n, 3, 4) for instance rows placed in the region, and the index
     of each copy's original.
 
@@ -78,8 +68,3 @@ def copies(rows, far=None, yaw=True, seed=0, rings=RINGS):
             placed[:, :, :3] = placed[:, :, :3] @ spin
         result.append(placed)
     return np.concatenate(result), np.concatenate(sources)
-
-
-def ground_rows(rings=RINGS, first=1):
-    """One row per tile: the whole region, mirrored into place."""
-    return np.array([tile for _, _, tile in tiles(rings, first)])

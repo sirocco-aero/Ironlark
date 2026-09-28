@@ -8,9 +8,9 @@ from PIL import Image
 # The source scene's `fog` object: a box with a Volume Scatter material
 # (color 0.8, density 0.004, anisotropy 0.8), in Blender world coordinates.
 # Inside the box, the medium is the source's. Its faces would show as hard lines
-# against the backdrop past it: outside, density decays instead of stopping, over
+# against the land past it: outside, density decays instead of stopping, over
 # FOG_FALLOFF metres above and below and FOG_FALLOFF_SIDES sideways. (An unbounded
-# layer instead veiled the backdrop out to the horizon, from above, in haze the
+# layer instead veiled the land out to the horizon, from above, in haze the
 # source does not have.)
 FOG_FALLOFF = 10.0
 FOG_FALLOFF_SIDES = 30.0
@@ -19,6 +19,9 @@ FOG_SIZE = (208.8162231, 208.8162231, 29.1523743)
 FOG_COLOR = 0.8
 FOG_DENSITY = 0.004
 FOG_ANISOTROPY = 0.8
+# The sea of cloud: extinction per metre below its tops, so ground and trees sinking into it
+# fade over a few tens of metres.
+CLOUD_EXTINCTION = 0.06
 
 
 def srgb(linear):
@@ -69,7 +72,8 @@ def light_occlusion_fields(build, out, home, bounds):
     """Background fields for the baked light visibility layers (Webots patch 0026):
     R sky, G second sun, B main sun, A sky overhead, then one more layer holding the ground
     height in R; stacked top to bottom, each with its top row at the maximum y. Cropped to bounds (xmin, xmax, ymin, ymax), the
-    rectangle the backdrop mirrors about, and mirrored as it is. Empty before the bake."""
+    rectangle the land past it mirrors, and mirrored as it is; the outer layers follow that land as it
+    falls away. Empty before the bake."""
     if not all((build / f"terrain_{x}_{y}_layers.npy").exists() for x in range(2) for y in range(2)):
         return ""
     meta = json.loads((build / "light_layers.json").read_text())
@@ -93,13 +97,19 @@ def light_occlusion_fields(build, out, home, bounds):
     image = np.concatenate([layer[crop][::-1] for layer in layers + [ground]])
     Image.fromarray(np.round(np.clip(image, 0, 1) * 255).astype(np.uint8), "RGBA").save(out / "meshes/light_occlusion.png")
     heights = " ".join(f"{h:g}" for h in meta["heights"])
+    # Past the rectangle, the same layers where the ground lies after falling away (Webots patch 0066).
+    from forest_edge import outer_light_occlusion
+
+    outer = outer_light_occlusion(out / "meshes/light_occlusion.png", (*world_min, *world_max), (low, high),
+                                  len(meta["heights"]), out / "meshes/light_occlusion_outer.png")
     return f"""
   lightOcclusionUrl [ "meshes/light_occlusion.png" ]
   lightOcclusionMin {world_min[0]:.4f} {world_min[1]:.4f}
   lightOcclusionMax {world_max[0]:.4f} {world_max[1]:.4f}
   lightOcclusionGround {low:.4f} {high:.4f}
   lightOcclusionHeights [ {heights} ]
-  lightOcclusionMirrored TRUE"""
+  lightOcclusionMirrored TRUE
+{outer}"""
 
 
 def sun_occlusion(build, out, home):
@@ -146,7 +156,9 @@ def fog_node(build, out, home):
     ambient = json.loads((build / "sky_light_mean.json").read_text())
     # The first assembly precedes the canopy bake; the lit reassembly adds the occlusion.
     baked = all((build / f"terrain_{x}_{y}_light.npy").exists() for x in range(2) for y in range(2))
-    if baked:
+    # The light occlusion layers light the medium once baked; the sun occlusion map only before.
+    layered = all((build / f"terrain_{x}_{y}_layers.npy").exists() for x in range(2) for y in range(2))
+    if baked and not layered:
         world_min, world_max, heights = sun_occlusion(build, out, home)
         occlusion = f"""
   sunOcclusionUrl [ "meshes/sun_occlusion.png" ]
@@ -167,6 +179,20 @@ def fog_node(build, out, home):
         horizon += f"\n  ambientRadiance [ {values} ]"
     center = (FOG_CENTER[0] - home[0], FOG_CENTER[1] - home[1], FOG_CENTER[2])
     color = srgb(FOG_COLOR)
+    # The sea of cloud (Webots patch 0065), lit by the lighting sky; the ground past the region
+    # falls into it (tools/forest_edge.py).
+    from bake_cloud_tops import bake
+    from forest_edge import CLOUD_HEIGHT
+    from sky_faces import irradiance
+
+    tile = bake(out / "meshes/cloud_tops.png")
+    sky = irradiance(build, "sky_light", (0.0, 0.0, 1.0))
+    cloud = f"""
+  cloudUrl [ "meshes/cloud_tops.png" ]
+  cloudHeight {CLOUD_HEIGHT[0]:g} {CLOUD_HEIGHT[1]:g}
+  cloudTile {tile:g}
+  cloudExtinction {CLOUD_EXTINCTION}
+  cloudSkyIrradiance {sky[0]:.4f} {sky[1]:.4f} {sky[2]:.4f}"""
     return f"""Fog {{
   fogType "SCATTERING"
   color {color:.4f} {color:.4f} {color:.4f}
@@ -176,5 +202,5 @@ def fog_node(build, out, home):
   boxSize {FOG_SIZE[0]:.4f} {FOG_SIZE[1]:.4f} {FOG_SIZE[2]:.4f}
   boxFalloff {FOG_FALLOFF}
   boxFalloffHorizontal {FOG_FALLOFF_SIDES}
-  ambientColor {' '.join(f'{srgb(c):.4f}' for c in ambient)}{occlusion}{horizon}
+  ambientColor {' '.join(f'{srgb(c):.4f}' for c in ambient)}{occlusion}{horizon}{cloud}
 }}"""

@@ -1,0 +1,596 @@
+diff --git a/include/wren/post_processing_effect.h b/include/wren/post_processing_effect.h
+index 996da3e..c606989 100644
+--- a/include/wren/post_processing_effect.h
++++ b/include/wren/post_processing_effect.h
+@@ -44,6 +44,8 @@ void wr_post_processing_effect_pass_set_output_texture_count(WrPostProcessingEff
+ void wr_post_processing_effect_pass_set_input_texture_wrap_mode(WrPostProcessingEffectPass *pass, int index,
+                                                                 WrTextureWrapMode mode);
+ void wr_post_processing_effect_pass_set_input_texture_interpolation(WrPostProcessingEffectPass *pass, int index, bool enable);
++// Mipmaps generated on first use; the input is sampled with trilinear filtering.
++void wr_post_processing_effect_pass_set_input_texture_mipmaps(WrPostProcessingEffectPass *pass, int index, bool enable);
+ void wr_post_processing_effect_pass_set_output_texture_format(WrPostProcessingEffectPass *pass, int index,
+                                                               WrTextureInternalFormat format);
+ void wr_post_processing_effect_pass_set_input_texture(WrPostProcessingEffectPass *pass, int index, WrTexture *texture);
+diff --git a/resources/nodes/Fog.wrl b/resources/nodes/Fog.wrl
+index a75dd2c..792edc9 100644
+--- a/resources/nodes/Fog.wrl
++++ b/resources/nodes/Fog.wrl
+@@ -11,6 +11,10 @@
+ # ambientRadiance: the sky light the medium scatters along each view direction (the sky integrated
+ # against its phase), 9 elevations (-90 to 90 degrees) by 8 azimuths (from +x, counterclockwise);
+ # in place of ambientColor, which scatters the same in every direction.
++# cloudUrl: a sea of cloud below the medium, its tops a tiling height map (16-bit grey; black at
++# cloudHeight's first value, white at its second, in metres) repeating every cloudTile metres,
++# lit by the directional lights and cloudSkyIrradiance (linear sky irradiance / pi on an upward
++# surface); what lies below the tops fades over cloudExtinction per metre.
+ 
+ Fog {
+   w3dField SFColor                                                         color              1 1 1
+@@ -29,4 +33,9 @@ Fog {
+   field    SFVec2f                                                         sunOcclusionHeight 0 0
+   field    MFVec3f                                                         horizonRadiance    []
+   field    MFVec3f                                                         ambientRadiance    []
++  field    MFString                                                        cloudUrl           []
++  field    SFVec2f                                                         cloudHeight        0 0
++  field    SFFloat                                                         cloudTile          0
++  field    SFFloat                                                         cloudExtinction    0
++  field    SFVec3f                                                         cloudSkyIrradiance 0 0 0
+ }
+diff --git a/resources/wren/shaders/scattering_fog.frag b/resources/wren/shaders/scattering_fog.frag
+index fe4f5a5..ec0ed49 100644
+--- a/resources/wren/shaders/scattering_fog.frag
++++ b/resources/wren/shaders/scattering_fog.frag
+@@ -11,7 +11,7 @@ in vec2 texUv;
+ 
+ layout(location = 0) out vec4 result;
+ 
+-uniform sampler2D inputTextures[3];  // 0: HDR color, 1: depth, 2: sun occlusion
++uniform sampler2D inputTextures[4];  // 0: HDR color, 1: depth, 2: sun occlusion, 3: cloud tops' heights
+ 
+ layout(std140) uniform CameraTransforms {
+   mat4 view;
+@@ -49,6 +49,12 @@ uniform vec4 ambientTable[72];  // scattered sky light, 9 elevations (-90..90) x
+ 
+ uniform vec4 horizon[16];     // rgb: radiance just above the horizon, azimuth i * 22.5 deg; w: 1 when given
+ 
++// A sea of cloud below (Fog.cloud*): x, y: heights of the tops' map at 0 and 1, z: metres per
++// repeat, w: extinction per metre below the tops; cloudSky: rgb sky irradiance / pi on an upward
++// surface, w: 1 when there is a sea of cloud.
++uniform vec4 cloud;
++uniform vec4 cloudSky;
++
+ const float PI = 3.14159265359;
+ const int STEPS = 32;
+ const float MAX_DISTANCE = 400.0;  // marched with sun occlusion
+@@ -173,6 +179,96 @@ float sunVisibility(vec3 p, vec3 toSun) {
+   return textureLod(inputTextures[2], uv, 0.0).r;
+ }
+ 
++// The sea of cloud, as an inversion's cloud tops seen from above: the tops' map (puffs on puffs)
++// over broad swells (the same map, larger, turned and blurred, which also hides its repeat), lit
++// by the suns and the sky, shadowed by one another, fading to the horizon's sky with distance.
++const vec3 CLOUD_ALBEDO = vec3(0.8);
++const float CLOUD_SWELL = 16.0;       // metres between the swells' lowest and highest
++const float CLOUD_SWELL_SCALE = 6.3;  // the swells' map, this much larger
++const float CLOUD_HAZE = 2000.0;      // distance over which the tops take the horizon's colour
++const mat2 CLOUD_TURN = mat2(0.8, 0.6, -0.6, 0.8);
++
++// Height of the tops at p; footprint: metres per pixel there, choosing the map's level of detail.
++float cloudTopHeight(vec2 p, float footprint) {
++  float lod = log2(max(footprint * float(textureSize(inputTextures[3], 0).x) / cloud.z, 1.0));
++  float fine = textureLod(inputTextures[3], p / cloud.z, lod).r;
++  float swell = textureLod(inputTextures[3], CLOUD_TURN * p / (cloud.z * CLOUD_SWELL_SCALE) + vec2(0.37, 0.71),
++                           max(lod - log2(CLOUD_SWELL_SCALE), 3.5)).r;
++  return mix(cloud.x, cloud.y, fine) + CLOUD_SWELL * (swell - 0.5);
++}
++
++float cloudGap(vec3 p, float footprint) {
++  return p.z - cloudTopHeight(p.xy, footprint);
++}
++
++// Distance along the ray to the cloud tops, or -1 when geometry (at tLimit) or nothing comes first.
++// Steps are as long as the tops' steepest slope allows without passing through them (long high
++// above, short close by), then two secant steps refine the crossing.
++float cloudHit(vec3 origin, vec3 direction, float tLimit, float pixelAngle, float offset) {
++  float low = cloud.x - 0.5 * CLOUD_SWELL, high = cloud.y + 0.5 * CLOUD_SWELL;
++  if (cloudSky.w <= 0.0 || direction.z > -1e-4 || origin.z <= low)
++    return -1.0;
++  float t0 = max((origin.z - high) / -direction.z, 0.0);
++  float t1 = (origin.z - low) / -direction.z;
++  if (t0 >= tLimit)
++    return -1.0;
++  const int STEPS_CLOUD = 32;
++  const float SLOPE = 1.2;  // the tops' steepest rise per metre
++  float rate = -direction.z + SLOPE * length(direction.xy);  // how fast the gap can close per metre
++  float t = t0, gap = cloudGap(origin + direction * t, t * pixelAngle);
++  float previousT = t, previousGap = gap;
++  for (int i = 0; i < STEPS_CLOUD && gap > 0.0; ++i) {
++    previousT = t;
++    previousGap = gap;
++    t = min(t + max(gap / rate, 0.002 * t) * (i == 0 ? 0.5 + offset : 1.0), t1);
++    gap = cloudGap(origin + direction * t, t * pixelAngle);
++    if (t >= tLimit && gap > 0.0)
++      return -1.0;
++  }
++  if (gap > 0.0)
++    return t < tLimit ? t : -1.0;  // ran out of steps just above the tops
++  float a = previousT, ga = previousGap, b = t, gb = gap;
++  for (int k = 0; k < 2; ++k) {
++    float m = a + (b - a) * ga / max(ga - gb, 1e-4);
++    float gm = cloudGap(origin + direction * m, m * pixelAngle);
++    if (gm > 0.0) {
++      a = m;
++      ga = gm;
++    } else {
++      b = m;
++      gb = gm;
++    }
++  }
++  float hit = a + (b - a) * ga / max(ga - gb, 1e-4);
++  return hit < tLimit ? hit : -1.0;
++}
++
++vec3 cloudRadiance(vec3 p, vec3 direction, float footprint) {
++  // The tops' slope across a pixel (or a metre, near).
++  float e = max(footprint, 1.0);
++  float h = cloudTopHeight(p.xy, footprint);
++  vec3 normal = normalize(vec3(h - cloudTopHeight(p.xy + vec2(e, 0.0), footprint), h - cloudTopHeight(p.xy + vec2(0.0, e), footprint), e));
++  // Sunlight past the billows upsun: the sun ray's height over the tops at a few distances, soft.
++  vec3 toSun = sunDirection0.xyz;
++  float shade = 1.0;
++  for (int k = 0; k < 3; ++k) {
++    float s = 6.0 * pow(3.2, float(k));
++    shade = min(shade, clamp(0.5 + cloudGap(p + toSun * s, footprint) / (0.15 * s + 0.5), 0.0, 1.0));
++  }
++  float sunLit = shade * shadowMapVisibility(p, 1.0);
++  float diffuse0 = clamp((dot(normal, toSun) + 0.05) / 1.05, 0.0, 1.0);
++  float diffuse1 = clamp((dot(normal, sunDirection1.xyz) + 0.05) / 1.05, 0.0, 1.0);
++  vec3 sun = (sunDirection0.w * sunRadiance0.rgb * diffuse0 + sunDirection1.w * sunRadiance1.rgb * diffuse1) * sunLit / PI;
++  // Sky light, less in the creases (below the tops around them), which see less of the sky.
++  float around = cloudTopHeight(p.xy, max(footprint, 16.0 * cloud.z / float(textureSize(inputTextures[3], 0).x)));
++  float open = clamp(0.55 + (h - around) / (0.2 * (cloud.y - cloud.x)), 0.15, 1.0);
++  vec3 sky = cloudSky.rgb * (0.4 + 0.6 * normal.z) * open;
++  // Light through the billows' edges, looking towards the sun.
++  float edge = 1.0 - clamp(dot(normal, -direction), 0.0, 1.0);
++  vec3 through = sunDirection0.w * sunRadiance0.rgb * henyeyGreenstein(dot(direction, toSun), 0.6) * sunLit * edge * edge * edge;
++  return CLOUD_ALBEDO * (sun + sky + through);
++}
++
+ void main() {
+   vec3 color = textureLod(inputTextures[0], texUv, 0.0).rgb;
+   float depth = textureLod(inputTextures[1], texUv, 0.0).r;
+@@ -192,6 +288,16 @@ void main() {
+   float tEnd = viewDepth * rayScale;
+   float tStart = 0.0;
+ 
++  float pixelAngle = 2.0 / (p[1][1] * float(textureSize(inputTextures[0], 0).y));
++  float tCloud = cloudHit(origin, direction, depth >= 1.0 ? 1e9 : tEnd, pixelAngle, dither(gl_FragCoord.xy));
++  if (tCloud >= 0.0) {
++    vec3 radiance = cloudRadiance(origin + direction * tCloud, direction, tCloud * pixelAngle);
++    radiance = mix(radiance, horizonRadiance(direction, radiance), 1.0 - exp(-tCloud / CLOUD_HAZE));
++    float through = depth >= 1.0 ? 0.0 : exp(-cloud.w * (tEnd - tCloud));
++    color = color * through + radiance * (1.0 - through);
++    tEnd = tCloud;
++  }
++
+   if (boxMin.w > 0.0) {
+     vec3 inverseDirection = 1.0 / direction;
+     vec3 reach = 10.0 * vec3(boxMin.w, boxMin.w, max(boxMax.w, 0.0));  // where the falloff is below e^-10
+@@ -220,7 +326,7 @@ void main() {
+   // table (looking down, from the dark ground; towards the sunset, from its glow). Where the view
+   // ray ends on geometry, that geometry hides the sky ahead (a crown seen against the sunset stays
+   // a silhouette): no more than the sky's mean over all directions scatters.
+-  vec3 skyIn = depth >= 1.0 ? ambientRadiance(direction) : min(ambientRadiance(direction), ambient.rgb);
++  vec3 skyIn = depth >= 1.0 && tCloud < 0.0 ? ambientRadiance(direction) : min(ambientRadiance(direction), ambient.rgb);
+   // Steps grow with distance (quadratically): shafts near the viewer are resolved, far ones blend.
+   float offset = dither(gl_FragCoord.xy);
+   vec3 transmittance = vec3(1.0);
+diff --git a/src/webots/nodes/WbFog.cpp b/src/webots/nodes/WbFog.cpp
+index 80b0ed1..ab0e900 100644
+--- a/src/webots/nodes/WbFog.cpp
++++ b/src/webots/nodes/WbFog.cpp
+@@ -123,6 +123,18 @@ static bool scatteringMedium(WbWrenScatteringFog::Medium *medium) {
+     medium->occlusionHeight[1] = fog->sunOcclusionHeight().y();
+   }
+ 
++  // The sea of cloud: its tops' map, heights, repeat and extinction; w of the sky light: 1 when present.
++  medium->cloudPath = fog->cloudPath();
++  if (!medium->cloudPath.isEmpty() && fog->cloudTile() > 0.0) {
++    medium->cloud[0] = fog->cloudHeight().x();
++    medium->cloud[1] = fog->cloudHeight().y();
++    medium->cloud[2] = fog->cloudTile();
++    medium->cloud[3] = fog->cloudExtinction();
++    for (int i = 0; i < 3; ++i)
++      medium->cloudSky[i] = fog->cloudSkyIrradiance()[i];
++    medium->cloudSky[3] = 1.0f;
++  }
++
+   return true;
+ }
+ 
+@@ -148,6 +160,11 @@ void WbFog::init() {
+   mSunOcclusionHeight = findSFVector2("sunOcclusionHeight");
+   mHorizonRadiance = findMFVector3("horizonRadiance");
+   mAmbientRadiance = findMFVector3("ambientRadiance");
++  mCloudUrl = findMFString("cloudUrl");
++  mCloudHeight = findSFVector2("cloudHeight");
++  mCloudTile = findSFDouble("cloudTile");
++  mCloudExtinction = findSFDouble("cloudExtinction");
++  mCloudSkyIrradiance = findSFVector3("cloudSkyIrradiance");
+ }
+ 
+ double WbFog::density() const {
+@@ -198,6 +215,28 @@ const WbRgb &WbFog::ambientColor() const {
+   return mAmbientColor->value();
+ }
+ 
++QString WbFog::cloudPath() const {
++  if (mCloudUrl->size() == 0)
++    return QString();
++  return WbUrl::computePath(this, "cloudUrl", mCloudUrl, 0);
++}
++
++const WbVector2 &WbFog::cloudHeight() const {
++  return mCloudHeight->value();
++}
++
++double WbFog::cloudTile() const {
++  return mCloudTile->value();
++}
++
++double WbFog::cloudExtinction() const {
++  return qMax(0.0, mCloudExtinction->value());
++}
++
++const WbVector3 &WbFog::cloudSkyIrradiance() const {
++  return mCloudSkyIrradiance->value();
++}
++
+ QString WbFog::sunOcclusionPath() const {
+   if (mSunOcclusionUrl->size() == 0)
+     return QString();
+diff --git a/src/webots/nodes/WbFog.hpp b/src/webots/nodes/WbFog.hpp
+index c45ea19..e8436aa 100644
+--- a/src/webots/nodes/WbFog.hpp
++++ b/src/webots/nodes/WbFog.hpp
+@@ -65,6 +65,11 @@ public:
+   const WbVector3 &horizonRadiance(int index) const;
+   int ambientRadianceCount() const;
+   const WbVector3 &ambientRadiance(int index) const;
++  QString cloudPath() const;
++  const WbVector2 &cloudHeight() const;
++  double cloudTile() const;
++  double cloudExtinction() const;
++  const WbVector3 &cloudSkyIrradiance() const;
+ 
+   QStringList fieldsToSynchronizeWithW3d() const override;
+ 
+@@ -101,6 +106,11 @@ private:
+   WbSFVector2 *mSunOcclusionHeight;
+   WbMFVector3 *mHorizonRadiance;
+   WbMFVector3 *mAmbientRadiance;
++  WbMFString *mCloudUrl;
++  WbSFVector2 *mCloudHeight;
++  WbSFDouble *mCloudTile;
++  WbSFDouble *mCloudExtinction;
++  WbSFVector3 *mCloudSkyIrradiance;
+ 
+   // other variables
+   WrSceneFogType mWrenFogType;
+diff --git a/src/webots/wren/WbWrenPostProcessingEffects.cpp b/src/webots/wren/WbWrenPostProcessingEffects.cpp
+index 5fb6e7c..a42b3e5 100644
+--- a/src/webots/wren/WbWrenPostProcessingEffects.cpp
++++ b/src/webots/wren/WbWrenPostProcessingEffects.cpp
+@@ -631,7 +631,8 @@ WrPostProcessingEffect *WbWrenPostProcessingEffects::bloom(float width, float he
+ 
+ WrPostProcessingEffect *WbWrenPostProcessingEffects::scatteringFog(float width, float height,
+                                                                    WrTextureInternalFormat textureFormat,
+-                                                                   WrTexture *depthTexture, WrTexture *occlusionTexture) {
++                                                                   WrTexture *depthTexture, WrTexture *occlusionTexture,
++                                                                   WrTexture *cloudTexture) {
+   WrPostProcessingEffect *fogEffect = wr_post_processing_effect_new();
+   wr_post_processing_effect_set_drawing_index(fogEffect, WbWrenRenderingContext::PP_SCATTERING_FOG);
+ 
+@@ -640,12 +641,17 @@ WrPostProcessingEffect *WbWrenPostProcessingEffects::scatteringFog(float width,
+   wr_post_processing_effect_pass_set_program(fogPass, WbWrenShaders::scatteringFogShader());
+   wr_post_processing_effect_pass_set_output_size(fogPass, width, height);
+   wr_post_processing_effect_pass_set_alpha_blending(fogPass, false);
+-  wr_post_processing_effect_pass_set_input_texture_count(fogPass, 3);
++  wr_post_processing_effect_pass_set_input_texture_count(fogPass, 4);
+   wr_post_processing_effect_pass_set_input_texture(fogPass, 1, depthTexture);
+   wr_post_processing_effect_pass_set_input_texture(fogPass, 2, occlusionTexture);
+   wr_post_processing_effect_pass_set_input_texture_interpolation(fogPass, 2, true);
+   for (int i = 0; i < 3; ++i)
+     wr_post_processing_effect_pass_set_input_texture_wrap_mode(fogPass, i, WR_TEXTURE_WRAP_MODE_CLAMP_TO_EDGE);
++  // The cloud tops' height map: tiled, filtered across distances.
++  wr_post_processing_effect_pass_set_input_texture(fogPass, 3, cloudTexture);
++  wr_post_processing_effect_pass_set_input_texture_interpolation(fogPass, 3, true);
++  wr_post_processing_effect_pass_set_input_texture_mipmaps(fogPass, 3, true);
++  wr_post_processing_effect_pass_set_input_texture_wrap_mode(fogPass, 3, WR_TEXTURE_WRAP_MODE_REPEAT);
+   wr_post_processing_effect_pass_set_output_texture_count(fogPass, 1);
+   wr_post_processing_effect_pass_set_output_texture_format(fogPass, 0, textureFormat);
+   wr_post_processing_effect_append_pass(fogEffect, fogPass);
+diff --git a/src/webots/wren/WbWrenPostProcessingEffects.hpp b/src/webots/wren/WbWrenPostProcessingEffects.hpp
+index f8db19a..0ebba32 100644
+--- a/src/webots/wren/WbWrenPostProcessingEffects.hpp
++++ b/src/webots/wren/WbWrenPostProcessingEffects.hpp
+@@ -42,7 +42,7 @@ namespace WbWrenPostProcessingEffects {
+   WrPostProcessingEffect *bloom(float width, float height, WrTextureInternalFormat textureFormat);
+   WrPostProcessingEffect *hdrResolve(float width, float height);
+   WrPostProcessingEffect *scatteringFog(float width, float height, WrTextureInternalFormat textureFormat,
+-                                        WrTexture *depthTexture, WrTexture *occlusionTexture);
++                                        WrTexture *depthTexture, WrTexture *occlusionTexture, WrTexture *cloudTexture);
+   WrPostProcessingEffect *taa(float width, float height, WrTexture *depthTexture);
+   WrPostProcessingEffect *passThrough(float width, float height);
+ };  // namespace WbWrenPostProcessingEffects
+diff --git a/src/webots/wren/WbWrenScatteringFog.cpp b/src/webots/wren/WbWrenScatteringFog.cpp
+index fe7ca0f..68cd054 100644
+--- a/src/webots/wren/WbWrenScatteringFog.cpp
++++ b/src/webots/wren/WbWrenScatteringFog.cpp
+@@ -24,8 +24,48 @@
+ #include <wren/texture_2d.h>
+ #include <wren/viewport.h>
+ 
++#include <QtCore/QFloat16>
++#include <QtCore/QHash>
+ #include <QtGui/QImage>
+ 
++#include <vector>
++
++// Input textures by what they hold (kind and path), shared by every view's fog (main view, Camera
++// devices): one copy of each map in GPU memory.
++namespace {
++  struct SharedTexture {
++    WrTexture2d *texture;
++    int users;
++  };
++  QHash<QString, SharedTexture> gSharedTextures;
++
++  WrTexture2d *sharedTexture(const QString &key) {
++    auto it = gSharedTextures.find(key);
++    if (it == gSharedTextures.end())
++      return NULL;
++    ++it->users;
++    return it->texture;
++  }
++
++  void shareTexture(const QString &key, WrTexture2d *texture) {
++    gSharedTextures.insert(key, {texture, 1});
++  }
++
++  void releaseTexture(WrTexture2d *texture) {
++    if (!texture)
++      return;
++    for (auto it = gSharedTextures.begin(); it != gSharedTextures.end(); ++it) {
++      if (it->texture == texture) {
++        if (--it->users == 0) {
++          wr_texture_delete(WR_TEXTURE(texture));
++          gSharedTextures.erase(it);
++        }
++        return;
++      }
++    }
++  }
++}  // namespace
++
+ static WbWrenScatteringFog::MediumProvider gMediumProvider = NULL;
+ 
+ void WbWrenScatteringFog::setMediumProvider(MediumProvider provider) {
+@@ -40,29 +80,37 @@ WbWrenScatteringFog::WbWrenScatteringFog() :
+   WbWrenAbstractPostProcessingEffect(),
+   mPass(NULL),
+   mOcclusionTexture(NULL),
++  mCloudTexture(NULL),
+   mMedium() {
+ }
+ 
+ WbWrenScatteringFog::~WbWrenScatteringFog() {
+   detachFromViewport();
+-  wr_texture_delete(WR_TEXTURE(mOcclusionTexture));
++  WbWrenOpenGlContext::makeWrenCurrent();
++  releaseTexture(mOcclusionTexture);
++  releaseTexture(mCloudTexture);
++  WbWrenOpenGlContext::doneWren();
+ }
+ 
+ void WbWrenScatteringFog::loadOcclusion(const QString &path) {
+-  QImage image;
+-  if (!path.isEmpty())
+-    image.load(path);
+-  if (image.isNull()) {  // no map: a single fully visible texel
+-    image = QImage(1, 1, QImage::Format_ARGB32);
+-    image.fill(0xFFFFFFFF);
+-  } else
+-    image = image.convertToFormat(QImage::Format_ARGB32);
+-
+   WbWrenOpenGlContext::makeWrenCurrent();
+-  WrTexture2d *texture = wr_texture_2d_new();
+-  wr_texture_set_size(WR_TEXTURE(texture), image.width(), image.height());
+-  wr_texture_2d_set_data(texture, reinterpret_cast<const char *>(image.constBits()));
+-  wr_texture_setup(WR_TEXTURE(texture));
++  const QString key = "occlusion:" + path;
++  WrTexture2d *texture = sharedTexture(key);
++  if (!texture) {
++    QImage image;
++    if (!path.isEmpty())
++      image.load(path);
++    if (image.isNull()) {  // no map: a single fully visible texel
++      image = QImage(1, 1, QImage::Format_ARGB32);
++      image.fill(0xFFFFFFFF);
++    } else
++      image = image.convertToFormat(QImage::Format_ARGB32);
++    texture = wr_texture_2d_new();
++    wr_texture_set_size(WR_TEXTURE(texture), image.width(), image.height());
++    wr_texture_2d_set_data(texture, reinterpret_cast<const char *>(image.constBits()));
++    wr_texture_setup(WR_TEXTURE(texture));
++    shareTexture(key, texture);
++  }
+   WbWrenOpenGlContext::doneWren();
+ 
+   WrTexture2d *previous = mOcclusionTexture;
+@@ -70,7 +118,46 @@ void WbWrenScatteringFog::loadOcclusion(const QString &path) {
+   mOcclusionPath = path;
+   if (mHasBeenSetup)
+     setup(mWrenViewport);  // rebuild the pass around the new input texture
+-  wr_texture_delete(WR_TEXTURE(previous));
++  WbWrenOpenGlContext::makeWrenCurrent();
++  releaseTexture(previous);
++  WbWrenOpenGlContext::doneWren();
++}
++
++// The cloud tops' height map as half floats, 0 to 1: 16-bit greys keep the gentle slopes smooth.
++void WbWrenScatteringFog::loadCloud(const QString &path) {
++  WbWrenOpenGlContext::makeWrenCurrent();
++  const QString key = "cloud:" + path;
++  WrTexture2d *texture = sharedTexture(key);
++  if (!texture) {
++    QImage image;
++    if (!path.isEmpty())
++      image.load(path);
++    image = image.isNull() ? QImage(1, 1, QImage::Format_Grayscale16) : image.convertToFormat(QImage::Format_Grayscale16);
++    if (path.isEmpty() || image.isNull())
++      image.fill(0);
++    std::vector<qfloat16> heights(static_cast<size_t>(image.width()) * image.height());
++    for (int y = 0; y < image.height(); ++y) {
++      const quint16 *row = reinterpret_cast<const quint16 *>(image.constScanLine(y));
++      for (int x = 0; x < image.width(); ++x)
++        heights[static_cast<size_t>(y) * image.width() + x] = qfloat16(row[x] / 65535.0f);
++    }
++    texture = wr_texture_2d_new();
++    wr_texture_set_internal_format(WR_TEXTURE(texture), WR_TEXTURE_INTERNAL_FORMAT_R16F);
++    wr_texture_set_size(WR_TEXTURE(texture), image.width(), image.height());
++    wr_texture_2d_set_data(texture, reinterpret_cast<const char *>(heights.data()));
++    wr_texture_setup(WR_TEXTURE(texture));
++    shareTexture(key, texture);
++  }
++  WbWrenOpenGlContext::doneWren();
++
++  WrTexture2d *previous = mCloudTexture;
++  mCloudTexture = texture;
++  mCloudPath = path;
++  if (mHasBeenSetup)
++    setup(mWrenViewport);
++  WbWrenOpenGlContext::makeWrenCurrent();
++  releaseTexture(previous);
++  WbWrenOpenGlContext::doneWren();
+ }
+ 
+ void WbWrenScatteringFog::setup(WrViewport *viewport) {
+@@ -86,12 +173,17 @@ void WbWrenScatteringFog::setup(WrViewport *viewport) {
+     mHasBeenSetup = false;
+     loadOcclusion(mOcclusionPath);
+   }
++  if (!mCloudTexture) {
++    mHasBeenSetup = false;
++    loadCloud(mCloudPath);
++  }
+   const float width = wr_viewport_get_width(mWrenViewport);
+   const float height = wr_viewport_get_height(mWrenViewport);
+   WrTexture *depthTexture = WR_TEXTURE(wr_frame_buffer_get_depth_texture(wr_viewport_get_frame_buffer(mWrenViewport)));
+ 
+   mWrenPostProcessingEffect = WbWrenPostProcessingEffects::scatteringFog(width, height, WR_TEXTURE_INTERNAL_FORMAT_RGB16F,
+-                                                                         depthTexture, WR_TEXTURE(mOcclusionTexture));
++                                                                         depthTexture, WR_TEXTURE(mOcclusionTexture),
++                                                                         WR_TEXTURE(mCloudTexture));
+   mPass = wr_post_processing_effect_get_pass(mWrenPostProcessingEffect, "scatteringFog");
+ 
+   WbWrenOpenGlContext::makeWrenCurrent();
+@@ -118,6 +210,8 @@ void WbWrenScatteringFog::update(const Medium &medium) {
+   mMedium = medium;
+   if (mMedium.occlusionPath != mOcclusionPath)
+     loadOcclusion(mMedium.occlusionPath);
++  if (mMedium.cloudPath != mCloudPath)
++    loadCloud(mMedium.cloudPath);
+   applyParametersToWren();
+ }
+ 
+@@ -138,7 +232,9 @@ void WbWrenScatteringFog::applyParametersToWren() {
+                  {"sunDirection1", mMedium.sunDirection[1]},
+                  {"sunRadiance1", mMedium.sunRadiance[1]},
+                  {"occlusionRect", mMedium.occlusionRect},
+-                 {"occlusionHeight", mMedium.occlusionHeight}};
++                 {"occlusionHeight", mMedium.occlusionHeight},
++                 {"cloud", mMedium.cloud},
++                 {"cloudSky", mMedium.cloudSky}};
+   for (const auto &v : vectors)
+     wr_post_processing_effect_pass_set_program_parameter(mPass, v.name, reinterpret_cast<const char *>(v.value));
+   for (int i = 0; i < 16; ++i)
+diff --git a/src/webots/wren/WbWrenScatteringFog.hpp b/src/webots/wren/WbWrenScatteringFog.hpp
+index 9505f8e..23fe27a 100644
+--- a/src/webots/wren/WbWrenScatteringFog.hpp
++++ b/src/webots/wren/WbWrenScatteringFog.hpp
+@@ -44,6 +44,9 @@ public:
+     float horizon[16][4];      // radiance at the horizon, azimuth i * 22.5 deg from +x; w: 1 when given
+     float ambientTable[72][4];  // scattered sky light, 9 elevations x 8 azimuths; w: 1 when given
+     QString occlusionPath;
++    float cloud[4];     // the sea of cloud: heights of its map's black and white, metres per repeat, extinction
++    float cloudSky[4];  // rgb: sky irradiance / pi on an upward surface; w: 1 when there is a sea of cloud
++    QString cloudPath;
+   };
+   void update(const Medium &medium);
+   // The world's scattering Fog and its first two DirectionalLights; false without such a Fog.
+@@ -57,10 +60,13 @@ protected:
+ 
+ private:
+   void loadOcclusion(const QString &path);
++  void loadCloud(const QString &path);
+ 
+   WrPostProcessingEffectPass *mPass;
+   WrTexture2d *mOcclusionTexture;
+   QString mOcclusionPath;
++  WrTexture2d *mCloudTexture;
++  QString mCloudPath;
+   Medium mMedium;
+ };
+ 
+diff --git a/src/webots/wren/WbWrenShaders.cpp b/src/webots/wren/WbWrenShaders.cpp
+index cae07d7..48b4f7a 100644
+--- a/src/webots/wren/WbWrenShaders.cpp
++++ b/src/webots/wren/WbWrenShaders.cpp
+@@ -627,13 +627,14 @@ WrShaderProgram *WbWrenShaders::scatteringFogShader() {
+     wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE0);  // HDR color
+     wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE1);  // depth
+     wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE2);  // sun occlusion
++    wr_shader_program_use_uniform(program, WR_GLSL_LAYOUT_UNIFORM_TEXTURE3);  // cloud tops
+     wr_shader_program_use_uniform_buffer(program, WR_GLSL_LAYOUT_UNIFORM_BUFFER_CAMERA_TRANSFORMS);
+     wr_shader_program_use_uniform_buffer(program, WR_GLSL_LAYOUT_UNIFORM_BUFFER_SHADOWS);  // light occlusion
+ 
+     const float zero4[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+     const float zero2[2] = {0.0f, 0.0f};
+     for (const char *name : {"scattering", "ambient", "boxMin", "boxMax", "sunDirection0", "sunRadiance0", "sunDirection1",
+-                             "sunRadiance1", "occlusionRect"})
++                             "sunRadiance1", "occlusionRect", "cloud", "cloudSky"})
+       wr_shader_program_create_custom_uniform(program, name, WR_SHADER_PROGRAM_UNIFORM_TYPE_VEC4F,
+                                               reinterpret_cast<const char *>(zero4));
+     wr_shader_program_create_custom_uniform(program, "occlusionHeight", WR_SHADER_PROGRAM_UNIFORM_TYPE_VEC2F,
+diff --git a/src/wren/PostProcessingEffect.cpp b/src/wren/PostProcessingEffect.cpp
+index 9f4b667..88b34f3 100644
+--- a/src/wren/PostProcessingEffect.cpp
++++ b/src/wren/PostProcessingEffect.cpp
+@@ -363,6 +363,10 @@ void wr_post_processing_effect_pass_set_input_texture_interpolation(WrPostProces
+   reinterpret_cast<wren::PostProcessingEffect::Pass *>(pass)->setInputTextureInterpolation(index, enable);
+ }
+ 
++void wr_post_processing_effect_pass_set_input_texture_mipmaps(WrPostProcessingEffectPass *pass, int index, bool enable) {
++  reinterpret_cast<wren::PostProcessingEffect::Pass *>(pass)->setInputTextureMipMaps(index, enable);
++}
++
+ void wr_post_processing_effect_pass_set_output_texture_format(WrPostProcessingEffectPass *pass, int index,
+                                                               WrTextureInternalFormat format) {
+   reinterpret_cast<wren::PostProcessingEffect::Pass *>(pass)->setOutputTextureFormat(index, format);
+diff --git a/src/wren/PostProcessingEffect.hpp b/src/wren/PostProcessingEffect.hpp
+index b4a843c..9352506 100644
+--- a/src/wren/PostProcessingEffect.hpp
++++ b/src/wren/PostProcessingEffect.hpp
+@@ -82,6 +82,11 @@ namespace wren {
+         mInputTextureParams[index].mIsInterpolationEnabled = enable;
+       }
+ 
++      void setInputTextureMipMaps(size_t index, bool enable) {
++        assert(index < mInputTextures.size());
++        mInputTextureParams[index].mAreMipMapsEnabled = enable;
++      }
++
+       void setOutputTextureFormat(size_t index, WrTextureInternalFormat format) {
+         assert(index < mOutputTextureFormat.size());
+         mOutputTextureFormat[index] = format;

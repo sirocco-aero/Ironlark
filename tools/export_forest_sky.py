@@ -20,6 +20,9 @@ from pathlib import Path
 import bpy
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sky_faces import WEBOTS_FACES, face_directions  # noqa: E402
+
 p = argparse.ArgumentParser()
 p.add_argument("--out", required=True)
 out = Path(p.parse_args(sys.argv[sys.argv.index("--") + 1:]).out)
@@ -58,26 +61,6 @@ def panorama(name, width):
     bpy.data.images.remove(image)
     path.unlink()
     return pixels
-
-
-# Webots (ENU) fills OpenGL cube face g (+X, -X, +Y, -Y, +Z, -Z) from the url field
-# named here, rotated as its loader does, and samples it with (x, y, -z) of a world
-# direction (WbBackground.cpp, skybox.frag, pbr.frag).
-WEBOTS_FACES = {"back": (0, 90), "front": (1, -90), "right": (2, 0), "left": (3, 180), "bottom": (4, -90), "top": (5, -90)}
-
-
-def face_directions(name, size):
-    """World direction shown by each file pixel (rows from the top) of a Webots face."""
-    face, rotation = WEBOTS_FACES[name]
-    row, col = np.mgrid[0:size, 0:size]
-    last = size - 1
-    # File pixel -> texel of the rotated face uploaded to OpenGL (row = t, column = s).
-    r, c = {0: (row, col), 90: (col, last - row), -90: (last - col, row), 180: (last - row, last - col)}[rotation]
-    sc, tc = 2 * (c + 0.5) / size - 1, 2 * (r + 0.5) / size - 1
-    one = np.ones_like(sc)
-    sample = [(one, -tc, -sc), (-one, -tc, sc), (sc, one, tc), (sc, -one, -tc), (sc, -tc, one), (-sc, -tc, -one)][face]
-    d = np.stack([sample[0], sample[1], -sample[2]], axis=-1)
-    return d / np.linalg.norm(d, axis=-1, keepdims=True)
 
 
 def write_hdr(path, rgb):

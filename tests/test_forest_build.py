@@ -15,6 +15,8 @@ sys.path.insert(0, str(SIM / "tools"))
 from minimap import look_at, WorldView
 from build_forest_world import enu, copy_mesh, cover_placement, tree_placement
 from forest_terrain import clip_polygon
+import forest_backdrop
+import forest_edge
 from forest_mesh import write_material_obj
 
 
@@ -166,6 +168,37 @@ class BuiltWorld(unittest.TestCase):
         self.assertNotIn("crown_", text)
         scene = json.loads((world.parent / "scene.json").read_text())
         self.assertEqual(scene["coordinate_system"], "ENU")
+
+
+
+class Edge(unittest.TestCase):
+    def setUp(self):
+        self.bounds = forest_backdrop.BOUNDS
+        forest_backdrop.BOUNDS = (-137.1, 62.7, -17.7, 177.3)
+
+    def tearDown(self):
+        forest_backdrop.BOUNDS = self.bounds
+
+    def test_ground_leaves_the_region_level_then_falls_into_the_cloud(self):
+        b = forest_backdrop.BOUNDS
+        # Along each side, on the edge: unmoved, and level (the seam shows no crease).
+        for x, y, dx, dy in ((b[0], 80, -1, 0), (b[1], 80, 1, 0), (-40, b[2], 0, -1), (-40, b[3], 0, 1)):
+            self.assertAlmostEqual(float(forest_edge.offset(x, y)), 0.0, places=6)
+            self.assertLess(abs(float(forest_edge.offset(x + dx * 0.5, y + dy * 0.5))), 0.01)
+            # Far out, below the cloud's lowest tops.
+            far = float(forest_edge.offset(x + dx * 180, y + dy * 180))
+            self.assertLess(far, forest_edge.CLOUD_HEIGHT[0])
+        # Inside the region nothing moves.
+        self.assertEqual(float(forest_edge.offset(-40.0, 80.0)), 0.0)
+
+    def test_copies_sinking_in_the_cloud_are_dropped(self):
+        rows = np.zeros((3, 3, 4))
+        rows[:, :, :3] = np.eye(3)
+        # Just past the north edge; deep down the steep west side; past the land's reach.
+        rows[:, :2, 3] = [(-40, 177.3 + 10), (-137.1 - 150, 80), (-40, 177.3 + 400)]
+        lifted, kept = forest_edge.lift(rows, top=30.0)
+        self.assertEqual(kept.tolist(), [True, False, False])
+        self.assertAlmostEqual(lifted[0, 2, 3], float(forest_edge.offset(-40, 187.3)))
 
 
 if __name__ == "__main__":
