@@ -30,11 +30,12 @@ The region is high ground above a sea of cloud. The viewer is fenced inside the
 exported source terrain (203 × 200 m, patch 0012). Past it, its ground and forest
 are mirrored across each edge of the rectangle the terrain fully covers (trees and
 cover turned, so none faces its twin; `tools/forest_backdrop.py`) and fall away
-(`tools/forest_edge.py`): level at the seam, then 30–70 m down within 100–150 m,
-with spurs and gullies, into cloud whose tops lie 25–63 m below the region. Past
+(`tools/forest_edge.py`): level at the seam, over a brow of about 10 m, then at
+27–42° with spurs and gullies, into cloud whose tops lie 25–63 m below the region
+(its mean reached 45–85 m out), so the hilltop ends where the region does. Past
 the south-east corner, where the river rises, a knoll stands up to 18 m above it
-first. What would stay in the cloud is left out: the land past the edges holds
-125 k of the world's 208 k instances. Its trees take their light from outer light
+first. Copies whose tops would stay in the cloud are left out: the land past the
+edges holds 97 k of the world's 190 k instances. Its trees take their light from outer light
 layers, at the ground as it lies (patch 0066). The cloud is drawn with the fog
 (patch 0065): tops from a tiling height map (`tools/bake_cloud_tops.py`), lit by
 the suns and the sky, taking the horizon's colour with distance. Trees past 150 m

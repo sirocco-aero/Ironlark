@@ -184,7 +184,7 @@ class Edge(unittest.TestCase):
         # Along each side, on the edge: unmoved, and level (the seam shows no crease).
         for x, y, dx, dy in ((b[0], 80, -1, 0), (b[1], 80, 1, 0), (-40, b[2], 0, -1), (-40, b[3], 0, 1)):
             self.assertAlmostEqual(float(forest_edge.offset(x, y)), 0.0, places=6)
-            self.assertLess(abs(float(forest_edge.offset(x + dx * 0.5, y + dy * 0.5))), 0.01)
+            self.assertLess(abs(float(forest_edge.offset(x + dx * 0.1, y + dy * 0.1))), 0.002)
             # Far out, below the cloud's lowest tops.
             far = float(forest_edge.offset(x + dx * 180, y + dy * 180))
             self.assertLess(far, forest_edge.CLOUD_HEIGHT[0])

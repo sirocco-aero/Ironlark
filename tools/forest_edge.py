@@ -1,7 +1,7 @@
 """The land past the source's edges: the region's ground and forest mirrored across each edge (as
 tools/forest_backdrop.py places them), falling away into a sea of cloud.
 
-The region is high ground. Past each edge the land drops, gently at first, then steeply, with
+The region is high ground. Past each edge the land rounds over a brow and falls steeply, with
 spurs and gullies; beyond the south-east corner, where the river rises, a knoll stands above the
 region before it too falls away. offset(x, y) is how far the mirrored ground is moved up or down.
 Whatever ends deep in the cloud is left out.
@@ -12,10 +12,10 @@ from PIL import Image
 
 import forest_backdrop
 
-# The cloud tops lie between these heights (Fog.cloudHeight, with its swells); ground and trees
-# whose tops stay below CLOUD_FLOOR are hidden in it.
+# The cloud tops lie between these heights (Fog.cloudHeight), give or take the shader's swells
+# (8 m); ground and trees whose tops stay below CLOUD_FLOOR, under its deepest creases, are hidden.
 CLOUD_HEIGHT = (-55.0, -25.0)
-CLOUD_FLOOR = -70.0
+CLOUD_FLOOR = -68.0
 # Nothing is kept past this distance from the region's edge.
 REACH = 190.0
 # The ground is merged into NEAR_CELL squares up to NEAR from the edge, FAR_CELL squares past it;
@@ -46,17 +46,19 @@ def offset(x, y):
     b = forest_backdrop.BOUNDS
     d = distance(x, y)
     theta = np.arctan2(y - 0.5 * (b[2] + b[3]), x - 0.5 * (b[0] + b[1]))
-    # How far the land has dropped at `reach` from the edge; the slope is steepest from there on.
-    drop = 32.0 + 6.0 * np.sin(2.0 * theta + 1.3) + 4.0 * np.sin(5.0 * theta + 0.4)
-    reach = 95.0 + 20.0 * np.sin(3.0 * theta + 2.1) + 10.0 * np.sin(7.0 * theta + 0.9)
-    u = d / reach
-    fall = drop * np.where(u < 1.0, u * u, 2.0 * u - 1.0)
+    # Past a brow a few metres wide, the land falls at `steep` metres per metre, so the hilltop ends
+    # where the region does.
+    steep = 0.7 + 0.12 * np.sin(2.0 * theta + 1.3) + 0.08 * np.sin(5.0 * theta + 0.4)
+    brow = 10.0 + 4.0 * np.sin(3.0 * theta + 2.1)
+    fall = steep * np.where(d < brow, d * d / (2.0 * brow), d - 0.5 * brow)
     # Spurs and gullies, growing away from the edge.
     ripple = np.sin(x / 23.0 + 1.7 * np.sin(y / 41.0)) * np.cos(y / 29.0 + 1.3 * np.sin(x / 37.0))
     rough = 4.0 * ripple * smoothstep(10.0, 60.0, d)
+    # The knoll holds its ground up: little of the fall reaches its crown.
     kx, ky, kr, kh = KNOLL
-    knoll = kh * np.exp(-((x - kx) ** 2 + (y - ky) ** 2) / kr ** 2) * smoothstep(0.0, 35.0, d)
-    return -fall + rough + knoll
+    around = np.exp(-((x - kx) ** 2 + (y - ky) ** 2) / kr ** 2)
+    knoll = kh * around * smoothstep(0.0, 35.0, d)
+    return -fall * (1.0 - 0.85 * around) + rough + knoll
 
 
 def gradient(x, y, h=0.5):
@@ -168,10 +170,10 @@ def ground_shapes(out):
     return shapes
 
 
-def lift(rows, top=30.0):
+def lift(rows, top):
     """Instance rows placed outside the region, moved onto the fallen ground; rows that would end
-    below the cloud floor (their object `top` metres tall) or past REACH are dropped. Returns the
-    rows and the mask of those kept."""
+    below the cloud floor (their object reaching `top` metres above its origin: one value, or one
+    per row) or past REACH are dropped. Returns the rows and the mask of those kept."""
     rows = np.array(rows, np.float64).reshape(-1, 3, 4)
     x, y = rows[:, 0, 3], rows[:, 1, 3]
     dz = offset(x, y)

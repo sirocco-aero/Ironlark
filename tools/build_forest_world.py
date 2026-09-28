@@ -511,10 +511,28 @@ def instanced_tree_shapes(parts, out, far):
 # covers the capture sphere's diameter; at this distance on a 1080-line screen with the
 # viewer's 1 rad field of view, a metre spans about 12 pixels.
 IMPOSTOR_DISTANCE = 150.0
-# How tall trees and cover can stand: copies past the edges whose tops would stay in the cloud
-# are left out (forest_edge.lift).
+# How tall a tree can stand before its impostor capture gives its own height: copies past the
+# edges whose tops would stay in the cloud are left out (forest_edge.lift).
 TREE_TOP = 40.0
-COVER_TOP = 12.0
+
+
+def tree_tops(build, rows, variants):
+    """How far above its origin each placed tree reaches: the top of its impostor capture sphere."""
+    path = build / "impostors.json"
+    spheres = json.loads(path.read_text()) if path.exists() else {}
+    tops = np.full(len(rows), TREE_TOP)
+    for i, (row, variant) in enumerate(zip(rows, variants)):
+        if variant in spheres:
+            sphere = spheres[variant]
+            tops[i] = row[2, :3] @ np.array(sphere["center"]) + sphere["radius"] * np.linalg.norm(row[2, :3])
+    return tops
+
+
+def mesh_tops(path, rows):
+    """How far above its origin a mesh reaches, placed by each of rows (n x 3 x 4)."""
+    low, high = mesh_bounds(path)
+    corners = np.array([[x, y, z] for x in (low[0], high[0]) for y in (low[1], high[1]) for z in (low[2], high[2])])
+    return (np.asarray(rows)[:, 2, :3] @ corners.T).max(axis=1)
 IMPOSTOR_PIXELS_PER_METRE = 12.0
 IMPOSTOR_FRAMES = 8
 # Coverage an impostor texel needs to be drawn. Full trees keep a needle texel whose mipmapped
@@ -696,7 +714,7 @@ def instance_cover(source, build, out, cover_index):
         mesh_file = lambda name: out / mesh_urls[name]
         rows = np.asarray(rows).reshape(-1, 3, 4)
         edge, _ = forest_backdrop.copies(rows, far=first["lod1_distance"], seed=len(nodes))
-        edge, _ = forest_edge.lift(edge, COVER_TOP)
+        edge, _ = forest_edge.lift(edge, mesh_tops(mesh_file(asset), edge))
         np.concatenate([rows, edge]).astype("<f4").tofile(out / url)
         total += assets[asset]["tris"] * len(placements)
         bands = [(asset, 0.0, first["lod0_distance"])]
@@ -834,10 +852,10 @@ def main():
     # onto the falling ground. Impostors for all; full trees for copies that can come within
     # their distance.
     tree_rows = np.array(tree_rows)
-    edge, sources = forest_backdrop.copies(tree_rows)
-    edge, kept = forest_edge.lift(edge, TREE_TOP)
-    sources = sources[kept]
     tree_variants = [t["variant"] for t in trees]
+    edge, sources = forest_backdrop.copies(tree_rows)
+    edge, kept = forest_edge.lift(edge, tree_tops(build, edge, [tree_variants[s] for s in sources]))
+    sources = sources[kept]
     near = forest_backdrop.fence_distance(edge[:, :, 3]) < IMPOSTOR_DISTANCE
     for row, original in zip(edge[near], sources[near]):
         for part in visual_trees[tree_variants[original]]:
