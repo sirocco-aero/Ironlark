@@ -1,0 +1,126 @@
+diff --git a/resources/wren/shaders/pbr.frag b/resources/wren/shaders/pbr.frag
+index ef85f2e..ad921ff 100644
+--- a/resources/wren/shaders/pbr.frag
++++ b/resources/wren/shaders/pbr.frag
+@@ -15,7 +15,6 @@ in vec3 worldPosition;
+ in vec3 fragmentNormal;
+ in vec2 texUv;
+ in vec2 penTexUv;
+-in mat3 inverseViewMatrix;
+ layout(std140) uniform CameraTransforms {
+   mat4 view;
+   mat4 projection;
+@@ -23,6 +22,9 @@ layout(std140) uniform CameraTransforms {
+ }
+ cameraTransforms;
+ 
++// The view is rigid (a look-at): its inverse rotation is its transpose.
++mat3 inverseViewMatrix;
++
+ #ifdef IMPOSTOR
+ in vec3 impostorLocal[3];      // position in each captured view (0..1 inside it), and its weight
+ flat in vec2 impostorCell[3];  // each view's cell in the atlas
+@@ -585,6 +587,7 @@ vec4 screenSpaceReflection(vec3 position, vec3 normal) {
+ }
+ 
+ void main() {
++  inverseViewMatrix = transpose(mat3(cameraTransforms.view));
+ #ifdef IMPOSTOR
+   // Depth from the captured views: the texel's surface, for the depth buffer (so ambient
+   // occlusion, fog and intersections see the tree's shape, not a flat quad) and for shadows.
+diff --git a/resources/wren/shaders/pbr.vert b/resources/wren/shaders/pbr.vert
+index 260b67e..fccd529 100644
+--- a/resources/wren/shaders/pbr.vert
++++ b/resources/wren/shaders/pbr.vert
+@@ -10,7 +10,6 @@ out vec3 worldPosition;
+ out vec3 fragmentNormal;
+ out vec2 texUv;
+ out vec2 penTexUv;
+-out mat3 inverseViewMatrix;
+ 
+ uniform mat4 modelTransform;
+ uniform mat4 textureTransform;
+@@ -24,15 +23,17 @@ layout(std140) uniform CameraTransforms {
+ cameraTransforms;
+ 
+ void main() {
+-  inverseViewMatrix = mat3(inverse(cameraTransforms.view));
+-  mat4 modelView = cameraTransforms.view * modelTransform;
+-
+-  worldPosition = vec3(modelTransform * vec4(vCoord, 1.0));
+-  vec4 vCoordTransformed = modelView * vec4(vCoord, 1.0);
++  vec4 world = modelTransform * vec4(vCoord, 1.0);
++  worldPosition = vec3(world);
++  vec4 vCoordTransformed = cameraTransforms.view * world;
+   fragmentPosition = vec3(vCoordTransformed);
+   gl_Position = cameraTransforms.infiniteProjection * vCoordTransformed;
+ 
+-  fragmentNormal = normalize(mat3(transpose(inverse(modelView))) * vNormal);
++  // As pbr_instanced.vert: the model's inverse transpose from its cofactors; the view is rigid.
++  mat3 m = transpose(mat3(modelTransform));  // rows of the model's rotation and scale
++  vec3 c0 = cross(m[1], m[2]);
++  vec3 normal = vec3(dot(c0, vNormal), dot(cross(m[2], m[0]), vNormal), dot(cross(m[0], m[1]), vNormal)) / dot(m[0], c0);
++  fragmentNormal = normalize(mat3(cameraTransforms.view) * normal);
+ 
+   texUv = vec2(textureTransform * vec4(vTexCoord, 0.0, 1.0));
+   penTexUv = vUnwrappedTexCoord;
+diff --git a/resources/wren/shaders/pbr_impostor.vert b/resources/wren/shaders/pbr_impostor.vert
+index aaad112..f587e4e 100644
+--- a/resources/wren/shaders/pbr_impostor.vert
++++ b/resources/wren/shaders/pbr_impostor.vert
+@@ -15,7 +15,6 @@ out vec3 worldPosition;
+ out vec3 fragmentNormal;
+ out vec2 texUv;
+ out vec2 penTexUv;
+-out mat3 inverseViewMatrix;
+ out vec3 impostorLocal[3];      // position in each view (0..1 inside it), and the view's weight
+ flat out vec2 impostorCell[3];  // each view's cell in the atlas
+ out mat3 impostorToView;        // capture-space directions to view space
+@@ -55,7 +54,6 @@ void main() {
+   mat3 basis = mat3(vec3(row0.x, row1.x, row2.x), vec3(row0.y, row1.y, row2.y), vec3(row0.z, row1.z, row2.z));
+   vec3 center = vec3(row0.w, row1.w, row2.w);
+ 
+-  inverseViewMatrix = mat3(inverse(cameraTransforms.view));
+   vec3 eye = inverse(cameraTransforms.view)[3].xyz;
+   vec3 toEye = normalize(inverse(basis) * (eye - center));
+ 
+diff --git a/resources/wren/shaders/pbr_instanced.vert b/resources/wren/shaders/pbr_instanced.vert
+index 8eb7f66..822c5ad 100644
+--- a/resources/wren/shaders/pbr_instanced.vert
++++ b/resources/wren/shaders/pbr_instanced.vert
+@@ -13,7 +13,6 @@ out vec3 worldPosition;
+ out vec3 fragmentNormal;
+ out vec2 texUv;
+ out vec2 penTexUv;
+-out mat3 inverseViewMatrix;
+ 
+ uniform samplerBuffer instanceTransforms;
+ uniform int instanceOffset;  // first instance of this draw call (mirrored instances draw separately)
+@@ -32,18 +31,19 @@ void main() {
+   vec4 row0 = texelFetch(instanceTransforms, instance);
+   vec4 row1 = texelFetch(instanceTransforms, instance + 1);
+   vec4 row2 = texelFetch(instanceTransforms, instance + 2);
+-  mat4 modelTransform = mat4(vec4(row0.x, row1.x, row2.x, 0.0), vec4(row0.y, row1.y, row2.y, 0.0),
+-                             vec4(row0.z, row1.z, row2.z, 0.0), vec4(row0.w, row1.w, row2.w, 1.0));
+ 
+-  inverseViewMatrix = mat3(inverse(cameraTransforms.view));
+-  mat4 modelView = cameraTransforms.view * modelTransform;
+-
+-  worldPosition = vec3(modelTransform * vec4(vCoord, 1.0));
+-  vec4 vCoordTransformed = modelView * vec4(vCoord, 1.0);
++  vec4 p = vec4(vCoord, 1.0);
++  worldPosition = vec3(dot(row0, p), dot(row1, p), dot(row2, p));
++  vec4 vCoordTransformed = cameraTransforms.view * vec4(worldPosition, 1.0);
+   fragmentPosition = vec3(vCoordTransformed);
+   gl_Position = cameraTransforms.infiniteProjection * vCoordTransformed;
+ 
+-  fragmentNormal = normalize(mat3(transpose(inverse(modelView))) * vNormal);
++  // Normals go through the inverse transpose of the instance's rotation and scale: its cofactors
++  // over its determinant (rows r0, r1, r2). The view is rigid, so it turns them as it turns points.
++  vec3 r0 = row0.xyz, r1 = row1.xyz, r2 = row2.xyz;
++  vec3 c0 = cross(r1, r2);
++  vec3 normal = vec3(dot(c0, vNormal), dot(cross(r2, r0), vNormal), dot(cross(r0, r1), vNormal)) / dot(r0, c0);
++  fragmentNormal = normalize(mat3(cameraTransforms.view) * normal);
+ 
+   texUv = vec2(textureTransform * vec4(vTexCoord, 0.0, 1.0));
+   penTexUv = vUnwrappedTexCoord;
