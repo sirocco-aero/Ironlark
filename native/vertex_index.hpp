@@ -1,11 +1,9 @@
 // Lossless vertex indexing for Webots/WREN. Attribute bytes are compared exactly.
 #pragma once
-#include <array>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
 #include <stdexcept>
-#include <unordered_map>
 #include <vector>
 
 namespace ironlark {
@@ -17,42 +15,56 @@ struct VertexIndex {
   std::vector<unsigned int> source;
   std::vector<unsigned int> remap;
 };
-struct VertexKey {
-  std::array<unsigned char, 64> bytes{};
-  bool operator==(const VertexKey &other) const { return bytes == other.bytes; }
-};
-struct VertexHash {
-  size_t operator()(const VertexKey &key) const {
-    uint64_t hash = 14695981039346656037ull;
-    for (unsigned char byte : key.bytes) {
-      hash ^= byte;
-      hash *= 1099511628211ull;
-    }
-    return static_cast<size_t>(hash);
-  }
-};
+// Vertices with byte-identical attributes share one index, numbered in order of first occurrence. An open-addressing
+// table of vertex numbers, compared in place: no key copies, no allocation per vertex.
 inline VertexIndex indexVertices(size_t count, std::initializer_list<Attribute> attributes) {
+  std::vector<Attribute> used;
   size_t size = 0;
   for (const Attribute &attribute : attributes)
-    if (attribute.data) size += attribute.stride;
+    if (attribute.data) {
+      used.push_back(attribute);
+      size += attribute.stride;
+    }
   if (size > 64) throw std::invalid_argument("Vertex attributes exceed key capacity");
   VertexIndex result;
   result.source.reserve(count);
   result.remap.resize(count);
-  std::unordered_map<VertexKey, unsigned int, VertexHash> unique;
-  unique.reserve(count);
-  for (size_t i = 0; i < count; ++i) {
-    VertexKey key;
-    size_t offset = 0;
-    for (const Attribute &attribute : attributes) {
-      if (!attribute.data) continue;
-      const auto *bytes = static_cast<const unsigned char *>(attribute.data);
-      std::memcpy(key.bytes.data() + offset, bytes + i * attribute.stride, attribute.stride);
-      offset += attribute.stride;
+  auto hash = [&](size_t i) {
+    uint64_t h = 0x9e3779b97f4a7c15ull;
+    for (const Attribute &attribute : used) {
+      const unsigned char *bytes = static_cast<const unsigned char *>(attribute.data) + i * attribute.stride;
+      for (size_t offset = 0; offset < attribute.stride; offset += 8) {
+        uint64_t word = 0;
+        std::memcpy(&word, bytes + offset, attribute.stride - offset < 8 ? attribute.stride - offset : 8);
+        h = (h ^ word) * 0xbf58476d1ce4e5b9ull;
+        h ^= h >> 31;
+      }
     }
-    auto inserted = unique.emplace(key, static_cast<unsigned int>(result.source.size()));
-    result.remap[i] = inserted.first->second;
-    if (inserted.second) result.source.push_back(static_cast<unsigned int>(i));
+    return h;
+  };
+  auto equal = [&](size_t a, size_t b) {
+    for (const Attribute &attribute : used) {
+      const unsigned char *bytes = static_cast<const unsigned char *>(attribute.data);
+      if (std::memcmp(bytes + a * attribute.stride, bytes + b * attribute.stride, attribute.stride))
+        return false;
+    }
+    return true;
+  };
+  size_t capacity = 16;
+  while (capacity < 2 * count)
+    capacity *= 2;
+  const unsigned int empty = ~0u;
+  std::vector<unsigned int> slots(capacity, empty);  // a vertex of each distinct value
+  for (size_t i = 0; i < count; ++i) {
+    size_t slot = hash(i) & (capacity - 1);
+    while (slots[slot] != empty && !equal(slots[slot], i))
+      slot = (slot + 1) & (capacity - 1);
+    if (slots[slot] == empty) {
+      slots[slot] = static_cast<unsigned int>(i);
+      result.remap[i] = static_cast<unsigned int>(result.source.size());
+      result.source.push_back(static_cast<unsigned int>(i));
+    } else
+      result.remap[i] = result.remap[slots[slot]];
   }
   return result;
 }

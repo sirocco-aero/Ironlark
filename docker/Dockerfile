@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM ubuntu:22.04 AS build
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,6 +30,20 @@ COPY webots-clock.patch /tmp/webots-clock.patch
 RUN git apply --check /tmp/webots-clock.patch \
     && git apply /tmp/webots-clock.patch \
     && ./waf copter -j2
+
+# What runs: the SITL binary, its default parameters, the upstream Webots example (setup copies it
+# out) and the license, with Python and pymavlink for the flight check. Not the source tree or the
+# compilers (2.46 GB -> about 0.2 GB).
+FROM ubuntu:22.04
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+COPY --from=build /opt/ardupilot/build/sitl/bin/arducopter /opt/ardupilot/build/sitl/bin/arducopter
+COPY --from=build /opt/ardupilot/Tools/autotest/default_params /opt/ardupilot/Tools/autotest/default_params
+COPY --from=build /opt/ardupilot/libraries/SITL/examples/Webots_Python \
+    /opt/ardupilot/libraries/SITL/examples/Webots_Python
+COPY --from=build /opt/ardupilot/COPYING.txt /opt/ardupilot/COPYING.txt
 
 ENV PYTHONUNBUFFERED=1
 WORKDIR /run/ironlark

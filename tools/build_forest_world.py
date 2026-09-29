@@ -25,6 +25,9 @@ import numpy as np
 from PIL import Image, ImageOps
 
 import forest_backdrop
+import forest_edge
+import forest_valley
+import forest_valley
 from forest_view import CAMERAS, ORIGIN, REGION, VIEW_CEILING, VIEW_MARGIN
 
 sys.path.insert(
@@ -180,10 +183,11 @@ Solid {{
   ]
   name "river"
 }}
-# Beyond the source's edges: the region mirrored across them (tools/forest_backdrop.py).
+# Past the source's edges: its ground and forest mirrored, falling away to a valley
+# (tools/forest_edge.py, tools/forest_valley.py).
 Group {{
   children [
-    {backdrop_shapes}
+    {edge_shapes}
   ]
 }}
 {tree_solids}
@@ -505,23 +509,6 @@ def instanced_tree_shapes(parts, out, far):
     return nodes
 
 
-# Far impostor trees thin out with distance past the fence, as the source's scatter thins
-# its trees with camera distance; the kept ones widen so the canopy stays closed:
-# (distance, fraction kept) steps.
-THINNING = [(400.0, 0.5), (800.0, 0.25), (1400.0, 0.125)]
-
-
-def thin_with_distance(rows, variants, seed=11):
-    distance = forest_backdrop.fence_distance(rows[:, :, 3])
-    keep = np.ones(len(rows))
-    for start, fraction in THINNING:
-        keep[distance >= start] = fraction
-    chosen = np.random.default_rng(seed).random(len(rows)) < keep
-    kept = rows[chosen].copy()
-    kept[:, :, :2] *= (1 / np.sqrt(keep[chosen]))[:, None, None]  # widen: the tree's own x and y axes
-    return kept, [v for v, c in zip(variants, chosen) if c]
-
-
 # Trees beyond this distance are drawn as impostors (tools/bake_impostors.py). A view
 # covers the capture sphere's diameter; at this distance on a 1080-line screen with the
 # viewer's 1 rad field of view, a metre spans about 12 pixels.
@@ -589,9 +576,10 @@ def impostor_atlases(build, out, variant, radius):
         (size[0] // 2, size[1] // 2), Image.Resampling.LANCZOS).save(out / f"meshes/impostor_{variant}_normal.png")
 
 
-def impostor_shapes(build, out, visual_trees, rows, variants):
-    """Declare the variants for tools/bake_impostors.py; once baked, one instanced
-    impostor Shape per variant. Returns the Shapes (empty before the bake)."""
+def impostor_shapes(build, out, visual_trees, groups):
+    """Declare the variants for tools/bake_impostors.py; once baked, one instanced impostor Shape
+    per variant and group. groups: (rows, variants, near, far, suffix), each drawn from near to far
+    metres from the viewer (0: no end). Returns the Shapes (empty before the bake)."""
     declared = {v: [{"mesh": p["mesh_url"], "tex": p["tex"], "normal": p.get("normal", "")} for p in parts]
                 for v, parts in visual_trees.items()}
     (build / "impostor_variants.json").write_text(json.dumps(declared, indent=1, sort_keys=True))
@@ -608,14 +596,17 @@ def impostor_shapes(build, out, visual_trees, rows, variants):
     for variant in sorted(declared):
         sphere = baked[variant]
         impostor_atlases(build, out, variant, sphere["radius"])
-        # Instance space = capture space: the tree's frame, moved to the sphere's centre, scaled by its radius.
-        placed = rows[np.array([v == variant for v in variants])]
-        capture = np.hstack([np.eye(3) * sphere["radius"], np.array(sphere["center"])[:, None]])
-        instances = np.einsum("nab,bc->nac", placed[:, :, :3], capture)
-        instances[:, :, 3] += placed[:, :, 3]
-        url = f"meshes/instances_impostor_{variant}.bin"
-        instances.astype("<f4").tofile(out / url)
-        nodes.append(f"""Shape {{
+        for rows, variants, near, far, suffix in groups:
+            # Instance space = capture space: the tree's frame, moved to the sphere's centre, scaled by its radius.
+            placed = rows[np.array([v == variant for v in variants], bool)]
+            if not len(placed):
+                continue
+            capture = np.hstack([np.eye(3) * sphere["radius"], np.array(sphere["center"])[:, None]])
+            instances = np.einsum("nab,bc->nac", placed[:, :, :3], capture)
+            instances[:, :, 3] += placed[:, :, 3]
+            url = f"meshes/instances_impostor_{variant}{suffix}.bin"
+            instances.astype("<f4").tofile(out / url)
+            nodes.append(f"""Shape {{
           appearance PBRAppearance {{
             baseColorMap ImageTexture {{ url "meshes/impostor_{variant}.png" }}
             normalMap ImageTexture {{ url "meshes/impostor_{variant}_normal.png" }}
@@ -625,7 +616,7 @@ def impostor_shapes(build, out, visual_trees, rows, variants):
           }}
           geometry Mesh {{ url "meshes/impostor_quad.obj" }}
           instancesUrl [ "{url}" ]
-          visibilityRange {IMPOSTOR_DISTANCE - 1:.1f} 0
+          visibilityRange {near:.1f} {far:.1f}
           castShadows FALSE
           impostor TRUE
         }}""")
@@ -706,8 +697,9 @@ def instance_cover(source, build, out, cover_index):
         url = "meshes/instances_%s.bin" % re.sub(r"\W", "_", asset)
         mesh_file = lambda name: out / mesh_urls[name]
         rows = np.asarray(rows).reshape(-1, 3, 4)
-        backdrop, _ = forest_backdrop.copies(rows, far=first["lod1_distance"], seed=len(nodes))
-        np.concatenate([rows, backdrop]).astype("<f4").tofile(out / url)
+        edge, _ = forest_backdrop.copies(rows, far=first["lod1_distance"], seed=len(nodes))
+        edge, _ = forest_edge.lift(edge)
+        np.concatenate([rows, edge]).astype("<f4").tofile(out / url)
         total += assets[asset]["tris"] * len(placements)
         bands = [(asset, 0.0, first["lod0_distance"])]
         if first["lod1"] != asset:
@@ -730,38 +722,7 @@ def instance_cover(source, build, out, cover_index):
     return nodes, total, set(mesh_urls.values())
 
 
-def river_backdrop(out):
-    from forest_terrain import decimate_obj
-
-    forest_backdrop.ground_rows().astype("<f4").tofile(out / "meshes/instances_backdrop.bin")
-    forest_backdrop.ground_rows(forest_backdrop.far_rings(), 2).astype("<f4").tofile(
-        out / "meshes/instances_backdrop_far.bin")
-    decimate_obj(out / "meshes/river.obj", out / "meshes/river_far.obj", 2.0)
-    far = """Shape {
-      appearance PBRAppearance {
-        baseColor 1 1 1
-        roughness 0
-        metalness 0
-        transmission 1
-        flowFoam 1
-      }
-      geometry Mesh { url "meshes/river_far.obj" }
-      instancesUrl [ "meshes/instances_backdrop_far.bin" ]
-    }\n"""
-    return far + """Shape {
-      appearance PBRAppearance {
-        baseColor 1 1 1
-        roughness 0
-        metalness 0
-        transmission 1
-        flowFoam 1
-      }
-      geometry Mesh { url "meshes/river.obj" }
-      instancesUrl [ "meshes/instances_backdrop.bin" ]
-    }"""
-
-
-def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, backdrop_shapes, fog, light_occlusion=""):
+def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, edge_shapes, fog, light_occlusion=""):
     tree_solids = list(solids)
     tree_solids.extend(colliders)
     view_pos = "4 -5 2.6"
@@ -774,7 +735,7 @@ def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, backdro
         WORLD_TEMPLATE.format(
             tree_solids="\n".join(tree_solids),
             terrain_shapes=terrain_shapes,
-            backdrop_shapes=backdrop_shapes,
+            edge_shapes=edge_shapes,
             sky_fields=sky_fields,
             light_occlusion=light_occlusion,
             fog=fog,
@@ -812,8 +773,13 @@ def main():
     # -- textures --
     print("textures", flush=True)
     visual_trees = prepare_visual_trees(source, build, out)
+    import sky_faces
+
     for path in build.glob("sky_*.hdr"):
-        shutil.copyfile(path, out / "meshes" / path.name)
+        if path.name.startswith("sky_light_"):  # the lighting sky, as the source's
+            shutil.copyfile(path, out / "meshes" / path.name)
+        else:  # the sky cameras see (sky_faces.CAMERA_SKY)
+            sky_faces.write_hdr(out / "meshes" / path.name, sky_faces.read_hdr(path) * sky_faces.CAMERA_SKY)
 
     from forest_terrain import inner_rect
 
@@ -871,18 +837,23 @@ def main():
                     i=len(colliders),
                 )
             )
-    # The backdrop's trees: each tree copied whole, so its parts turn together. Impostors
-    # fill every ring; full trees only copies that can come within their distance.
+    # The trees past the edges: each tree copied whole, so its parts turn together, and moved
+    # onto the falling ground: on the near band, full trees for copies that can come within their
+    # distance and impostors past it; further down the hillside, impostors (forest_valley).
     tree_rows = np.array(tree_rows)
-    backdrop, sources = forest_backdrop.copies(tree_rows, rings=forest_backdrop.far_rings())
     tree_variants = [t["variant"] for t in trees]
-    near = forest_backdrop.fence_distance(backdrop[:, :, 3]) < IMPOSTOR_DISTANCE
-    for row, original in zip(backdrop[near], sources[near]):
+    copies, copied = forest_backdrop.copies(tree_rows, rings=2)
+    edge, kept = forest_edge.lift(copies)
+    hill, on_hill = forest_valley.hillside(copies, build)
+    sources = copied[kept]
+    near = forest_backdrop.fence_distance(edge[:, :, 3]) < IMPOSTOR_DISTANCE
+    for row, original in zip(edge[near], sources[near]):
         for part in visual_trees[tree_variants[original]]:
             tree_parts[part_key(part)].append(row)
-    far_rows, far_variants = thin_with_distance(backdrop, [tree_variants[s] for s in sources])
-    impostors = impostor_shapes(build, out, visual_trees, np.concatenate([tree_rows, far_rows]),
-                                tree_variants + far_variants)
+    impostors = impostor_shapes(build, out, visual_trees, [
+        (np.concatenate([tree_rows, edge, hill]),
+         tree_variants + [tree_variants[s] for s in sources] + [tree_variants[s] for s in copied[on_hill]],
+         IMPOSTOR_DISTANCE - 1, 0.0, "")])
     solids.extend(instanced_tree_shapes(tree_parts, out, IMPOSTOR_DISTANCE if impostors else None))
     solids.extend(impostors)
     print(
@@ -938,8 +909,9 @@ def main():
     from forest_terrain import build_terrain_tiles
 
     manifest["light_signature"] = light_signature(build, out)
-    terrain_shapes, backdrop_shapes = build_terrain_tiles(build, out, forest_backdrop.BOUNDS)
-    backdrop_shapes.append(river_backdrop(out))
+    # Its mirrored-tile shapes are no longer drawn: the edge's own ground replaces them.
+    terrain_shapes, _ = build_terrain_tiles(build, out, forest_backdrop.BOUNDS)
+    edge_shapes = forest_edge.ground_shapes(out) + forest_valley.shapes(build, out)
     fog = fog_node(build, out, manifest["home_blender"])
     from forest_fog import light_occlusion_fields
 
@@ -947,7 +919,7 @@ def main():
     from forest_terrain import terrain_detail_fields
 
     light_occlusion += terrain_detail_fields(build, out, manifest["home_blender"], source, light_occlusion)
-    write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, "\n".join(backdrop_shapes), fog,
+    write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, "\n    ".join(edge_shapes), fog,
                 light_occlusion)
     two_sided_materials(out)
     (out / "visual_instances.json").write_text(

@@ -22,6 +22,8 @@ ROS_IMAGE = "ironlark-ros:humble"
 # Recorded by name, so the recorder subscribes to each before the first message (-a discovers late).
 ROS_TOPICS = ("/clock /imu/data /lidar/points /camera/image_raw /camera/camera_info /tf_static "
               "/ground_truth/pose /ground_truth/velocity")
+# Each message compressed (zstd, lossless) by two threads, queued deep enough that none is dropped.
+ROS_BAG_OPTIONS = "--compression-mode message --compression-format zstd --compression-threads 2 --compression-queue-size 20000"
 COMMIT = "dbe792162d06cab66c3475fd5556bf7a120f119e"
 UPSTREAM = "/opt/ardupilot/libraries/SITL/examples/Webots_Python"
 
@@ -35,6 +37,28 @@ def webots_home():
     patched = CACHE / "webots-renderer"
     default = patched if (patched / "ironlark-renderer.json").is_file() else ROOT / "webots"
     return Path(os.environ.get("WEBOTS_HOME", default)).resolve()
+
+
+def build_lockstep():
+    """The flight bridge's per-step loop in C (controllers/flight_bridge/lockstep.c), compiled when its source
+    changed. Without a C compiler the bridge runs the same loop in Python."""
+    source = ROOT / "controllers/flight_bridge/lockstep.c"
+    library = CACHE / "flight_lockstep.so"
+    if library.exists() and library.stat().st_mtime >= source.stat().st_mtime:
+        return library
+    compiler = shutil.which("cc") or shutil.which("gcc")
+    if compiler is None:
+        return None
+    home = webots_home()
+    built = subprocess.run(
+        [compiler, "-O2", "-shared", "-fPIC", str(source), "-I", str(home / "include/controller/c"),
+         "-L", str(home / "lib/controller"), "-lController", "-o", str(library)],
+        capture_output=True, text=True,
+    )
+    if built.returncode:
+        print(f"Flight bridge in Python: the C loop did not compile:\n{built.stderr}", flush=True)
+        return None
+    return library
 
 
 def setup():
@@ -125,14 +149,25 @@ def check_ports():
 
 
 def stop_process(proc):
-    if proc is None or proc.poll() is not None:
+    """Stop a process and its whole group: headless Webots outlives xvfb-run and ignores SIGTERM."""
+    if proc is None:
         return
-    os.killpg(proc.pid, signal.SIGTERM)
     try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait()
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 5
+    while True:
+        proc.poll()  # reap the leader, so only live members answer
+        try:
+            os.killpg(proc.pid, 0)
+        except ProcessLookupError:
+            break
+        if time.monotonic() > deadline:
+            os.killpg(proc.pid, signal.SIGKILL)
+            break
+        time.sleep(0.1)
+    proc.wait()
 
 
 def stage_world(run, world):
@@ -162,11 +197,14 @@ def stage_world(run, world):
     # dir breaks that lookup and robots silently fall back to `generic`.
     target_dir = run / "worlds"
     target_dir.mkdir()
-    # Merge the built world (wbt, meshes/, scene.json) directly into worlds/.
-    shutil.copytree(ROOT / "worlds/pine_forest", target_dir, dirs_exist_ok=True)
+    # The built world's files beside it; its meshes (1.4 GB) are linked, not copied.
+    built = ROOT / "worlds/pine_forest"
+    for name in (".pine_forest.wbproj", "scene.json"):
+        shutil.copyfile(built / name, target_dir / name)
+    (target_dir / "meshes").symlink_to(built / "meshes", target_is_directory=True)
     target = target_dir / "pine_forest.wbt"
     target.write_text(
-        target.read_text()
+        (built / "pine_forest.wbt").read_text()
         .replace("../.cache/", os.path.relpath(CACHE, target_dir) + "/")
         .replace("../protos/", os.path.relpath(ROOT / "protos", target_dir) + "/")
     )
@@ -291,9 +329,18 @@ def flight(headless, editor=False, world="forest", record=False):
         env["WEBOTS_HOME"] = str(webots_home())
         env["PATH"] = str(ROOT / ".venv/bin") + os.pathsep + env.get("PATH", "")
         env["PYTHONUNBUFFERED"] = "1"
+        # Patched Webots keeps parsed meshes here (patch 0048): later loads skip parsing the OBJ text.
+        env.setdefault("WEBOTS_MESH_CACHE", str(CACHE / "mesh-cache"))
         env["IRONLARK_RUN_DIR"] = str(run)
+        lockstep = build_lockstep()
+        if lockstep:
+            env["IRONLARK_LOCKSTEP"] = str(lockstep)
         if record:
             env["IRONLARK_SENSING"] = "1"
+        else:
+            # The pre-arm wait runs as fast as the machine allows (flight_observer.py); recorded runs
+            # stay in real time, so sensing's measured cost means what it says.
+            env["IRONLARK_FAST_START"] = "1"
         # Webots saves GUI perspectives beside the world. Give each run its own
         # project so watching a flight never rewrites versioned source files.
         world_path, scene_path = stage_world(run, world)
@@ -311,6 +358,14 @@ def flight(headless, editor=False, world="forest", record=False):
             env["QT_QPA_PLATFORM"] = (
                 "xcb"  # use the virtual X display, even on Wayland hosts
             )
+            # A copy of the user's Webots preferences: the headless window's size and the run's
+            # world would otherwise be saved into theirs.
+            preferences = Path(env.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "Cyberbotics/Webots-R2025a.conf"
+            private = run / "config/Cyberbotics"
+            private.mkdir(parents=True)
+            if preferences.is_file():
+                shutil.copyfile(preferences, private / preferences.name)
+            env["XDG_CONFIG_HOME"] = str(run / "config")
             command = ["xvfb-run", "-a", *command, "--no-rendering", "--minimize"]
         elif not editor:
             command.append("--fullscreen")
@@ -331,7 +386,7 @@ def flight(headless, editor=False, world="forest", record=False):
                             ros_name,
                             run,
                             "python3 /project/ros/ironlark_bridge.py & bridge=$!; "
-                            f"ros2 bag record -o bag --qos-profile-overrides-path /project/ros/record_qos.yaml {ROS_TOPICS} & recorder=$!; "
+                            f"ros2 bag record -o bag --qos-profile-overrides-path /project/ros/record_qos.yaml {ROS_BAG_OPTIONS} {ROS_TOPICS} & recorder=$!; "
                             "trap 'kill -INT $recorder; wait $recorder; kill $bridge' INT TERM; wait",
                         ),
                         stdout=(run / "ros.log").open("w"),

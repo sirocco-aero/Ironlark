@@ -146,6 +146,7 @@ def main():
     (worlds / ".preview.wbproj").write_text((source / ".pine_forest.wbproj").read_text())
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(private_preferences(out, args.pref))
+    env.setdefault("WEBOTS_MESH_CACHE", str(SIM / ".cache/mesh-cache"))
     env["QT_QPA_PLATFORM"] = "xcb"
     env["PATH"] = str(SIM / ".venv/bin") + ":" + env.get("PATH", "")
     env.update(
