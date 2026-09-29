@@ -24,6 +24,17 @@ FAR_END = 7500.0
 TEXTURE = 2048
 # Where the lake, the village and the river run, as offsets from the region's centre.
 LAKE = (-760.0, -60.0, 250.0, 140.0, 0.35)  # centre x, y, semi-axes, turn (rad)
+# Its basin: the bed falls LAKE_DEPTH metres over LAKE_SHELF from the shore (the shallows along it); a
+# bank rises LAKE_BANK above the water within 15 m, so no land outside lies under it, and meets the
+# valley floor over LAKE_BLEND out (lake_distance's units: stretched along the lake's long axis, which
+# points at the hill; past it the land is the valley's own, so the hillside and its light layers keep
+# theirs). Land within LAKE_FINE of the shore is meshed in cells an eighth of the rings' (3-6 m), so
+# the waterline follows the shore.
+LAKE_DEPTH = 8.0
+LAKE_SHELF = 60.0
+LAKE_BANK = 1.6
+LAKE_BLEND = (15.0, 35.0)
+LAKE_FINE = 60.0
 VILLAGE = (-980.0, -520.0)
 SEED = 3
 
@@ -78,12 +89,28 @@ def smooth_max(a, b, k):
     return b + (a - b) * h + k * h * (1.0 - h)
 
 
-# The river: a meandering line around the hill, from the north-west round the west and south.
+# The river: a meandering line around the hill, from the north-west round the west and south. It
+# comes down from the hills to the north as a stream, widening, and leaves the valley towards the
+# south-east, into the haze: no end of it shows from the hill.
 def river_line():
     cx, cy = center()
-    t = np.linspace(math.radians(100), math.radians(330), 1600)
+    t = np.linspace(math.radians(70), math.radians(360), 2200)
     r = 820 + 170 * np.sin(3 * t + 0.6) + 70 * np.sin(9 * t + 1.1)
-    return np.stack([cx + r * np.cos(t), cy + r * np.sin(t)], -1)
+    away = np.maximum(smoothstep(math.radians(100), math.radians(70), t), smoothstep(math.radians(330), math.radians(360), t))
+    r += 1400 * smoothstep(math.radians(100), math.radians(70), t) + 2600 * smoothstep(math.radians(330), math.radians(360), t)
+    line = np.stack([cx + r * np.cos(t), cy + r * np.sin(t)], -1)
+    # Where it runs out across the valley, it meanders.
+    tangent = np.gradient(line, axis=0)
+    normal = np.column_stack([-tangent[:, 1], tangent[:, 0]]) / np.linalg.norm(tangent, axis=1, keepdims=True)
+    along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))])
+    bends = smoothstep(0.0, 0.15, away) * (90.0 * np.sin(along / 260.0) + 35.0 * np.sin(along / 97.0 + 1.3))
+    return line + normal * bends[:, None]
+
+
+def river_width(line):
+    """The river's width along its line: a stream widening over its first 1.2 km."""
+    along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))])
+    return RIVER_WIDTH * (0.25 + 0.75 * smoothstep(0.0, 1200.0, along))
 
 
 RIVER_WIDTH = 14.0
@@ -146,11 +173,48 @@ def rise(x, y):
     return hills + mountains
 
 
+def natural_floor(x, y):
+    """The valley's floor before the lake, and the hills and mountains around it (world z)."""
+    return VALLEY + 5.0 * NOISE.fbm(x / 420.0, y / 420.0, 3) + rise(x, y)
+
+
+def lake_basin(x, y, floor):
+    """The land around the lake: its bed under the water, its bank, a mouth where the river meets it."""
+    x, y, floor = np.broadcast_arrays(np.asarray(x, np.float64), np.asarray(y, np.float64), np.asarray(floor, np.float64))
+    d = lake_distance(x, y)
+    near = d < LAKE_BLEND[1]
+    if not near.any():
+        return floor
+    out = floor.copy()
+    x, y, d, floor = x[near], y[near], d[near], floor[near]
+    level = lake_level()
+    river = distance_to_line(x, y, river_line(), 40.0)
+    mouth = smoothstep(0.5 * RIVER_WIDTH + 4.0, 0.5 * RIVER_WIDTH + 1.0, river) * (1.0 - smoothstep(20.0, LAKE_BLEND[1], d))
+    bed = level - np.maximum(LAKE_DEPTH * smoothstep(0.0, -LAKE_SHELF, d), 0.6 * mouth)
+    bank = level + LAKE_BANK * smoothstep(0.0, 15.0, d) * (1.0 - mouth) - 0.6 * mouth
+    shore = np.where(d < 0.0, bed, bank)
+    out[near] = shore + smoothstep(*LAKE_BLEND, d) * (floor - shore)
+    return out
+
+
 def valley_floor(x, y):
-    """The valley's floor and the hills and mountains around it (world z)."""
-    swell = 5.0 * NOISE.fbm(x / 420.0, y / 420.0, 3)
-    lake = 6.0 * smoothstep(20.0, -30.0, lake_distance(x, y))
-    return VALLEY + swell + rise(x, y) - lake
+    """The valley's floor with the lake's basin, and the hills and mountains around it (world z)."""
+    return lake_basin(x, y, natural_floor(x, y))
+
+
+def shoreline(offset, count=720):
+    """Points around the lake where lake_distance is offset, along rays from its centre (the shore is
+    star-shaped about it)."""
+    cx, cy = center()
+    lx, ly = cx + LAKE[0], cy + LAKE[1]
+    t = np.linspace(0.0, 2.0 * math.pi, count, endpoint=False)
+    lo, hi = np.zeros(count), np.full(count, LAKE[2] + 250.0)
+    for _ in range(40):
+        middle = 0.5 * (lo + hi)
+        inside = lake_distance(lx + middle * np.cos(t), ly + middle * np.sin(t)) < offset
+        lo, hi = np.where(inside, middle, lo), np.where(inside, hi, middle)
+    r = 0.5 * (lo + hi)
+    return lx + r * np.cos(t), ly + r * np.sin(t)
 
 
 GROUND = None
@@ -259,11 +323,78 @@ def land_mesh(build, lo, hi):
         for tri in strip(np.zeros(n), np.zeros(m)):
             faces.append([(a0 if w == "a" else b0) + v for w, v in tri])
     xy = np.concatenate(points)
-    z = land(xy[:, 0], xy[:, 1], build)
-    # Under the near band's ground where they overlap, so its mirrored tiles show.
-    d = forest_edge.distance(xy[:, 0], xy[:, 1])
-    z -= 2.5 * (1.0 - smoothstep(forest_edge.BAND - 10.0, forest_edge.BAND + 20.0, d))
-    return np.column_stack([xy, z]), np.array(faces)
+    faces = np.array(faces)
+
+    def height(p):
+        z = land(p[:, 0], p[:, 1], build)
+        # Under the near band's ground where they overlap, so its mirrored tiles show.
+        d = forest_edge.distance(p[:, 0], p[:, 1])
+        return z - 2.5 * (1.0 - smoothstep(forest_edge.BAND - 10.0, forest_edge.BAND + 20.0, d))
+
+    z = height(xy)
+    xy, z, faces = refine(xy, z, faces, height, lambda p: np.abs(lake_distance(p[:, 0], p[:, 1])) < LAKE_FINE, 8)
+    return np.column_stack([xy, z]), faces
+
+
+def refine(xy, z, faces, height, near, k):
+    """Split the triangles with a corner or centre near() into k * k. New points take height(), but
+    those on an edge shared with an unsplit triangle lie on that edge: no crack at the T-junctions."""
+    tri = xy[faces]
+    split = near(tri.mean(axis=1)) | near(tri[:, 0]) | near(tri[:, 1]) | near(tri[:, 2])
+    if not split.any():
+        return xy, z, faces
+    sides = {}
+    for f, (a, b, c) in enumerate(faces):
+        for p, q in ((a, b), (b, c), (c, a)):
+            sides.setdefault((min(p, q), max(p, q)), []).append(f)
+    points, heights = [], []  # new points; interpolated heights, or NaN where height() gives them
+    base = len(xy)
+
+    def add(point, h=np.nan):
+        points.append(point)
+        heights.append(h)
+        return base + len(points) - 1
+
+    edge_points = {}
+
+    def along(p, q, i):  # the i-th of the k - 1 points from p to q
+        key = (min(p, q), max(p, q))
+        if key not in edge_points:
+            a, b = key
+            on_unsplit = not all(split[f] for f in sides[key])
+            edge_points[key] = [add(xy[a] + (xy[b] - xy[a]) * s / k, z[a] + (z[b] - z[a]) * s / k if on_unsplit else np.nan)
+                                for s in range(1, k)]
+        return edge_points[key][(i if p < q else k - i) - 1]
+
+    kept = [f for f, s in zip(faces, split) if not s]
+    new = []
+    for a, b, c in faces[split]:
+        grid = {}
+        for i in range(k + 1):
+            for j in range(k + 1 - i):
+                if (i, j) == (0, 0):
+                    grid[i, j] = a
+                elif (i, j) == (k, 0):
+                    grid[i, j] = b
+                elif (i, j) == (0, k):
+                    grid[i, j] = c
+                elif j == 0:
+                    grid[i, j] = along(a, b, i)
+                elif i == 0:
+                    grid[i, j] = along(a, c, j)
+                elif i + j == k:
+                    grid[i, j] = along(b, c, j)
+                else:
+                    grid[i, j] = add(xy[a] + (xy[b] - xy[a]) * i / k + (xy[c] - xy[a]) * j / k)
+        for i in range(k):
+            for j in range(k - i):
+                new.append([grid[i, j], grid[i + 1, j], grid[i, j + 1]])
+                if i + j < k - 1:
+                    new.append([grid[i + 1, j], grid[i + 1, j + 1], grid[i, j + 1]])
+    points, heights = np.array(points), np.array(heights)
+    missing = np.isnan(heights)
+    heights[missing] = height(points[missing])
+    return np.vstack([xy, points]), np.concatenate([z, heights]), np.array(kept + new)
 
 
 def normals(v, build, h=1.5):
@@ -380,14 +511,27 @@ def cover(x, y, build):
     # The village's yards and gardens; the lake's and river's beds.
     rgb = np.where(((village < 120.0 + 30.0 * NOISE(x / 50.0, y / 50.0)) & (near_road >= 2.5))[..., None],
                    srgb((106, 114, 78)) * (0.9 + 0.2 * NOISE(x / 8.0, y / 8.0))[..., None], rgb)
-    # The lake's bed where its water lies over the land, a muddy margin just above it.
-    level = lake_level()
-    shore = lake_distance(x, y) < 60.0
-    rgb = np.where((shore & (z < level + 0.25))[..., None], srgb((112, 104, 82)), rgb)
-    bed = srgb((50, 62, 54))
-    rgb = np.where((shore & (z < level))[..., None], bed, rgb)
-    rgb = np.where((river < 0.5 * RIVER_WIDTH + 2.0)[..., None], bed, rgb)
-    return rgb
+    # The lake's shore: along some stretches a narrow beach of pale sand, along others the meadow and
+    # reeds down to the water, with a thin wet line at it; under the water, sand in the shallows
+    # darkening to mud with depth. Blended by height, so the texels' grid does not show.
+    height = (z - lake_level())[..., None]
+    lake = lake_distance(x, y)[..., None]
+    shore = lake < 20.0
+    sandy = smoothstep(0.12, 0.3, NOISE(x / 70.0, y / 70.0))[..., None]
+    sand = srgb((174, 162, 126)) * (0.95 + 0.1 * NOISE(x / 15.0, y / 15.0))[..., None]
+    reeds = srgb((82, 96, 48)) * (0.9 + 0.2 * NOISE(x / 9.0, y / 9.0))[..., None]
+    margin = reeds + sandy * (sand - reeds)
+    reach = smoothstep(0.6, 0.25, height) * sandy + smoothstep(0.35, 0.1, height) * (1.0 - sandy)
+    # On the bank only: past it the land is the valley's own, however low.
+    bank = 1.0 - smoothstep(10.0, 20.0, lake)
+    rgb = np.where(shore, rgb + bank * reach * (margin - rgb), rgb)
+    rgb = np.where(shore, rgb + bank * 0.45 * smoothstep(0.12, 0.0, height) * (srgb((96, 90, 66)) - rgb), rgb)
+    shallows = srgb((138, 128, 98)) + sandy * (srgb((160, 148, 114)) - srgb((138, 128, 98)))
+    bed = shallows + smoothstep(0.4, 4.0, -height) * (srgb((66, 72, 54)) - shallows)
+    rgb = np.where((lake < 0.0) & (height < 0.0), bed, rgb)
+    # The river's bed, up to the lake's.
+    bed = smoothstep(0.5 * RIVER_WIDTH + 3.0, 0.5 * RIVER_WIDTH + 1.0, river)[..., None] * smoothstep(-8.0, 0.0, lake)
+    return rgb + bed * (srgb((58, 66, 52)) - rgb)
 
 
 # Towards the main sun (the first DirectionalLight, reversed).
@@ -453,35 +597,56 @@ def paint(path, build, half, size=TEXTURE, rows=128):
 
 # -- water and the village ------------------------------------------------------------------------
 
+LEVEL = None
+
+
 def lake_level():
-    """The lake's water level: 4 m above its deepest point."""
-    cx, cy = center()
-    return float(valley_floor(np.array([cx + LAKE[0]]), np.array([cy + LAKE[1]]))[0]) + 4.0
+    """The lake's water level: half a metre under the valley floor's mean along its shore."""
+    global LEVEL
+    if LEVEL is None:
+        x, y = shoreline(0.0)
+        LEVEL = float(np.mean(natural_floor(x, y))) - 0.5
+    return LEVEL
 
 
 def lake_mesh(build):
+    """The lake's water, out to 3 m past the shore (the bank hides that much; the land meeting it draws
+    the waterline): rings about 12 m apart shrinking to its centre, points about 12 m apart along
+    them, so its triangles are not slivers (GPUs shade a fan's thin triangles many times over)."""
     cx, cy = center()
-    lx, ly, ax, ay, turn = LAKE
-    level = lake_level()
-    t = np.linspace(0, 2 * math.pi, 97)[:-1]
-    c, s = math.cos(turn), math.sin(turn)
-    u, v = (ax + 25) * np.cos(t), (ay + 25) * np.sin(t)
-    x, y = cx + lx + c * u - s * v, cy + ly + s * u + c * v
-    v3 = np.vstack([[cx + lx, cy + ly, level], np.column_stack([x, y, np.full_like(x, level)])])
-    faces = np.array([[0, k + 1, (k + 1) % len(t) + 1] for k in range(len(t))])
-    return v3, faces
+    lx, ly = cx + LAKE[0], cy + LAKE[1]
+    points, starts, faces = [np.array([[lx, ly]])], [0], []
+    scales = np.linspace(1.0, 0.08, 12)
+    for s in scales:
+        x, y = shoreline(3.0, max(8, int(110 * s)))
+        starts.append(starts[-1] + len(points[-1]))
+        points.append(np.column_stack([lx + s * (x - lx), ly + s * (y - ly)]))
+    for k in range(1, len(scales)):  # outer ring k, inner ring k + 1
+        a0, b0 = starts[k + 1], starts[k]
+        for tri in strip(np.zeros(len(points[k + 1])), np.zeros(len(points[k]))):
+            faces.append([(a0 if w == "a" else b0) + v for w, v in tri])
+    inner = len(points[-1])
+    faces += [[0, starts[-1] + k, starts[-1] + (k + 1) % inner] for k in range(inner)]
+    xy = np.concatenate(points)
+    return np.column_stack([xy, np.full(len(xy), lake_level())]), np.array(faces)
 
 
 def river_mesh(build):
+    """The river's water: a ribbon over its bed, coming level with the lake where it enters it and
+    ending inside it (level with the lake's own water, as the same material, the overlap does not show)."""
     line = river_line()
     tangent = np.gradient(line, axis=0)
     tangent /= np.linalg.norm(tangent, axis=1, keepdims=True)
-    side = np.column_stack([-tangent[:, 1], tangent[:, 0]]) * (0.5 * RIVER_WIDTH)
-    level = land(line[:, 0], line[:, 1], build) + 0.4
+    side = np.column_stack([-tangent[:, 1], tangent[:, 0]]) * (0.5 * river_width(line))[:, None]
+    d = lake_distance(line[:, 0], line[:, 1])
+    level = lake_level()
+    z = land(line[:, 0], line[:, 1], build) + 0.4
+    z = level + smoothstep(10.0, 60.0, d) * (z - level)
     left, right = line + side, line - side
-    v = np.vstack([np.column_stack([left, level]), np.column_stack([right, level])])
+    v = np.vstack([np.column_stack([left, z]), np.column_stack([right, z])])
     n = len(line)
-    faces = [[k, n + k, k + 1] for k in range(n - 1)] + [[k + 1, n + k, n + k + 1] for k in range(n - 1)]
+    keep = d > -6.0
+    faces = [f for k in range(n - 1) if keep[k] and keep[k + 1] for f in ([k, n + k, k + 1], [k + 1, n + k, n + k + 1])]
     return v, np.array(faces)
 
 
@@ -569,11 +734,16 @@ def shapes(build, out):
       geometry Mesh {{ url "meshes/{name}.obj" }}
       castShadows FALSE
     }}""")
+    # The lake and the river: clear water over their beds, greener with depth, rippled by the wind.
     water = """appearance PBRAppearance {
         baseColor 1 1 1
         roughness 0
         metalness 0
         transmission 1
+        attenuationColor 0.42 0.66 0.64
+        attenuationDistance 3
+        scatterColor 0.03 0.1 0.12
+        waves 0.1
       }"""
     for name, (v, faces) in (("valley_lake", lake_mesh(build)), ("valley_river", river_mesh(build))):
         n = np.tile([0.0, 0.0, 1.0], (len(v), 1))
