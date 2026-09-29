@@ -19,9 +19,8 @@ FOG_SIZE = (208.8162231, 208.8162231, 29.1523743)
 FOG_COLOR = 0.8
 FOG_DENSITY = 0.004
 FOG_ANISOTROPY = 0.8
-# The sea of cloud: extinction per metre below its tops, so ground and trees sinking into it
-# fade over a few tens of metres.
-CLOUD_EXTINCTION = 0.06
+# Land past the box takes the horizon's colour over this distance (e^-1 of it left).
+HAZE_DISTANCE = 6000.0
 
 
 def srgb(linear):
@@ -98,10 +97,13 @@ def light_occlusion_fields(build, out, home, bounds):
     Image.fromarray(np.round(np.clip(image, 0, 1) * 255).astype(np.uint8), "RGBA").save(out / "meshes/light_occlusion.png")
     heights = " ".join(f"{h:g}" for h in meta["heights"])
     # Past the rectangle, the same layers where the ground lies after falling away (Webots patch 0066).
+    import forest_valley
     from forest_edge import outer_light_occlusion
 
+    # Over the hillside's forest, opening where it ends above the valley's fields.
     outer = outer_light_occlusion(out / "meshes/light_occlusion.png", (*world_min, *world_max), (low, high),
-                                  len(meta["heights"]), out / "meshes/light_occlusion_outer.png")
+                                  len(meta["heights"]), out / "meshes/light_occlusion_outer.png",
+                                  lambda x, y: forest_valley.land(x, y, build), forest_valley.HILLSIDE + 20.0, (230.0, 300.0))
     return f"""
   lightOcclusionUrl [ "meshes/light_occlusion.png" ]
   lightOcclusionMin {world_min[0]:.4f} {world_min[1]:.4f}
@@ -171,7 +173,9 @@ def fog_node(build, out, home):
     horizon_path = build / "sky_horizon.json"
     horizon = ""
     if horizon_path.exists():
-        values = ", ".join(" ".join(f"{c:.4f}" for c in v) for v in json.loads(horizon_path.read_text()))
+        from sky_faces import CAMERA_SKY
+
+        values = ", ".join(" ".join(f"{c * CAMERA_SKY:.4f}" for c in v) for v in json.loads(horizon_path.read_text()))
         horizon = f"\n  horizonRadiance [ {values} ]"
     phase_path = build / "sky_phase_radiance.json"
     if phase_path.exists():
@@ -179,20 +183,8 @@ def fog_node(build, out, home):
         horizon += f"\n  ambientRadiance [ {values} ]"
     center = (FOG_CENTER[0] - home[0], FOG_CENTER[1] - home[1], FOG_CENTER[2])
     color = srgb(FOG_COLOR)
-    # The sea of cloud (Webots patch 0065), lit by the lighting sky; the ground past the region
-    # falls into it (tools/forest_edge.py).
-    from bake_cloud_tops import bake
-    from forest_edge import CLOUD_HEIGHT
-    from sky_faces import irradiance
-
-    tile = bake(out / "meshes/cloud_tops.png")
-    sky = irradiance(build, "sky_light", (0.0, 0.0, 1.0))
-    cloud = f"""
-  cloudUrl [ "meshes/cloud_tops.png" ]
-  cloudHeight {CLOUD_HEIGHT[0]:g} {CLOUD_HEIGHT[1]:g}
-  cloudTile {tile:g}
-  cloudExtinction {CLOUD_EXTINCTION}
-  cloudSkyIrradiance {sky[0]:.4f} {sky[1]:.4f} {sky[2]:.4f}"""
+    # Haze over the valley past the box (Webots patch 0070).
+    haze = f"\n  hazeDistance {HAZE_DISTANCE:g}"
     return f"""Fog {{
   fogType "SCATTERING"
   color {color:.4f} {color:.4f} {color:.4f}
@@ -202,5 +194,5 @@ def fog_node(build, out, home):
   boxSize {FOG_SIZE[0]:.4f} {FOG_SIZE[1]:.4f} {FOG_SIZE[2]:.4f}
   boxFalloff {FOG_FALLOFF}
   boxFalloffHorizontal {FOG_FALLOFF_SIDES}
-  ambientColor {' '.join(f'{srgb(c):.4f}' for c in ambient)}{occlusion}{horizon}{cloud}
+  ambientColor {' '.join(f'{srgb(c):.4f}' for c in ambient)}{occlusion}{horizon}{haze}
 }}"""

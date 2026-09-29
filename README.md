@@ -6,8 +6,8 @@ inspection and return. Everything is simulated. Named for the holding
 pattern: sit back and watch autonomy fly.
 
 Today: a reproducible Webots–ArduPilot flight (take off, hover, land on EKF3
-with simulated GPS) over a Poly Haven pine forest, on high ground above a sea of
-cloud. What comes next is in
+with simulated GPS) over a Poly Haven pine forest, on a hilltop above a
+valley. What comes next is in
 [ROADMAP.md](ROADMAP.md).
 
 ## Quick start
@@ -181,11 +181,11 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0062-indexed-file-meshes** | Meshes read from files go to WREN as stored, a vertex list and triangles indexing it, instead of expanded to one vertex per triangle corner and merged back (7.8 M corners into 2.5 M vertices in the forest). WREN numbers vertices by first use either way, and the shadow limit still counts corners: identical GPU meshes, images and sensor data. | forest load 8.0 → 7.0 s |
 | **0063-short-indices** | Static meshes whose vertices fit in 16 bits keep their indices in 16 bits on the GPU (most of the forest's meshes); reading them back (shadow volumes, export) widens them. Same triangles. | GPU −10 MB |
 | **0064-float-mesh-attributes** | Webots' CPU copy of a file mesh keeps its per-vertex normals and texture coordinates as the floats they come in (assimp's, or the mesh cache's), not doubles; lookups return the same values. Coordinates stay doubles for physics. | RAM 660 → 610 MB |
-| **0065-cloud-sea** | `Fog.cloud*`: a sea of cloud below the scattering medium, in every view that renders it (main view, robot cameras). Its tops are a tiling 16-bit height map (puffs on puffs, `tools/bake_cloud_tops.py`) over swells from the same map, larger and turned; view rays find them in steps as long as the tops' slope allows. Lit by the suns (shadowed by billows upsun and the shadow maps) and the sky's irradiance; far tops take the horizon's colour; what lies below them fades by depth. Range sensors do not see it. Post-processing inputs can be mipmapped, and the fog's maps are shared by all views. | under 0.3 ms |
-| **0066-outer-light-occlusion** | `Background.lightOcclusionOuter*`: light visibility layers at the same heights over a larger rectangle, not mirrored, used past the first. The land past the region lies up to 100 m lower: read against the mirrored ground, its trees took the light of the canopy's floor. | — |
-| **0067-occlusion-retry** | A view that stopped culling because it hid too little (looking out over the cloud) tries again as soon as it draws 10 M more instanced triangles than it did then, not 30 frames later. | moving view 54.5 → 48.6 ms, p99 67 → 55–61 ms |
-| **0068-camera-frustum** | A camera's culling frustum follows it again. Reading its view matrix first (instance culling does) cleared the flag the frustum waited on, so a robot camera that had moved or turned since its first frame culled with its old frustum and lost trees, rocks and cover: 44–83% of pixels at three of five probe poses. The main view and LiDAR were unaffected. | — |
-| **0069-cloud-footprint-in-cameras** | Robot cameras render upside down, with a negative vertical projection term: the cloud took a negative pixel footprint there and sampled its finest level at every distance. | — |
+| **0065-outer-light-occlusion** | `Background.lightOcclusionOuter*`: light visibility layers at the same heights over a larger rectangle, at the ground as it lies there, not mirrored; used past the first by surfaces and the fog's medium. Past both, open land in full light. The hillside falls about 250 m to the valley: read against the mirrored ground, its trees took the light of the canopy's floor. | — |
+| **0066-occlusion-retry** | A view that stopped culling because it hid too little (looking out past the edge) tries again as soon as it draws 10 M more instanced triangles than it did then, not 30 frames later. | moving view 54.5 → 48.6 ms, p99 67 → 55–61 ms |
+| **0067-camera-frustum** | A camera's culling frustum follows it again. Reading its view matrix first (instance culling does) cleared the flag the frustum waited on, so a robot camera that had moved or turned since its first frame culled with its old frustum and lost trees, rocks and cover: 44–83% of pixels at three of five probe poses. The main view and LiDAR were unaffected. | — |
+| **0068-distance-haze** | `Fog.hazeDistance`: over the part of a view ray outside the fog box's footprint, surfaces take the horizon's colour (0020), 1 − e^(−length / hazeDistance). The valley's hills and mountains, 2–7 km out, stood against the sky unveiled: the fog thins out within 30 m of its box's sides (0034). | — |
+| **0069-bc1-textures** | `ImageTexture` also reads opaque BC1 from DDS files (DXGI 71/72, mip levels included): 8 bytes per 4 × 4 block, half of BC7's. | valley land textures (2048², 1024²) on the GPU: 3.5 MB; 7 MB as BC7, 28 MB as RGBA8 |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,

@@ -1,7 +1,9 @@
 """Webots cube map faces of the forest's skies (tools/export_forest_sky.py writes them)."""
-import math
-
 import numpy as np
+
+# The source shows cameras its sunset HDRI at strength 0.2; over the open valley the world shows it at
+# 0.5 (x 2.5): at 0.2 the far haze, which meets that sky at the horizon, turned the valley grey.
+CAMERA_SKY = 2.5
 
 # Webots (ENU) fills OpenGL cube face g (+X, -X, +Y, -Y, +Z, -Z) from the url field
 # named here, rotated as its loader does, and samples it with (x, y, -z) of a world
@@ -34,13 +36,17 @@ def read_hdr(path):
     return rgbe[..., :3] * scale
 
 
-def irradiance(folder, prefix, normal):
-    """Irradiance / pi of the sky faces prefix_{face}.hdr on a surface facing `normal`."""
-    total, weight = np.zeros(3), 0.0
-    for name in WEBOTS_FACES:
-        radiance = read_hdr(folder / f"{prefix}_{name}.hdr")
-        d = face_directions(name, radiance.shape[0])
-        solid = np.abs(d).max(axis=-1) ** 3  # a cube texel's solid angle, up to a constant
-        total += (radiance * (solid * np.clip(d @ np.asarray(normal, float), 0, None))[..., None]).sum(axis=(0, 1))
-        weight += solid.sum()
-    return total * (4 * math.pi / weight) / math.pi
+def write_hdr(path, rgb):
+    """Radiance RGBE, rows from the top, values as given: Blender's own save applies the
+    display transform, which left the sky sRGB-encoded (2.4x too bright at 0.18)."""
+    rgb = np.maximum(rgb.astype(np.float64), 0)
+    peak = rgb.max(axis=-1)
+    mantissa, exponent = np.frexp(peak)
+    scale = np.where(peak > 1e-32, mantissa * 256 / np.maximum(peak, 1e-300), 0)
+    rgbe = np.zeros(rgb.shape[:2] + (4,), np.uint8)
+    rgbe[..., :3] = np.clip(rgb * scale[..., None], 0, 255).astype(np.uint8)
+    rgbe[..., 3] = np.where(peak > 1e-32, exponent + 128, 0)
+    height, width = rgb.shape[:2]
+    with open(path, "wb") as stream:
+        stream.write(f"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {height} +X {width}\n".encode())
+        stream.write(rgbe.tobytes())

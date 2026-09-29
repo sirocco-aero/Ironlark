@@ -1,0 +1,156 @@
+diff --git a/include/wren/texture_2d.h b/include/wren/texture_2d.h
+index 5a5a876..0ac7c7d 100644
+--- a/include/wren/texture_2d.h
++++ b/include/wren/texture_2d.h
+@@ -17,8 +17,9 @@ WrTexture2d *wr_texture_2d_new();
+ WrTexture2d *wr_texture_2d_copy_from_cache(const char *file_path);
+ 
+ void wr_texture_2d_set_data(WrTexture2d *texture, const char *data);
+-/* BC7 block-compressed data with its mip levels 0..levels-1 in order (as in a DDS file) */
+-void wr_texture_2d_set_compressed_data(WrTexture2d *texture, const char *data, int levels);
++/* Block-compressed data with its mip levels 0..levels-1 in order (as in a DDS file): BC7, or BC1
++   (opaque, 8 bytes a block) when bc1 is true */
++void wr_texture_2d_set_compressed_data(WrTexture2d *texture, const char *data, int levels, bool bc1);
+ /* The file path is used to produce a hash for the texture cache.
+    If none is provided, a unique string will be generated and used instead. */
+ void wr_texture_2d_set_file_path(WrTexture2d *texture, const char *file_path);
+diff --git a/src/webots/nodes/WbImageTexture.cpp b/src/webots/nodes/WbImageTexture.cpp
+index 7433bdb..01671f3 100644
+--- a/src/webots/nodes/WbImageTexture.cpp
++++ b/src/webots/nodes/WbImageTexture.cpp
+@@ -106,6 +106,7 @@ void WbImageTexture::init() {
+   mExternalTextureData = NULL;
+   mImage = NULL;
+   mCompressedLevels = 0;
++  mCompressedBc1 = false;
+   mUsedFiltering = 0;
+   mWrenTextureIndex = 0;
+   mIsMainTextureTransparent = true;
+@@ -223,8 +224,8 @@ bool WbImageTexture::loadTexture() {
+   return r;
+ }
+ 
+-// A DDS file with DX10 header and BC7 data (DXGI_FORMAT_BC7_UNORM), mip levels included.
+-// Its pixel format flag DDPF_ALPHAPIXELS says whether the alpha channel is used.
++// A DDS file with DX10 header and BC7 data (DXGI_FORMAT_BC7_UNORM), or opaque BC1 (DXGI_FORMAT_BC1_UNORM),
++// mip levels included. Its pixel format flag DDPF_ALPHAPIXELS says whether the alpha channel is used.
+ bool WbImageTexture::loadCompressed(const QByteArray &file) {
+   const auto u32 = [&file](int offset) {
+     return static_cast<quint32>(static_cast<unsigned char>(file[offset])) |
+@@ -232,10 +233,13 @@ bool WbImageTexture::loadCompressed(const QByteArray &file) {
+            static_cast<quint32>(static_cast<unsigned char>(file[offset + 2])) << 16 |
+            static_cast<quint32>(static_cast<unsigned char>(file[offset + 3])) << 24;
+   };
+-  if (file.size() < 148 || !file.startsWith("DDS ") || file.mid(84, 4) != "DX10" || (u32(128) != 98 && u32(128) != 99)) {
+-    warn(tr("Unsupported DDS texture '%1': only BC7 with a DX10 header is read.").arg(path()));
++  const quint32 format = file.size() < 148 ? 0 : u32(128);
++  if (file.size() < 148 || !file.startsWith("DDS ") || file.mid(84, 4) != "DX10" ||
++      (format != 98 && format != 99 && format != 71 && format != 72)) {
++    warn(tr("Unsupported DDS texture '%1': only BC7 or BC1 with a DX10 header is read.").arg(path()));
+     return false;
+   }
++  mCompressedBc1 = format == 71 || format == 72;
+   mCompressedSize = QSize(u32(16), u32(12));
+   mCompressedLevels = qMax(1u, u32(28));
+   mIsMainTextureTransparent = u32(80) & 0x1;
+@@ -319,7 +323,7 @@ void WbImageTexture::updateWrenTexture() {
+       texture = wr_texture_2d_new();
+       wr_texture_set_size(WR_TEXTURE(texture), mCompressedSize.width(), mCompressedSize.height());
+       wr_texture_set_translucent(WR_TEXTURE(texture), mIsMainTextureTransparent);
+-      wr_texture_2d_set_compressed_data(texture, mCompressed.constData(), mCompressedLevels);
++      wr_texture_2d_set_compressed_data(texture, mCompressed.constData(), mCompressedLevels, mCompressedBc1);
+       wr_texture_2d_set_file_path(texture, completeUrl.toUtf8().constData());
+       wr_texture_setup(WR_TEXTURE(texture));
+       WbWrenOpenGlContext::doneWren();
+diff --git a/src/webots/nodes/WbImageTexture.hpp b/src/webots/nodes/WbImageTexture.hpp
+index 5e2d435..b686e95 100644
+--- a/src/webots/nodes/WbImageTexture.hpp
++++ b/src/webots/nodes/WbImageTexture.hpp
+@@ -109,7 +109,8 @@ private:
+   const unsigned char *mExternalTextureData;
+ 
+   QImage *mImage;
+-  QByteArray mCompressed;  // BC7 mip levels from a DDS file, in place of mImage
++  QByteArray mCompressed;  // BC7 or BC1 mip levels from a DDS file, in place of mImage
++  bool mCompressedBc1;
+   int mCompressedLevels;
+   QSize mCompressedSize;
+   bool loadCompressed(const QByteArray &file);
+diff --git a/src/wren/Texture2d.cpp b/src/wren/Texture2d.cpp
+index 3ad18bf..d6c87ae 100644
+--- a/src/wren/Texture2d.cpp
++++ b/src/wren/Texture2d.cpp
+@@ -29,6 +29,9 @@
+ #include <algorithm>
+ #include <cstring>
+ 
++#ifndef GL_COMPRESSED_RGB_S3TC_DXT1_EXT
++#define GL_COMPRESSED_RGB_S3TC_DXT1_EXT 0x83F0  // EXT_texture_compression_s3tc
++#endif
+ #ifndef GL_COMPRESSED_RGBA_BPTC_UNORM
+ #define GL_COMPRESSED_RGBA_BPTC_UNORM 0x8E8C  // GL 4.2, ARB_texture_compression_bptc
+ #endif
+@@ -94,7 +97,7 @@ namespace wren {
+     }
+   }
+ 
+-  Texture2d::Texture2d() : mData(NULL), mCompressedLevels(0), mIsCachePersistent(false), mCacheData(NULL) {
++  Texture2d::Texture2d() : mData(NULL), mCompressedLevels(0), mIsBc1(false), mIsCachePersistent(false), mCacheData(NULL) {
+   }
+ 
+   void Texture2d::prepareGl() {
+@@ -112,12 +115,14 @@ namespace wren {
+     bind(Texture::DEFAULT_USAGE_PARAMS);
+ 
+     if (mData && mCompressedLevels > 0) {
+-      // BC7: 16 bytes per 4x4 block; the levels come with the data, none are generated.
++      // BC7: 16 bytes per 4x4 block, BC1: 8; the levels come with the data, none are generated.
+       const char *level = static_cast<const char *>(mData);
++      const int block = mIsBc1 ? 8 : 16;
++      const unsigned int format = mIsBc1 ? GL_COMPRESSED_RGB_S3TC_DXT1_EXT : GL_COMPRESSED_RGBA_BPTC_UNORM;
+       for (int i = 0; i < mCompressedLevels; ++i) {
+         const int w = std::max(1, mWidth >> i), h = std::max(1, mHeight >> i);
+-        const int size = ((w + 3) / 4) * ((h + 3) / 4) * 16;
+-        glCompressedTexImage2D(GL_TEXTURE_2D, i, GL_COMPRESSED_RGBA_BPTC_UNORM, w, h, 0, size, level);
++        const int size = ((w + 3) / 4) * ((h + 3) / 4) * block;
++        glCompressedTexImage2D(GL_TEXTURE_2D, i, format, w, h, 0, size, level);
+         level += size;
+       }
+       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, mCompressedLevels - 1);
+@@ -168,8 +173,8 @@ void wr_texture_2d_set_data(WrTexture2d *texture, const char *data) {
+   reinterpret_cast<wren::Texture2d *>(texture)->setData(data);
+ }
+ 
+-void wr_texture_2d_set_compressed_data(WrTexture2d *texture, const char *data, int levels) {
+-  reinterpret_cast<wren::Texture2d *>(texture)->setCompressedData(data, levels);
++void wr_texture_2d_set_compressed_data(WrTexture2d *texture, const char *data, int levels, bool bc1) {
++  reinterpret_cast<wren::Texture2d *>(texture)->setCompressedData(data, levels, bc1);
+ }
+ 
+ void wr_texture_2d_set_file_path(WrTexture2d *texture, const char *file_path) {
+diff --git a/src/wren/Texture2d.hpp b/src/wren/Texture2d.hpp
+index b049c05..2d3200c 100644
+--- a/src/wren/Texture2d.hpp
++++ b/src/wren/Texture2d.hpp
+@@ -42,10 +42,11 @@ namespace wren {
+     bool isCompressed() const { return mCompressedLevels > 0; }
+ 
+     void setData(const char *data) { mData = data; }
+-    // Block-compressed data (BC7), mip levels 0..levels-1 one after another, uploaded as is.
+-    void setCompressedData(const char *data, int levels) {
++    // Block-compressed data (BC7, or BC1), mip levels 0..levels-1 one after another, uploaded as is.
++    void setCompressedData(const char *data, int levels, bool bc1) {
+       mData = data;
+       mCompressedLevels = levels;
++      mIsBc1 = bc1;
+     }
+     // The file path is used to produce a hash instead of hashing the texture data,
+     // which can be unbearably slow if there are many/big textures.
+@@ -68,6 +69,7 @@ namespace wren {
+ 
+     const void *mData;
+     int mCompressedLevels;  // 0: uncompressed
++    bool mIsBc1;            // else BC7
+ 
+     std::string mFilePath;
+ 

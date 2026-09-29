@@ -39,7 +39,7 @@ index d6833a3..34c3032 100644
    field    MFString terrainDetailMaskUrl   []
    field    MFVec2f  terrainDetailTiles     []  # layers 0..2 tile sizes, tiling origin, baked texel size (x)
 diff --git a/resources/wren/shaders/pbr.frag b/resources/wren/shaders/pbr.frag
-index 14e64a4..47c421e 100644
+index 14e64a4..f3309a5 100644
 --- a/resources/wren/shaders/pbr.frag
 +++ b/resources/wren/shaders/pbr.frag
 @@ -55,6 +55,7 @@ uniform sampler2DArrayShadow shadowMap;
@@ -59,7 +59,7 @@ index 14e64a4..47c421e 100644
  }
  shadows;
  
-@@ -84,11 +87,34 @@ vec3 surfacePosition;
+@@ -84,11 +87,35 @@ vec3 surfacePosition;
  // Baked light visibility at this point (RGBA as the layers): the layers at the heights above
  // the ground around it, interpolated; above the top layer it opens to the sky over 10 m. The
  // ground height is in the layer after the last.
@@ -90,12 +90,13 @@ index 14e64a4..47c421e 100644
 +    vec2 outer = (surfacePosition.xy - shadows.occlusionOuterRect.xy) / (shadows.occlusionOuterRect.zw - shadows.occlusionOuterRect.xy);
 +    if (all(greaterThanEqual(outer, vec2(0.0))) && all(lessThanEqual(outer, vec2(1.0))))
 +      return outerVisibility(outer, count);
++    return vec4(1.0);  // open land past both
 +  }
    if (shadows.occlusionParams.w > 0.0)
      uv = 1.0 - abs(mod(uv, 2.0) - 1.0);  // mirrored tiling, as the backdrop
    else if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
 diff --git a/resources/wren/shaders/scattering_fog.frag b/resources/wren/shaders/scattering_fog.frag
-index ec0ed49..03cc34f 100644
+index fe4f5a5..28c711e 100644
 --- a/resources/wren/shaders/scattering_fog.frag
 +++ b/resources/wren/shaders/scattering_fog.frag
 @@ -33,6 +33,7 @@ uniform vec2 occlusionHeight; // ground height encoded by G = 0 and G = 1
@@ -117,7 +118,7 @@ index ec0ed49..03cc34f 100644
  }
  shadows;
  
-@@ -137,6 +142,37 @@ vec4 bakedVisibility(vec3 p) {
+@@ -131,6 +136,38 @@ vec4 bakedVisibility(vec3 p) {
    if (count <= 0)
      return vec4(1.0);
    vec2 uv = (p.xy - shadows.occlusionRect.xy) / (shadows.occlusionRect.zw - shadows.occlusionRect.xy);
@@ -151,6 +152,7 @@ index ec0ed49..03cc34f 100644
 +      return mix(textureLod(lightOcclusionOuter, vec3(outer, float(count - 1)), 0.0), vec4(1.0),
 +                 clamp((height - last) / 10.0, 0.0, 1.0));
 +    }
++    return vec4(1.0);  // open land past both
 +  }
    if (shadows.occlusionParams.w > 0.0)
      uv = 1.0 - abs(mod(uv, 2.0) - 1.0);

@@ -18,7 +18,8 @@ and pipeline bottlenecks; don't cut asset quality.
 Rejected: Kenney Nature Kit (look).
 
 Matched to the source: Filmic "Medium High Contrast" view, both suns (strength,
-color, direction), the camera-visible sky (HDRI × 0.2 with its rotation), the
+color, direction), the camera-visible sky (the HDRI with its rotation, at 0.5 where the
+source shows it at 0.2: over the open valley its far haze turned the land grey), the
 lighting sky (Nishita × 0.7), and HD (1K) object textures downsampled from the
 source's originals, the source's exposure (+1) and no bloom. Both skies are written
 as linear radiance; Blender's own HDR save had stored them display-encoded (2.4×
@@ -26,22 +27,24 @@ too bright at mid-grey). Light under the canopy comes from baked visibility
 layers traced through the real foliage (`tools/bake_forest_light.py`, patches
 0026–0028).
 
-The region is high ground above a sea of cloud. The viewer is fenced inside the
-exported source terrain (203 × 200 m, patch 0012). Past it, its ground and forest
-are mirrored across each edge of the rectangle the terrain fully covers (trees and
+The region is a hilltop above a valley. The viewer is fenced inside the exported
+source terrain (203 × 200 m, patch 0012). Past it, its ground and forest are
+mirrored across each edge of the rectangle the terrain fully covers (trees and
 cover turned, so none faces its twin; `tools/forest_backdrop.py`) and fall away
 (`tools/forest_edge.py`): level at the seam, over a brow of about 10 m, then at
-27–42° with spurs and gullies, into cloud whose tops lie 25–63 m below the region
-(its mean reached 45–85 m out), so the hilltop ends where the region does. Past
-the south-east corner, where the river rises, a knoll stands up to 18 m above it
-first. Copies whose tops would stay in the cloud are left out: the land past the
-edges holds 97 k of the world's 190 k instances. Its trees take their light from outer light
-layers, at the ground as it lies (patch 0066). The cloud is drawn with the fog
-(patch 0065): tops from a tiling height map (`tools/bake_cloud_tops.py`), lit by
-the suns and the sky, taking the horizon's colour with distance. Trees past 150 m
-are impostors captured from the trees as drawn (`tools/bake_impostors.py`, patch
-0017). The fog is a layer with a soft top (patches 0014, 0021) whose far haze
-meets the sky at the horizon (patch 0020).
+27–42° with spurs and gullies; past the south-east corner, where the river rises,
+a knoll stands up to 18 m above the region. The near band (120 m) keeps the
+mirrored ground and trees; past it `tools/forest_valley.py` carries the
+hillside down about 250 m to a valley floor, its forest as impostor trees (all to 170 m
+out, 35% to 300 m) over a painted canopy. The valley: meadows, fields, woods, a
+river, a lake and a village, forested hills from 2 km and mountains from 4 km; one
+graded mesh of rings (29 k triangles) with painted land-use textures (BC1, patch
+0069). The hillside's trees take their light from outer light layers at the ground
+as it lies, opening to full light where they end (patch 0065). Land past the fog
+box takes the horizon's colour with distance (`Fog.hazeDistance` 6 km, patch 0068).
+Trees past 150 m are impostors captured from the trees as drawn
+(`tools/bake_impostors.py`, patch 0017). The fog is a layer with a soft top
+(patches 0014, 0021) whose far haze meets the sky at the horizon (patch 0020).
 
 Open fidelity gaps against the source (Cycles lighting the same geometry with the
 source's lights, `tools/render_lighting_reference.py` and `tools/compare_views.py`:

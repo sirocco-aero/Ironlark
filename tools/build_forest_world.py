@@ -26,6 +26,8 @@ from PIL import Image, ImageOps
 
 import forest_backdrop
 import forest_edge
+import forest_valley
+import forest_valley
 from forest_view import CAMERAS, ORIGIN, REGION, VIEW_CEILING, VIEW_MARGIN
 
 sys.path.insert(
@@ -181,8 +183,8 @@ Solid {{
   ]
   name "river"
 }}
-# Past the source's edges: its ground and forest mirrored, falling away into a sea of cloud
-# (tools/forest_edge.py).
+# Past the source's edges: its ground and forest mirrored, falling away to a valley
+# (tools/forest_edge.py, tools/forest_valley.py).
 Group {{
   children [
     {edge_shapes}
@@ -511,28 +513,6 @@ def instanced_tree_shapes(parts, out, far):
 # covers the capture sphere's diameter; at this distance on a 1080-line screen with the
 # viewer's 1 rad field of view, a metre spans about 12 pixels.
 IMPOSTOR_DISTANCE = 150.0
-# How tall a tree can stand before its impostor capture gives its own height: copies past the
-# edges whose tops would stay in the cloud are left out (forest_edge.lift).
-TREE_TOP = 40.0
-
-
-def tree_tops(build, rows, variants):
-    """How far above its origin each placed tree reaches: the top of its impostor capture sphere."""
-    path = build / "impostors.json"
-    spheres = json.loads(path.read_text()) if path.exists() else {}
-    tops = np.full(len(rows), TREE_TOP)
-    for i, (row, variant) in enumerate(zip(rows, variants)):
-        if variant in spheres:
-            sphere = spheres[variant]
-            tops[i] = row[2, :3] @ np.array(sphere["center"]) + sphere["radius"] * np.linalg.norm(row[2, :3])
-    return tops
-
-
-def mesh_tops(path, rows):
-    """How far above its origin a mesh reaches, placed by each of rows (n x 3 x 4)."""
-    low, high = mesh_bounds(path)
-    corners = np.array([[x, y, z] for x in (low[0], high[0]) for y in (low[1], high[1]) for z in (low[2], high[2])])
-    return (np.asarray(rows)[:, 2, :3] @ corners.T).max(axis=1)
 IMPOSTOR_PIXELS_PER_METRE = 12.0
 IMPOSTOR_FRAMES = 8
 # Coverage an impostor texel needs to be drawn. Full trees keep a needle texel whose mipmapped
@@ -596,9 +576,10 @@ def impostor_atlases(build, out, variant, radius):
         (size[0] // 2, size[1] // 2), Image.Resampling.LANCZOS).save(out / f"meshes/impostor_{variant}_normal.png")
 
 
-def impostor_shapes(build, out, visual_trees, rows, variants):
-    """Declare the variants for tools/bake_impostors.py; once baked, one instanced
-    impostor Shape per variant. Returns the Shapes (empty before the bake)."""
+def impostor_shapes(build, out, visual_trees, groups):
+    """Declare the variants for tools/bake_impostors.py; once baked, one instanced impostor Shape
+    per variant and group. groups: (rows, variants, near, far, suffix), each drawn from near to far
+    metres from the viewer (0: no end). Returns the Shapes (empty before the bake)."""
     declared = {v: [{"mesh": p["mesh_url"], "tex": p["tex"], "normal": p.get("normal", "")} for p in parts]
                 for v, parts in visual_trees.items()}
     (build / "impostor_variants.json").write_text(json.dumps(declared, indent=1, sort_keys=True))
@@ -615,14 +596,17 @@ def impostor_shapes(build, out, visual_trees, rows, variants):
     for variant in sorted(declared):
         sphere = baked[variant]
         impostor_atlases(build, out, variant, sphere["radius"])
-        # Instance space = capture space: the tree's frame, moved to the sphere's centre, scaled by its radius.
-        placed = rows[np.array([v == variant for v in variants])]
-        capture = np.hstack([np.eye(3) * sphere["radius"], np.array(sphere["center"])[:, None]])
-        instances = np.einsum("nab,bc->nac", placed[:, :, :3], capture)
-        instances[:, :, 3] += placed[:, :, 3]
-        url = f"meshes/instances_impostor_{variant}.bin"
-        instances.astype("<f4").tofile(out / url)
-        nodes.append(f"""Shape {{
+        for rows, variants, near, far, suffix in groups:
+            # Instance space = capture space: the tree's frame, moved to the sphere's centre, scaled by its radius.
+            placed = rows[np.array([v == variant for v in variants], bool)]
+            if not len(placed):
+                continue
+            capture = np.hstack([np.eye(3) * sphere["radius"], np.array(sphere["center"])[:, None]])
+            instances = np.einsum("nab,bc->nac", placed[:, :, :3], capture)
+            instances[:, :, 3] += placed[:, :, 3]
+            url = f"meshes/instances_impostor_{variant}{suffix}.bin"
+            instances.astype("<f4").tofile(out / url)
+            nodes.append(f"""Shape {{
           appearance PBRAppearance {{
             baseColorMap ImageTexture {{ url "meshes/impostor_{variant}.png" }}
             normalMap ImageTexture {{ url "meshes/impostor_{variant}_normal.png" }}
@@ -632,7 +616,7 @@ def impostor_shapes(build, out, visual_trees, rows, variants):
           }}
           geometry Mesh {{ url "meshes/impostor_quad.obj" }}
           instancesUrl [ "{url}" ]
-          visibilityRange {IMPOSTOR_DISTANCE - 1:.1f} 0
+          visibilityRange {near:.1f} {far:.1f}
           castShadows FALSE
           impostor TRUE
         }}""")
@@ -714,7 +698,7 @@ def instance_cover(source, build, out, cover_index):
         mesh_file = lambda name: out / mesh_urls[name]
         rows = np.asarray(rows).reshape(-1, 3, 4)
         edge, _ = forest_backdrop.copies(rows, far=first["lod1_distance"], seed=len(nodes))
-        edge, _ = forest_edge.lift(edge, mesh_tops(mesh_file(asset), edge))
+        edge, _ = forest_edge.lift(edge)
         np.concatenate([rows, edge]).astype("<f4").tofile(out / url)
         total += assets[asset]["tris"] * len(placements)
         bands = [(asset, 0.0, first["lod0_distance"])]
@@ -789,8 +773,13 @@ def main():
     # -- textures --
     print("textures", flush=True)
     visual_trees = prepare_visual_trees(source, build, out)
+    import sky_faces
+
     for path in build.glob("sky_*.hdr"):
-        shutil.copyfile(path, out / "meshes" / path.name)
+        if path.name.startswith("sky_light_"):  # the lighting sky, as the source's
+            shutil.copyfile(path, out / "meshes" / path.name)
+        else:  # the sky cameras see (sky_faces.CAMERA_SKY)
+            sky_faces.write_hdr(out / "meshes" / path.name, sky_faces.read_hdr(path) * sky_faces.CAMERA_SKY)
 
     from forest_terrain import inner_rect
 
@@ -849,19 +838,22 @@ def main():
                 )
             )
     # The trees past the edges: each tree copied whole, so its parts turn together, and moved
-    # onto the falling ground. Impostors for all; full trees for copies that can come within
-    # their distance.
+    # onto the falling ground: on the near band, full trees for copies that can come within their
+    # distance and impostors past it; further down the hillside, impostors (forest_valley).
     tree_rows = np.array(tree_rows)
     tree_variants = [t["variant"] for t in trees]
-    edge, sources = forest_backdrop.copies(tree_rows)
-    edge, kept = forest_edge.lift(edge, tree_tops(build, edge, [tree_variants[s] for s in sources]))
-    sources = sources[kept]
+    copies, copied = forest_backdrop.copies(tree_rows, rings=2)
+    edge, kept = forest_edge.lift(copies)
+    hill, on_hill = forest_valley.hillside(copies, build)
+    sources = copied[kept]
     near = forest_backdrop.fence_distance(edge[:, :, 3]) < IMPOSTOR_DISTANCE
     for row, original in zip(edge[near], sources[near]):
         for part in visual_trees[tree_variants[original]]:
             tree_parts[part_key(part)].append(row)
-    impostors = impostor_shapes(build, out, visual_trees, np.concatenate([tree_rows, edge]),
-                                tree_variants + [tree_variants[s] for s in sources])
+    impostors = impostor_shapes(build, out, visual_trees, [
+        (np.concatenate([tree_rows, edge, hill]),
+         tree_variants + [tree_variants[s] for s in sources] + [tree_variants[s] for s in copied[on_hill]],
+         IMPOSTOR_DISTANCE - 1, 0.0, "")])
     solids.extend(instanced_tree_shapes(tree_parts, out, IMPOSTOR_DISTANCE if impostors else None))
     solids.extend(impostors)
     print(
@@ -919,7 +911,7 @@ def main():
     manifest["light_signature"] = light_signature(build, out)
     # Its mirrored-tile shapes are no longer drawn: the edge's own ground replaces them.
     terrain_shapes, _ = build_terrain_tiles(build, out, forest_backdrop.BOUNDS)
-    edge_shapes = forest_edge.ground_shapes(out)
+    edge_shapes = forest_edge.ground_shapes(out) + forest_valley.shapes(build, out)
     fog = fog_node(build, out, manifest["home_blender"])
     from forest_fog import light_occlusion_fields
 

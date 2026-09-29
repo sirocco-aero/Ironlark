@@ -1,10 +1,10 @@
-"""The land past the source's edges: the region's ground and forest mirrored across each edge (as
-tools/forest_backdrop.py places them), falling away into a sea of cloud.
+"""The hillside just past the source's edges: the region's ground and forest mirrored across each
+edge (as tools/forest_backdrop.py places them), falling away towards the valley
+(tools/forest_valley.py carries the land on from BAND metres out).
 
-The region is high ground. Past each edge the land rounds over a brow and falls steeply, with
+The region is a hilltop. Past each edge the land rounds over a brow and falls steeply, with
 spurs and gullies; beyond the south-east corner, where the river rises, a knoll stands above the
 region before it too falls away. offset(x, y) is how far the mirrored ground is moved up or down.
-Whatever ends deep in the cloud is left out.
 """
 
 import numpy as np
@@ -12,12 +12,8 @@ from PIL import Image
 
 import forest_backdrop
 
-# The cloud tops lie between these heights (Fog.cloudHeight), give or take the shader's swells
-# (8 m); ground and trees whose tops stay below CLOUD_FLOOR, under its deepest creases, are hidden.
-CLOUD_HEIGHT = (-55.0, -25.0)
-CLOUD_FLOOR = -68.0
-# Nothing is kept past this distance from the region's edge.
-REACH = 190.0
+# The mirrored ground and forest reach this far from the region's edge.
+BAND = 120.0
 # The ground is merged into NEAR_CELL squares up to NEAR from the edge, FAR_CELL squares past it;
 # corners on seams (the edge, texture tiles, copies, the two bands) stay.
 NEAR = 30.0
@@ -124,11 +120,9 @@ def ground(tile_path, out_path):
         q = p @ m[:, :3].T + m[:, 3]
         normal = n * np.diag(m[:, :3])
         d = distance(q[..., 0], q[..., 1])
-        keep = d.min(axis=1) < REACH
+        keep = d.min(axis=1) < BAND
         q, normal, t, d, fixed = q[keep], normal[keep], uv[keep], d[keep], seam[keep]
         q[..., 2] += offset(q[..., 0], q[..., 1])
-        keep = q[..., 2].max(axis=1) > CLOUD_FLOOR
-        q, normal, t, d, fixed = q[keep], normal[keep], t[keep], d[keep], fixed[keep]
         # The slope's normal: the mirrored ground's own tilt plus the offset's.
         gx, gy = gradient(q[..., 0], q[..., 1])
         nz = np.maximum(normal[..., 2], 1e-3)
@@ -146,7 +140,7 @@ def ground(tile_path, out_path):
         parts.append(cluster(q[near], t[near], normal[near], NEAR_CELL, pinned[near]))
         parts.append(cluster(q[~near], t[~near], normal[~near], FAR_CELL, pinned[~near]))
     q, t, normal = (np.concatenate([part[k] for part in parts]) for k in range(3))
-    write_obj(out_path, q, t, normal, f"{tile_path.name} mirrored around the region, falling into the cloud (forest_edge.py).")
+    write_obj(out_path, q, t, normal, f"{tile_path.name} mirrored around the region, falling away (forest_edge.py).")
     return len(q)
 
 
@@ -170,30 +164,30 @@ def ground_shapes(out):
     return shapes
 
 
-def lift(rows, top):
-    """Instance rows placed outside the region, moved onto the fallen ground; rows that would end
-    below the cloud floor (their object reaching `top` metres above its origin: one value, or one
-    per row) or past REACH are dropped. Returns the rows and the mask of those kept."""
+def lift(rows):
+    """Instance rows placed outside the region, moved onto the fallen ground; rows past BAND are
+    dropped. Returns the rows and the mask of those kept."""
     rows = np.array(rows, np.float64).reshape(-1, 3, 4)
     x, y = rows[:, 0, 3], rows[:, 1, 3]
     dz = offset(x, y)
-    keep = (distance(x, y) < REACH) & (rows[:, 2, 3] + dz + top > CLOUD_FLOOR)
+    keep = distance(x, y) < BAND
     rows = rows[keep]
     rows[:, 2, 3] += dz[keep]
     return rows, keep
 
 
-def outer_light_occlusion(inner, rect, ground, count, out_png, texel=2.0):
-    """Light visibility layers past the region (Background.lightOcclusionOuter*, Webots patch 0066):
+def outer_light_occlusion(inner, rect, ground, count, out_png, land, reach, opens, texel=4.0):
+    """Light visibility layers past the region (Background.lightOcclusionOuter*, Webots patch 0065):
     the inner layers (the image `inner` over `rect`, ground between `ground`) mirrored as the
-    ground is, each texel's ground as it lies there: the mirrored ground moved by offset(). Returns
+    forest is, out to `reach` from the edge, each texel's ground as it lies there (land(x, y)),
+    opening to full light between the distances `opens` (where the hillside's forest ends). Returns
     the Background fields."""
     image = np.asarray(Image.open(inner).convert("RGBA"), np.float32) / 255.0
     rows = image.shape[0] // (count + 1)
     layers = [image[k * rows:(k + 1) * rows][::-1] for k in range(count + 1)]  # rows from min y
     b = forest_backdrop.BOUNDS
-    low_corner = np.floor([b[0] - REACH, b[2] - REACH])
-    high_corner = np.ceil([b[1] + REACH, b[3] + REACH])
+    low_corner = np.floor([b[0] - reach, b[2] - reach])
+    high_corner = np.ceil([b[1] + reach, b[3] + reach])
     xs = np.arange(low_corner[0], high_corner[0], texel) + 0.5 * texel
     ys = np.arange(low_corner[1], high_corner[1], texel) + 0.5 * texel
     x, y = np.meshgrid(xs, ys)
@@ -210,23 +204,17 @@ def outer_light_occlusion(inner, rect, ground, count, out_png, texel=2.0):
         return ((layer[y0, x0] * (1 - ax) + layer[y0, x0 + 1] * ax) * (1 - ay) +
                 (layer[y0 + 1, x0] * (1 - ax) + layer[y0 + 1, x0 + 1] * ax) * ay)
 
-    # Deep in the cloud nothing shows: the ground is clamped there, keeping the 8-bit steps small,
-    # and the layers kept only where ground stands above the cloud floor.
-    lying = np.maximum(ground[0] + (ground[1] - ground[0]) * sample(layers[count])[..., 0] + offset(x, y), CLOUD_FLOOR - 30.0)
-    above = np.argwhere(lying > CLOUD_FLOOR - 10.0)
-    (r0, c0), (r1, c1) = above.min(axis=0), above.max(axis=0) + 1
-    crop = (slice(r0, r1), slice(c0, c1))
-    y0, x0, ax, ay, lying = y0[crop], x0[crop], ax[crop], ay[crop], lying[crop]
-    sampled = [sample(layer) for layer in layers[:count]]
+    lying = land(x, y)
+    openness = smoothstep(opens[0], opens[1], distance(x, y))[..., None]
+    sampled = [sample(layer) * (1.0 - openness) + openness for layer in layers[:count]]
     low, high = float(lying.min()), float(lying.max())
     alpha = (lying - low) / (high - low)
     sampled.append(np.dstack([alpha, alpha, alpha, np.ones_like(alpha)]))
     stacked = np.concatenate([layer[::-1] for layer in sampled])  # top row: max y
     Image.fromarray(np.round(np.clip(stacked, 0, 1) * 255).astype(np.uint8), "RGBA").save(out_png)
-    start = low_corner + np.array([c0, r0]) * texel
     return (f"  lightOcclusionOuterUrl [ \"meshes/{out_png.name}\" ]\n"
-            f"  lightOcclusionOuterMin {start[0]:.4f} {start[1]:.4f}\n"
-            f"  lightOcclusionOuterMax {start[0] + (c1 - c0) * texel:.4f} {start[1] + (r1 - r0) * texel:.4f}\n"
+            f"  lightOcclusionOuterMin {low_corner[0]:.4f} {low_corner[1]:.4f}\n"
+            f"  lightOcclusionOuterMax {low_corner[0] + len(xs) * texel:.4f} {low_corner[1] + len(ys) * texel:.4f}\n"
             f"  lightOcclusionOuterGround {low:.4f} {high:.4f}")
 
 
