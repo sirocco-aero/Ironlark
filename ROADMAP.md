@@ -24,11 +24,11 @@ lighting sky (Nishita × 0.7), and HD (1K) object textures downsampled from the
 source's originals, the source's exposure (+1) and no bloom. Both skies are written
 as linear radiance; Blender's own HDR save had stored them display-encoded (2.4×
 too bright at mid-grey). Light under the canopy comes from baked visibility
-layers traced through the real foliage (`tools/bake_forest_light.py`, patches
-0026–0028).
+layers traced through the real foliage (`tools/bake_forest_light.py`,
+`Background.lightOcclusion*`), which light the fog too.
 
 The region is a hilltop above a valley. The viewer is fenced inside the exported
-source terrain (203 × 200 m, patch 0012). Past it, its ground and forest are
+source terrain (203 × 200 m, `Viewpoint.boundsMin/boundsMax`). Past it, its ground and forest are
 mirrored across each edge of the rectangle the terrain fully covers (trees and
 cover turned, so none faces its twin; `tools/forest_backdrop.py`) and fall away
 (`tools/forest_edge.py`): level at the seam, over a brow of about 10 m, then at
@@ -38,13 +38,13 @@ mirrored ground and trees; past it `tools/forest_valley.py` carries the
 hillside down about 250 m to a valley floor, its forest as impostor trees (all to 170 m
 out, 35% to 300 m) over a painted canopy. The valley: meadows, fields, woods, a
 river, a lake and a village, forested hills from 2 km and mountains from 4 km; one
-graded mesh of rings (29 k triangles) with painted land-use textures (BC1, patch
-0069). The hillside's trees take their light from outer light layers at the ground
-as it lies, opening to full light where they end (patch 0065). Land past the fog
-box takes the horizon's colour with distance (`Fog.hazeDistance` 6 km, patch 0068).
+graded mesh of rings (29 k triangles) with painted land-use textures (BC1
+DDS). The hillside's trees take their light from outer light layers at the ground
+as it lies, opening to full light where they end (`Background.lightOcclusionOuter*`). Land past the fog
+box takes the horizon's colour with distance (`Fog.hazeDistance` 6 km).
 Trees past 150 m are impostors captured from the trees as drawn
-(`tools/bake_impostors.py`, patch 0017). The fog is a layer with a soft top
-(patches 0014, 0021) whose far haze meets the sky at the horizon (patch 0020).
+(`tools/bake_impostors.py`, `Shape.impostor`). The fog is a layer with a soft top
+(`Fog.boxFalloff`) whose far haze meets the sky at the horizon (`Fog.horizonRadiance`).
 
 Open fidelity gaps against the source (Cycles lighting the same geometry with the
 source's lights, `tools/render_lighting_reference.py` and `tools/compare_views.py`:
@@ -57,8 +57,8 @@ source's lights, `tools/render_lighting_reference.py` and `tools/compare_views.p
 - **Terrain**: four 4K baked tiles (~100 m each). The source tiles its ground
   materials under masks; matching that needs a Webots detail-map patch, and
   would be sharper up close with far less VRAM.
-- **River**: done: the source's clear water (patch 0010) with flowing white foam
-  (0019), mirroring the banks and trees through screen-space reflections (0030).
+- **River**: done: the source's clear water (`PBRAppearance.transmission`) with flowing white foam
+  (`flowFoam`), mirroring the banks and trees through screen-space reflections.
   No refraction offset yet: the bed shows straight through.
 - **Foliage shimmer**: needles thinner than a pixel flip in and out as the view
   moves (22% of pixels for a 2 cm step). Needs multisampling with
@@ -119,16 +119,16 @@ Handoff state (2026-09-26), partly unverified:
 
 - Done, verified: light layers baked without cover under 3 m (it shaded itself:
   dark rocks); cover gets the source's normal and roughness maps (the lookup had a
-  wrong path); patch 0037 stops black foliage from degenerate normal-map frames.
-- Verified in a recorded forest flight: 0035 (the drone camera sees the fog) and 0036 (a
-  LiDAR scan at 2.5 m: 20.8 k of 28.8 k returns off trunks, crowns and cover).
+  wrong path); degenerate normal-map frames no longer turn foliage black.
+- Verified in a recorded forest flight: the drone camera sees the fog, and range sensors see
+  instanced foliage (a LiDAR scan at 2.5 m: 20.8 k of 28.8 k returns off trunks, crowns and cover).
 - River rocks black under the sun: fixed by casting no cascade shadow from dense
   small clutter (over 2000 instances and under 0.25 m placed height: the river bed's
   `rock_moss_set_02_rock07`…`13` pebbles, ~78 k instances, and two dry-branch sets;
   `tools/build_forest_world.py`). Root cause still unknown, recorded for later: in
   the shadow maps such a carpet shades itself black. A lone pebble on the bed stays
   dark, the same pebble 0.5 m up is lit and casts a correct shadow; the water, LOD1
-  meshes, mesh winding, backdrop terrain, cascade caching (tried as patch 0038,
+  meshes, mesh winding, backdrop terrain, cascade caching (tried as a patch,
   reverted) and a 4× normal offset are ruled out. The rocks of `set_01`, as small but
   ~950 per mesh, shade correctly. Repro: `/tmp`-style world with the terrain, lights
   and one `rock07` instance (instance 729 at −21.01, 32.14, −0.92), `--lights main`.
@@ -136,8 +136,8 @@ Handoff state (2026-09-26), partly unverified:
   above ~2 m; the trunk bake wrote only the square, so 13–21% of each trunk read unbaked
   texels (black, roughness 0: glossy dark bands, stretched bark). The bake now writes the
   tiled faces shifted into the square first, then the trunk's own islands over them.
-- River close up: done (0038). The water shows its sunlit bed and the banks.
-- Terrain detail (0039): the source's three tiled layers (read from its `main_terrain`:
+- River close up: done. The water shows its sunlit bed and the banks.
+- Terrain detail: the source's three tiled layers (read from its `main_terrain`:
   forest_leaves_04 at 1/150, forest_ground_04 at 1/22, rocky_trail at 1/20 of the
   terrain's bounds, blended by its `path` and `river` attributes, baked as
   `terrain_*_mask.png`) add detail within 15–40 m over the 2.5 cm bake. Built; verify
@@ -149,9 +149,9 @@ Handoff state (2026-09-26), partly unverified:
   (same instance counts, program, depth, blend, colour mask and framebuffer as with
   GTAO), yet leave no pixel with the alpha test off, nor with the depth test off: their
   vertices likely land off screen. Not the far plane, fog, BC7, texture binding cache or
-  the scene copy (0030). Parked: it needs a GPU capture of one twig draw.
-- Shimmer: done (0041, temporal anti-aliasing in the main view; 4x multisampling with
-  alpha to coverage, 0025, had cut it only by a quarter). Robot cameras keep single
+  the scene copy (screen-space reflections). Parked: it needs a GPU capture of one twig draw.
+- Shimmer: done (temporal anti-aliasing in the main view; 4x multisampling with
+  alpha to coverage had cut it only by a quarter). Robot cameras keep single
   frames: supersample them if vision needs it.
 
 ### 2. Sensor rig and ROS 2
@@ -162,7 +162,7 @@ and carries a Mid-360-class LiDAR, an IMU and a front camera. `./ironlark check 
 
 - records a complete rosbag2 (every message the controller sent, on Webots time, stamps strictly
   increasing) and adds sensing's cost to `result.json`: real time in the empty world
-  (patch 0043), 0.47× in the forest; Webots time slows, nothing is dropped;
+  (with real-time pacing), 0.47× in the forest; Webots time slows, nothing is dropped;
 - `check-recording`: the calibration wall reads at 5.897 m (face at 5.9 m), its normal within 0.6°,
   and 99.9% of its LiDAR returns land on its red in the camera frame of the same instant;
 - `check-replay`: replayed, every topic keeps its messages, stamps and order, and the static
@@ -183,7 +183,7 @@ Switching level of detail at equal on-screen size (the 150 m impostor switch is 
 over 1 rad, so ~30 m for this camera) cut the frame to 32 ms, but impostors are visibly flatter and
 lighter than trees at 30–150 m, where no haze hides them: rejected. The source has no lighter trees
 to use: in the .blend each tree scatter's lod1 branch instances the same full collection as lod0 (its
-proxies show in the viewport only). Occlusion culling (patch 0046) now draws only what is not hidden:
+proxies show in the viewport only). Occlusion culling now draws only what is not hidden:
 the frame at takeoff draws 62 M triangles instead of 130 M, 59 ms instead of 82, and the forest runs
 with sensing at 0.61× real time instead of 0.49×.
 
@@ -191,7 +191,7 @@ Next: per-return LiDAR timing if the odometry needs it (model acquisition, never
 
 ### 3. Performance
 
-Measured with the frame log (patch 0042, `tools/frame_log.py`), headless at 1920×1080 on the GTX 1060;
+Measured with the frame log (`IRONLARK_FRAME_LOG`, `tools/frame_log.py`), headless at 1920×1080 on the GTX 1060;
 images and sensor data compared with the approved look (`looks-good-2026-09-28`) built in a worktree.
 Frames are GPU-bound, by pixels more than vertices: at a quarter of the pixels the forest view takes
 35 ms instead of 65, the drone view 11 instead of 33. Foliage overdraws heavily: the opaque passes run
@@ -202,11 +202,11 @@ lighting is 6–19 ms of a view. The forest view also draws ~80 M triangles, the
 
 Tried and dropped:
 
-- Culling the LiDAR's six faces by occlusion (as 0046 does for cameras): a 40 m scan hides only 8% of
+- Culling the LiDAR's six faces by occlusion (as colour views are culled): a 40 m scan hides only 8% of
   its triangles, and waiting on six small faces cost more (38 → 40 ms of GPU a scan).
 - Scattering fog: hoisting its per-step terms out of the march, and batching its reads four steps at a
   time, were slower; its cost is in reads of the baked light layers (4–11 ms of its 7–15).
-- The PBR shader's light-layer search without variable indexing (as 0045 for the fog): within noise.
+- The PBR shader's light-layer search without variable indexing (as the fog's is): within noise.
 - Culling back faces of the saplings: their needles are open cards, seen from both sides.
 - Keeping every instance's transform on the GPU and sending only indices per draw: neutral in time,
   +32 MB of GPU memory.
@@ -219,9 +219,9 @@ Tried and dropped:
   shading pass drops ~11 ms in the forest view but the pre-pass costs ~32 (all the vertex work again,
   and its own alpha-tested overdraw); a visibility buffer would pay the same first pass.
 - Discarding masked texels before normal and material maps are read: no faster, and neighbours'
-  derivatives change (up to 17% of a view's pixels by more than 8 levels). Impostors do (0070):
+  derivatives change (up to 17% of a view's pixels by more than 8 levels). Impostors do:
   their coverage is one atlas lookup, taken everywhere on the quad.
-- Leaving the pen code out of the PBR fragment shader as well (0058 changes the vertex shaders):
+- Leaving the pen code out of the PBR fragment shader as well (the pen variant changes only the vertex shaders):
   faster, but the driver then shades distant impostors ~12% brighter in the high view, a difference
   from code that never runs. The fragment shader is left as is.
 

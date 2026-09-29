@@ -7,13 +7,17 @@ from pathlib import Path
 import shutil
 import subprocess
 import tarfile
+import tempfile
 from urllib.request import urlretrieve
 
 from forest_process import run_stage
 
 SIM = Path(__file__).resolve().parents[1]
 CACHE = SIM / ".cache"
+RELEASE = "R2025a"
 COMMIT = "c6793d8f7230a311c4bc2a3101d9f1a8bc0aa01b"
+PATCHES = SIM / "native/patches"
+BRANCH = "ironlark"
 # Compiled into WREN beside the patched sources: Ironlark's vertex indexer, and meshoptimizer's vertex cache
 # optimizer (MIT, zeux/meshoptimizer 9e1f07b).
 NATIVE_SOURCES = [SIM / "native/vertex_index.hpp"] + [
@@ -30,6 +34,34 @@ def call(*args):
     subprocess.run(list(map(str, args)), check=True)
 
 
+def git(source, *args, env=None, input=None):
+    return subprocess.run(["git", "-C", str(source), *map(str, args)], check=True, capture_output=True, text=True,
+                          env=env, input=input).stdout.strip()
+
+
+def series_commit(source, patches):
+    """The series as commits on COMMIT, one per patch, made without touching the working tree. Author, date
+    and message come from each patch, so the same series always gives the same commits."""
+    parent = COMMIT
+    with tempfile.TemporaryDirectory() as scratch:
+        message, diff = Path(scratch) / "message", Path(scratch) / "diff"
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(scratch) / "index")}
+        git(source, "read-tree", COMMIT, env=env)
+        for patch in patches:
+            header = git(source, "mailinfo", message, diff, input=patch.read_text())
+            header = dict(line.split(": ", 1) for line in header.splitlines())
+            if not {"Author", "Email", "Date", "Subject"} <= header.keys():
+                raise RuntimeError(f"{patch.name} is not a commit from git format-patch")
+            for role in ("AUTHOR", "COMMITTER"):
+                env |= {f"GIT_{role}_NAME": header["Author"], f"GIT_{role}_EMAIL": header["Email"],
+                        f"GIT_{role}_DATE": header["Date"]}
+            git(source, "apply", "--cached", diff, env=env)
+            tree = git(source, "write-tree", env=env)
+            text = header["Subject"] + "\n\n" + message.read_text()
+            parent = git(source, "commit-tree", tree, "-p", parent, env=env, input=text)
+    return parent
+
+
 def link(path, target):
     if not path.exists() and not path.is_symlink():
         path.symlink_to(target, target_is_directory=target.is_dir())
@@ -39,8 +71,8 @@ def overlay_resources(runtime, installed, source):
     """Mirror stock resources as symlinks, serving files the series changed
     (shaders, node definitions) from the patched source."""
     changed = subprocess.check_output(
-        # Working tree, not just the staged series: a patch in progress is live too.
-        ["git", "-C", str(source), "diff", "--name-only", "HEAD", "--", "resources"],
+        # Working tree, not just the committed series: a patch in progress is live too.
+        ["git", "-C", str(source), "diff", "--name-only", COMMIT, "--", "resources"],
         text=True,
     ).split()
     changed = {Path(name).relative_to("resources") for name in changed}
@@ -70,8 +102,8 @@ def overlay_resources(runtime, installed, source):
 def main():
     source = CACHE / "webots-source"
     installed = SIM / "webots"
-    if (installed / "resources/version.txt").read_text().strip() != "R2025a":
-        raise RuntimeError("This patch requires the Webots R2025a installation.")
+    if (installed / "resources/version.txt").read_text().strip() != RELEASE:
+        raise RuntimeError(f"This patch requires the Webots {RELEASE} installation.")
     if not source.exists():
         call(
             "git",
@@ -79,7 +111,7 @@ def main():
             "--depth",
             "1",
             "--branch",
-            "R2025a",
+            RELEASE,
             "--filter=blob:none",
             "--sparse",
             "https://github.com/cyberbotics/webots.git",
@@ -97,11 +129,8 @@ def main():
             "scripts",
             "dependencies",
         )
-    head = subprocess.check_output(
-        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
-    ).strip()
-    if head != COMMIT:
-        raise RuntimeError(f"Unexpected Webots checkout: {head}")
+    if subprocess.run(["git", "-C", str(source), "cat-file", "-e", COMMIT + "^{commit}"]).returncode:
+        raise RuntimeError(f"Unexpected Webots checkout: no {COMMIT}")
     call(
         "git",
         "-C",
@@ -114,38 +143,39 @@ def main():
         "src/glm",
         "src/stb",
     )
-    # Patches apply in filename order to pristine sources, so the series can
-    # grow without a fork. Staging them keeps `git diff` to new edits only;
-    # a stamp avoids reapplying (and recompiling) them.
-    patches = sorted((SIM / "native/patches").glob("*.patch"))
-    series = hashlib.sha256(b"".join(p.read_bytes() for p in patches)).hexdigest()
-    stamp = source / ".ironlark-patches"
-    if not stamp.exists() or stamp.read_text().strip() != series:
-        # Reapplying resets the sources: never discard edits not yet saved as a patch.
-        unsaved = subprocess.check_output(
-            ["git", "-C", str(source), "diff", "--name-only", "--", "src", "include", "resources"], text=True
-        ).split()
-        if unsaved and stamp.exists():
+    # The series is branch BRANCH of the checkout: upstream COMMIT plus one commit per patch, so git's own
+    # tools (log, blame, rebase) work on it and tools/save_webots_patch.py writes it back as patches.
+    # Commits there carry Ironlark's identity, and `git status` shows only edits: the builder's files and
+    # links are ignored, and the tracked files under the `lib` link (outside the sparse checkout) stay
+    # skipped rather than showing as deleted, which would also stop a rebase.
+    for key in ("user.name", "user.email"):
+        if value := subprocess.run(["git", "-C", str(SIM), "config", key], capture_output=True, text=True).stdout.strip():
+            git(source, "config", key, value)
+    exclude = source / ".git/info/exclude"
+    names = "".join(f"/{name}\n" for name in (".ironlark-patches", "bin/qt", "lib",
+                                                *(f"src/wren/{path.name}" for path in NATIVE_SOURCES)))
+    if names not in (excluded := exclude.read_text() if exclude.exists() else ""):
+        exclude.write_text(excluded + names)
+    git(source, "config", "sparse.expectFilesOutsideOfPatterns", "true")
+    git(source, "update-index", "-z", "--skip-worktree", "--stdin", input=git(source, "ls-files", "-z", "--", "lib"))
+    patches = sorted(PATCHES.glob("*.patch"))
+    tip = series_commit(source, patches)
+    head = git(source, "rev-parse", "HEAD")
+    stamp = source / ".ironlark-patches"  # the series commit last checked out
+    if head != tip:
+        # Moving the branch must not drop commits not yet saved as patches.
+        saved = head in (COMMIT, stamp.read_text().strip() if stamp.exists() else "")
+        if not saved and git(source, "rev-parse", head + "^{tree}") != git(source, "rev-parse", tip + "^{tree}"):
             raise RuntimeError(
-                "Webots sources have edits not saved as a patch; save them to native/patches first: "
-                + ", ".join(unsaved)
+                "The Webots branch has commits not saved to native/patches; run tools/save_webots_patch.py first."
             )
-        call("git", "-C", source, "checkout", "HEAD", "--", "src", "include", "resources")
-        # Files the series adds survive the checkout; remove them so it reapplies.
-        for patch in patches:
-            summary = subprocess.check_output(
-                ["git", "-C", str(source), "apply", "--summary", str(patch)], text=True
-            )
-            for line in summary.splitlines():
-                if line.strip().startswith("create mode"):
-                    added = line.split()[-1]
-                    call("git", "-C", source, "rm", "-q", "-f", "--cached", "--ignore-unmatch", added)
-                    (source / added).unlink(missing_ok=True)
-        for patch in patches:
-            call("git", "-C", source, "apply", "--index", patch)
-        stamp.write_text(series + "\n")
-    for path in NATIVE_SOURCES:
-        shutil.copyfile(path, source / "src/wren" / path.name)
+        # Rewrites only the files that differ, so only they recompile. Uncommitted edits carry over: git
+        # refuses to overwrite any.
+        call("git", "-C", source, "checkout", "-q", "-B", BRANCH, tip)
+    stamp.write_text(tip + "\n")
+    for path in NATIVE_SOURCES:  # copied only when changed, so make leaves the rest alone
+        if not (copy := source / "src/wren" / path.name).exists() or copy.read_bytes() != path.read_bytes():
+            shutil.copyfile(path, copy)
     for name, expected in PACKAGES.items():
         archive = source / "dependencies" / name
         if not archive.exists():
@@ -195,8 +225,8 @@ def main():
     link(source / "lib", installed / "lib")
     link(source / "dependencies/libOIS.so", installed / "lib/webots/libOIS-1.4.0.so")
     logs = CACHE / "build-logs"
-    # Reapplying the series rewrites every source file, so without a compiler cache any patch change
-    # recompiles all of Webots. ccache, when installed, recompiles only what a patch changed.
+    # Rebasing the branch rewrites the files of every later patch, and make goes by modification time.
+    # ccache, when installed, recompiles only what actually changed.
     compilers = []
     if shutil.which("ccache"):
         os.environ.setdefault("CCACHE_DIR", str(CACHE / "ccache"))
@@ -233,7 +263,8 @@ def main():
     manifest = {
         "upstream_commit": COMMIT,
         "patches": [p.name for p in patches],
-        "series_sha256": series,
+        "series_sha256": hashlib.sha256(b"".join(p.read_bytes() for p in patches)).hexdigest(),
+        "series_commit": tip,
         "native_sha256": hashlib.sha256(
             b"".join(path.read_bytes() for path in NATIVE_SOURCES)
         ).hexdigest(),
