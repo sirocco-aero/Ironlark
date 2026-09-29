@@ -186,6 +186,7 @@ Measured with `tools/profile_forest.py` (GTX 1060 3 GB, i5-4670):
 | **0067-camera-frustum** | A camera's culling frustum follows it again. Reading its view matrix first (instance culling does) cleared the flag the frustum waited on, so a robot camera that had moved or turned since its first frame culled with its old frustum and lost trees, rocks and cover: 44–83% of pixels at three of five probe poses. The main view and LiDAR were unaffected. | — |
 | **0068-distance-haze** | `Fog.hazeDistance`: over the part of a view ray outside the fog box's footprint, surfaces take the horizon's colour (0020), 1 − e^(−length / hazeDistance). The valley's hills and mountains, 2–7 km out, stood against the sky unveiled: the fog thins out within 30 m of its box's sides (0034). | — |
 | **0069-bc1-textures** | `ImageTexture` also reads opaque BC1 from DDS files (DXGI 71/72, mip levels included): 8 bytes per 4 × 4 block, half of BC7's. | valley land textures (2048², 1024²) on the GPU: 3.5 MB; 7 MB as BC7, 28 MB as RGBA8 |
+| **0070-impostor-coverage-first** | Impostors test their coverage at the top of the fragment shader, everywhere on the quad (it takes derivatives), and discard before depth, normals and light: most of a quad is empty. Pixel-identical. | overview −0.45 ms |
 
 To add or amend the newest patch: edit `.cache/webots-source/` (`git add -N` new
 files), then `.venv/bin/python tools/save_webots_patch.py [NNNN-name.patch]`,

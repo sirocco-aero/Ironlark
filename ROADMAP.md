@@ -219,7 +219,8 @@ Tried and dropped:
   shading pass drops ~11 ms in the forest view but the pre-pass costs ~32 (all the vertex work again,
   and its own alpha-tested overdraw); a visibility buffer would pay the same first pass.
 - Discarding masked texels before normal and material maps are read: no faster, and neighbours'
-  derivatives change (up to 17% of a view's pixels by more than 8 levels).
+  derivatives change (up to 17% of a view's pixels by more than 8 levels). Impostors do (0070):
+  their coverage is one atlas lookup, taken everywhere on the quad.
 - Leaving the pen code out of the PBR fragment shader as well (0058 changes the vertex shaders):
   faster, but the driver then shades distant impostors ~12% brighter in the high view, a difference
   from code that never runs. The fragment shader is left as is.
