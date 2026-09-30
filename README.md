@@ -19,7 +19,7 @@ extracted to `./webots/` (or set `WEBOTS_HOME`).
 ```sh
 ./ironlark setup           # pinned ArduPilot image, Python env
 ./ironlark build-world     # forest world (downloads Blender and the scene)
-./ironlark build-renderer  # optional: Ironlark's patched Webots
+./ironlark build-renderer  # Ironlark's patched Webots, which the worlds need
 ./ironlark run             # watch a flight, fullscreen
 ./ironlark check           # same flight, headless, pass/fail
 ```
