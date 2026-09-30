@@ -38,8 +38,13 @@ mirrored ground and trees; past it `tools/forest_valley.py` carries the
 hillside down about 250 m to a valley floor, its forest as impostor trees (all to 170 m
 out, 35% to 300 m) over a painted canopy. The valley: meadows, fields, woods, a
 river, a lake and a village, forested hills from 2 km and mountains from 4 km; one
-graded mesh of rings (29 k triangles) with painted land-use textures (BC1
-DDS). The hillside's trees take their light from outer light layers at the ground
+graded mesh of rings (109 k triangles, finer along the lake's shore and the river) with
+painted land-use textures (BC1 DDS). The lake lies in a basin with a bank, a beach along
+stretches of it and shallows over sand. The river meanders in a channel of its own, deepest
+towards the outside of each bend, with gravel bars inside them and trees along its banks in
+stretches; it comes down from the hills as a stream, runs through the lake and leaves the valley
+into the haze. Both are water with depth colour and wind ripples (`PBRAppearance.attenuationColor`,
+`scatterColor`, `waves`). The hillside's trees take their light from outer light layers at the ground
 as it lies, opening to full light where they end (`Background.lightOcclusionOuter*`). Land past the fog
 box takes the horizon's colour with distance (`Fog.hazeDistance` 6 km).
 Trees past 150 m are impostors captured from the trees as drawn
