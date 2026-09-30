@@ -180,9 +180,10 @@ and that a large mesh's attributes reconstruct byte-for-byte:
 
 ## Research atlas
 
-[`research/drone-autonomy-atlas.html`](research/drone-autonomy-atlas.html):
-159 drone autonomy projects and 126 sourced relationships. Opens offline in a
-browser; source links need internet.
+159 drone autonomy projects and 126 sourced relationships, in
+[`research/dataset.json`](research/dataset.json).
+`python3 research/build_html.py` builds `research/drone-autonomy-atlas.html`,
+which opens offline in a browser; source links need internet.
 
 ## References and licenses
 
