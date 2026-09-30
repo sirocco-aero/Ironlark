@@ -89,9 +89,10 @@ def smooth_max(a, b, k):
     return b + (a - b) * h + k * h * (1.0 - h)
 
 
-# The river: a meandering line around the hill, from the north-west round the west and south. It
-# comes down from the hills to the north as a stream, widening, and leaves the valley towards the
-# south-east, into the haze: no end of it shows from the hill.
+# The river: a line around the hill, from the north-west round the west and south, meandering at its
+# own scale (bends a few hundred metres long). It comes down from the hills to the north as a stream,
+# widening, and leaves the valley towards the south-east, into the haze: no end of it shows from the
+# hill.
 def river_line():
     cx, cy = center()
     t = np.linspace(math.radians(70), math.radians(360), 2200)
@@ -103,17 +104,88 @@ def river_line():
     tangent = np.gradient(line, axis=0)
     normal = np.column_stack([-tangent[:, 1], tangent[:, 0]]) / np.linalg.norm(tangent, axis=1, keepdims=True)
     along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))])
-    bends = smoothstep(0.0, 0.15, away) * (90.0 * np.sin(along / 260.0) + 35.0 * np.sin(along / 97.0 + 1.3))
+    bends = smoothstep(0.0, 0.6, away) * (90.0 * np.sin(along / 260.0) + 35.0 * np.sin(along / 97.0 + 1.3))
+    wander = 1.0 + 0.6 * NOISE(along / 400.0, 5.3)
+    bends += wander * (22.0 * np.sin(along / 40.0 + 0.4) + 6.0 * np.sin(along / 22.0 + 2.1))
     return line + normal * bends[:, None]
 
 
 def river_width(line):
-    """The river's width along its line: a stream widening over its first 1.2 km."""
+    """The river's width along its line: a stream widening over its first 1.2 km, then wider and
+    narrower by a quarter."""
     along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))])
-    return RIVER_WIDTH * (0.25 + 0.75 * smoothstep(0.0, 1200.0, along))
+    return RIVER_WIDTH * (0.25 + 0.75 * smoothstep(0.0, 1200.0, along)) * (1.0 + 0.35 * NOISE(along / 150.0, 1.7))
 
 
 RIVER_WIDTH = 14.0
+# Its channel: RIVER_DEPTH deep (less for the stream), its water RIVER_BANK under the banks. Land within
+# RIVER_FINE of it is meshed as finely as the lake's shore, out to RIVER_CARVED from the region (the
+# finer valley mesh's reach); past it the river is a ribbon over the land, too far to tell.
+RIVER_DEPTH = 1.8
+RIVER_BANK = 0.9
+RIVER_FINE = 18.0
+RIVER_CARVED = (1150.0, 1250.0)
+RIVER = None
+
+
+def river():
+    """The river along its line: points, arc lengths, water level (world z), half widths, curvature
+    (1/m, positive turning left) and how much of its channel is carved (1 near, 0 far out)."""
+    global RIVER
+    if RIVER is None:
+        line = river_line()
+        along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))])
+        step = along[-1] / (len(along) - 1)
+        # The water lies RIVER_BANK under the valley floor's course smoothed over ~150 m, level with the
+        # lake where it meets it; far out, a metre over the land.
+        floor = natural_floor(line[:, 0], line[:, 1])
+        sigma = 60.0 / step
+        k = np.arange(-int(3 * sigma), int(3 * sigma) + 1)
+        kernel = np.exp(-0.5 * (k / sigma) ** 2)
+        smooth = np.convolve(np.pad(floor, len(k) // 2, mode="edge"), kernel / kernel.sum(), "valid")
+        level = smooth - RIVER_BANK
+        level = lake_level() + smoothstep(10.0, 60.0, lake_distance(line[:, 0], line[:, 1])) * (level - lake_level())
+        carved = 1.0 - smoothstep(*RIVER_CARVED, forest_edge.distance(line[:, 0], line[:, 1]))
+        level = floor + 1.0 + carved * (level - floor - 1.0)
+        v, a = np.gradient(line, axis=0), np.gradient(np.gradient(line, axis=0), axis=0)
+        curvature = (v[:, 0] * a[:, 1] - v[:, 1] * a[:, 0]) / np.linalg.norm(v, axis=1) ** 3
+        k = np.arange(-int(3 * 10.0 / step), int(3 * 10.0 / step) + 1)
+        kernel = np.exp(-0.5 * (k * step / 10.0) ** 2)
+        curvature = np.convolve(np.pad(curvature, len(k) // 2, mode="edge"), kernel / kernel.sum(), "valid")
+        RIVER = {"line": line, "along": along, "level": level, "half": 0.5 * river_width(line), "curvature": curvature,
+                 "carved": carved}
+    return RIVER
+
+
+def channel(x, y, reach):
+    """Where points lie by the river: distance to its line, arc length of the nearest point, the water
+    level, half width and carving there, and u, across the channel between its wandering edges (-1 at
+    the right bank, 1 at the left: each bank wanders on its own)."""
+    r = river()
+    dist, station, side = line_frame(x, y, r["line"], reach)
+    level, half, carved = (np.interp(station, r["along"], r[key]) for key in ("level", "half", "carved"))
+    edge = half * (1.0 + 0.2 * NOISE(station / 23.0, side * 3.1))
+    return dist, station, level, half, carved, side * dist / edge, edge
+
+
+def river_basin(x, y, floor):
+    """The land along the river: its channel, deepest towards the outside of each bend (the inside
+    shoals into gravel bars), and low banks meeting the valley floor."""
+    x, y, floor = np.broadcast_arrays(np.asarray(x, np.float64), np.asarray(y, np.float64), np.asarray(floor, np.float64))
+    dist, station, level, half, carved, u, edge = channel(x, y, 40.0)
+    near = (dist < edge + 15.0) & (carved > 0.0)
+    if not near.any():
+        return floor
+    out = floor.copy()
+    dist, station, level, half, carved, u, edge, floor = (a[near] for a in (dist, station, level, half, carved, u, edge, floor))
+    deep = np.clip(-np.interp(station, river()["along"], river()["curvature"]) * 150.0, -0.55, 0.55)
+    bump = np.clip(1.0 - ((u - deep) / (1.0 + np.abs(deep))) ** 2, 0.0, 1.0)
+    depth = RIVER_DEPTH * np.sqrt(np.clip(half / (0.5 * RIVER_WIDTH), 0.1, 1.5))
+    bed = level + 0.3 - (depth + 0.3) * bump
+    bank = level + 0.3 + (RIVER_BANK - 0.3) * smoothstep(0.0, 5.0, dist - edge)
+    shape = np.where(np.abs(u) <= 1.0, bed, bank)
+    out[near] = floor + carved * (1.0 - smoothstep(edge + 5.0, edge + 15.0, dist)) * (shape - floor)
+    return out
 # Impostor trees stand on the hillside from the near band out to HILLSIDE, all of them up to
 # SPARSE_FROM, a share SPARSE_KEEP past it: the land under them is painted as forest, so they
 # give it its silhouettes, not its cover.
@@ -136,6 +208,27 @@ def hillside(rows, build, seed=SEED):
     rows = rows[keep]
     rows[:, 2, 3] = z[keep] - 0.2
     return rows, keep
+
+
+def line_frame(x, y, line, reach=60.0):
+    """Distance from points to a polyline where it is under reach (farther points get 1e9 or less),
+    the arc length of the nearest point along it, and the side points lie on (1 left, -1 right)."""
+    x, y = np.asarray(x, np.float64), np.asarray(y, np.float64)
+    dist, station, side = np.full(x.shape, 1e9), np.zeros(x.shape), np.ones(x.shape)
+    along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))])
+    lo = np.array([np.min(x), np.min(y)]) - reach
+    hi = np.array([np.max(x), np.max(y)]) + reach
+    near = np.all((np.minimum(line[:-1], line[1:]) <= hi) & (np.maximum(line[:-1], line[1:]) >= lo), axis=1)
+    for k in np.nonzero(near)[0]:
+        a, ab = line[k], line[k + 1] - line[k]
+        length2 = max(ab @ ab, 1e-9)
+        t = np.clip(((x - a[0]) * ab[0] + (y - a[1]) * ab[1]) / length2, 0, 1)
+        d = np.hypot(x - (a[0] + t * ab[0]), y - (a[1] + t * ab[1]))
+        closer = d < dist
+        dist[closer] = d[closer]
+        station[closer] = along[k] + t[closer] * math.sqrt(length2)
+        side[closer] = np.where(ab[0] * (y[closer] - a[1]) - ab[1] * (x[closer] - a[0]) >= 0.0, 1.0, -1.0)
+    return dist, station, side
 
 
 def distance_to_line(x, y, line, reach=60.0):
@@ -188,18 +281,22 @@ def lake_basin(x, y, floor):
     out = floor.copy()
     x, y, d, floor = x[near], y[near], d[near], floor[near]
     level = lake_level()
-    river = distance_to_line(x, y, river_line(), 40.0)
-    mouth = smoothstep(0.5 * RIVER_WIDTH + 4.0, 0.5 * RIVER_WIDTH + 1.0, river) * (1.0 - smoothstep(20.0, LAKE_BLEND[1], d))
-    bed = level - np.maximum(LAKE_DEPTH * smoothstep(0.0, -LAKE_SHELF, d), 0.6 * mouth)
-    bank = level + LAKE_BANK * smoothstep(0.0, 15.0, d) * (1.0 - mouth) - 0.6 * mouth
+    # Where the river comes through the bank, its own channel and banks (floor has them); it runs on
+    # into the shallows.
+    dist, _, _, _, _, _, edge = channel(x, y, 40.0)
+    mouth = smoothstep(edge + 6.0, edge + 1.0, dist) * (1.0 - smoothstep(20.0, LAKE_BLEND[1], d))
+    bed = np.minimum(level - LAKE_DEPTH * smoothstep(0.0, -LAKE_SHELF, d), floor)
+    bank = level + LAKE_BANK * smoothstep(0.0, 15.0, d)
+    bank += mouth * (floor - bank)
     shore = np.where(d < 0.0, bed, bank)
     out[near] = shore + smoothstep(*LAKE_BLEND, d) * (floor - shore)
     return out
 
 
 def valley_floor(x, y):
-    """The valley's floor with the lake's basin, and the hills and mountains around it (world z)."""
-    return lake_basin(x, y, natural_floor(x, y))
+    """The valley's floor with the river's channel and the lake's basin, and the hills and mountains
+    around it (world z)."""
+    return lake_basin(x, y, river_basin(x, y, natural_floor(x, y)))
 
 
 def shoreline(offset, count=720):
@@ -332,7 +429,11 @@ def land_mesh(build, lo, hi):
         return z - 2.5 * (1.0 - smoothstep(forest_edge.BAND - 10.0, forest_edge.BAND + 20.0, d))
 
     z = height(xy)
-    xy, z, faces = refine(xy, z, faces, height, lambda p: np.abs(lake_distance(p[:, 0], p[:, 1])) < LAKE_FINE, 8)
+    def fine(p):  # the lake's shore, the river's channel and banks
+        dist, _, _, _, carved, _, edge = channel(p[:, 0], p[:, 1], 60.0)
+        return (np.abs(lake_distance(p[:, 0], p[:, 1])) < LAKE_FINE) | ((dist < edge + RIVER_FINE) & (carved > 0.0))
+
+    xy, z, faces = refine(xy, z, faces, height, fine, 8)
     return np.column_stack([xy, z]), faces
 
 
@@ -486,16 +587,19 @@ def cover(x, y, build):
     patch = 0.9 + 0.1 * NOISE.fbm(x / 35.0, y / 35.0, 3) + 0.04 * np.sin(v / 9.0 + (ids % 13))
     rgb *= patch[..., None]
     # Meadows by the river and round the village.
-    river = distance_to_line(x, y, river_line(), 220.0)
+    beside, station, _, half, carved, across, _ = channel(x, y, 220.0)
     vx, vy = cx + VILLAGE[0], cy + VILLAGE[1]
     village = np.hypot(x - vx, y - vy)
-    meadow = (river < 40.0 + 30.0 * NOISE(x / 120.0, y / 120.0)) | (village < 220.0 + 60.0 * NOISE(x / 150.0, y / 150.0))
+    meadow = (beside < 40.0 + 30.0 * NOISE(x / 120.0, y / 120.0)) | (village < 220.0 + 60.0 * NOISE(x / 150.0, y / 150.0))
     clumps = (0.86 + 0.22 * NOISE.fbm(x / 14.0, y / 14.0, 3))[..., None]
     grass = PALETTE["meadow"][pick % 3] * clumps * np.array([1.0, 1.0, 0.92]) ** (1.0 + NOISE(x / 60.0, y / 60.0))[..., None]
     rgb = np.where(meadow[..., None], grass, rgb)
     # Woods: clusters across the valley, strips along the river, the hills and the foot of our hill.
     forest = srgb((44, 60, 35)) * canopy(x, y)[..., None]
-    wooded = ((NOISE.fbm(x / 900.0, y / 900.0, 3) > 0.22) | (river < 22.0 + 25.0 * NOISE(x / 80.0, y / 80.0) + 12.0)
+    # Along the river, trees in stretches: wide here, missing there, each bank on its own.
+    riverside = 34.0 * np.clip(0.3 + 1.6 * NOISE(station / 220.0, np.sign(across) * 4.7), 0.0, 1.0)
+    riverside *= 0.8 + 0.3 * NOISE(x / 25.0, y / 25.0)
+    wooded = ((NOISE.fbm(x / 900.0, y / 900.0, 3) > 0.22) | ((beside > half + 3.0) & (beside < half + 3.0 + riverside))
               | (hills > 35.0 + 40.0 * NOISE(x / 600.0, y / 600.0)) | (d < 300.0 + 60.0 * NOISE(x / 200.0, y / 200.0)))
     wooded &= village > 150.0
     hedge = (edge < 1.4) & (NOISE(x / 90.0, y / 90.0) > 0.05) & ~meadow
@@ -529,9 +633,20 @@ def cover(x, y, build):
     shallows = srgb((138, 128, 98)) + sandy * (srgb((160, 148, 114)) - srgb((138, 128, 98)))
     bed = shallows + smoothstep(0.4, 4.0, -height) * (srgb((66, 72, 54)) - shallows)
     rgb = np.where((lake < 0.0) & (height < 0.0), bed, rgb)
-    # The river's bed, up to the lake's.
-    bed = smoothstep(0.5 * RIVER_WIDTH + 3.0, 0.5 * RIVER_WIDTH + 1.0, river)[..., None] * smoothstep(-8.0, 0.0, lake)
-    return rgb + bed * (srgb((58, 66, 52)) - rgb)
+    # The river's bed, up to the lake's: in its channel, gravel where the inside of a bend shoals into a
+    # bar, wet soil along the rest of its edges, darkening with depth; far out, where it is a ribbon
+    # over the land, dark under it.
+    rv = river()
+    level = np.interp(station, rv["along"], rv["level"])[..., None]
+    deep = np.clip(-np.interp(station, rv["along"], rv["curvature"]) * 150.0, -0.55, 0.55)
+    bar = smoothstep(0.0, 0.25, -across * deep)[..., None]
+    gravel = srgb((156, 146, 116)) * (0.9 + 0.15 * NOISE(x / 6.0, y / 6.0))[..., None]
+    edge = srgb((84, 80, 60)) + bar * (gravel - srgb((84, 80, 60)))
+    bed = edge + smoothstep(0.15, 1.3, level - z[..., None]) * (srgb((62, 66, 50)) - edge)
+    inside = (1.0 - smoothstep(0.95, 1.1, np.abs(across)))[..., None] * carved[..., None]
+    rgb = rgb + inside * smoothstep(-8.0, 0.0, lake) * (bed - rgb)
+    ribbon = smoothstep(half + 3.0, half + 1.0, beside)[..., None] * (1.0 - carved[..., None]) * smoothstep(-8.0, 0.0, lake)
+    return rgb + ribbon * (srgb((58, 66, 52)) - rgb)
 
 
 # Towards the main sun (the first DirectionalLight, reversed).
@@ -632,16 +747,17 @@ def lake_mesh(build):
 
 
 def river_mesh(build):
-    """The river's water: a ribbon over its bed, coming level with the lake where it enters it and
-    ending inside it (level with the lake's own water, as the same material, the overlap does not show)."""
-    line = river_line()
+    """The river's water: level across, wider than its channel (the banks hide the rest, and the land
+    meeting it draws its edges), coming level with the lake where it enters it and ending inside it
+    (level with the lake's own water, as the same material, the overlap does not show). Far out, where
+    its channel is not carved, a ribbon of its width over the land."""
+    r = river()
+    line, z = r["line"], r["level"]
     tangent = np.gradient(line, axis=0)
     tangent /= np.linalg.norm(tangent, axis=1, keepdims=True)
-    side = np.column_stack([-tangent[:, 1], tangent[:, 0]]) * (0.5 * river_width(line))[:, None]
+    wide = r["half"] + r["carved"] * (0.25 * r["half"] + 3.0)
+    side = np.column_stack([-tangent[:, 1], tangent[:, 0]]) * wide[:, None]
     d = lake_distance(line[:, 0], line[:, 1])
-    level = lake_level()
-    z = land(line[:, 0], line[:, 1], build) + 0.4
-    z = level + smoothstep(10.0, 60.0, d) * (z - level)
     left, right = line + side, line - side
     v = np.vstack([np.column_stack([left, z]), np.column_stack([right, z])])
     n = len(line)
