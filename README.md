@@ -181,7 +181,10 @@ and that a large mesh's attributes reconstruct byte-for-byte:
 ## Research atlas
 
 159 drone autonomy projects and 126 sourced relationships, in
-[`research/dataset.json`](research/dataset.json).
+[`research/dataset.json`](research/dataset.json), which omits the fields that follow
+from others (`identity`, `referenceOnly`, `assemblyGroup`, `classificationReason`, a
+project's repository as first source, edge `id`); the viewer rebuilds them and its
+download button exports the full records.
 `python3 research/build_html.py` builds `research/drone-autonomy-atlas.html`,
 which opens offline in a browser; source links need internet.
 

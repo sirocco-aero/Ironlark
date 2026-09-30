@@ -17,10 +17,6 @@
       "evidence": "Source + manifests + flight demonstrations",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy"
-        },
-        {
           "label": "Inspected source tree · e045ce55",
           "url": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/tree/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9"
         },
@@ -35,15 +31,11 @@
       ],
       "commit": "e045ce55b4d06b4e04c1c2c7ef066a54368d36a9",
       "commitDate": "2025-04-02",
-      "identity": "project",
       "problem": "Combine navigation, exploration and tracking in a reusable UAV reference stack.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "navigation",
       "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources.",
       "additionalLinks": []
     },
     {
@@ -60,10 +52,6 @@
       "status": "Emerging integrated",
       "evidence": "Source + pinned manifests + paper",
       "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ntnu-arl/unified_autonomy_stack"
-        },
         {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2605.12735"
@@ -87,15 +75,11 @@
       ],
       "commit": "cb78bf7f57d074fc0999dd23bb1cfa1b1754d44d",
       "commitDate": "2026-06-28",
-      "identity": "project",
       "problem": "Bring several sensing and navigation approaches into one robot-autonomy blueprint.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "navigation",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "omni",
@@ -112,10 +96,6 @@
       "evidence": "Assembly links + full paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/OmniNxt"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2403.20085"
         },
@@ -130,15 +110,11 @@
       ],
       "commit": "79ce1d4b69a5a8c861417716adaac00c2bc6f594",
       "commitDate": "2025-03-09",
-      "identity": "project",
       "problem": "Give a compact aerial robot visual perception around the whole vehicle.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "navigation",
       "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources.",
       "additionalLinks": [
         {
           "name": "D2SLAM pr_fix_main: Omni-VINS / Omni-Depth",
@@ -174,10 +150,6 @@
       "evidence": "Source + module list + deployment docs",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ctu-mrs/mrs_uav_system"
-        },
-        {
           "label": "Inspected source tree · 3340bfe3",
           "url": "https://github.com/ctu-mrs/mrs_uav_system/tree/3340bfe3ff7cf5cc694d0dfd23c5f34d4605ec43"
         },
@@ -188,15 +160,11 @@
       ],
       "commit": "3340bfe3ff7cf5cc694d0dfd23c5f34d4605ec43",
       "commitDate": "2026-08-03",
-      "identity": "project",
       "problem": "Provide a reusable flight core with configurable estimation, control and mission modules.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "frameworks",
       "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources.",
       "assemblyNote": "The core bundle exposes separately published packages. Optional external estimation/map integrations are separate relationships; this graph is not a claim that all module branches are simultaneously compatible."
     },
     {
@@ -213,10 +181,6 @@
       "status": "Established framework",
       "evidence": "Source + plugin inspection + paper",
       "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/aerostack2/aerostack2"
-        },
         {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2303.18237"
@@ -236,15 +200,11 @@
       ],
       "commit": "82d85abcd90445ced2fb8fe8c986eb12751be027",
       "commitDate": "2026-09-07",
-      "identity": "project",
       "problem": "Organize aerial-robot behavior across different platforms using ROS 2.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "frameworks",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "fastdrone",
@@ -261,10 +221,6 @@
       "evidence": "Source + vendored modules + flight guide",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ZJU-FAST-Lab/Fast-Drone-250"
-        },
-        {
           "label": "Inspected source tree · 8ff64274",
           "url": "https://github.com/ZJU-FAST-Lab/Fast-Drone-250/tree/8ff64274b161bb829653faf5946656658e7e2c9f"
         }
@@ -278,15 +234,11 @@
           "url": "https://github.com/ZJU-FAST-Lab/Fast-Drone-250/tree/master/src/realflight_modules/px4ctrl"
         }
       ],
-      "identity": "project",
       "problem": "Build a small quadrotor that localizes itself and replans around sensed obstacles.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "navigation",
       "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources.",
       "assemblyNote": "External code is included inside the reference repository. px4ctrl is an internal package, explained with the parent rather than plotted as an independent project."
     },
     {
@@ -304,10 +256,6 @@
       "evidence": "Source + manifest + license + flight papers",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/KumarRobotics/kr_autonomous_flight"
-        },
-        {
           "label": "Inspected source tree · 385e7e34",
           "url": "https://github.com/KumarRobotics/kr_autonomous_flight/tree/385e7e34fd97cb18dd0c9169fe2f510d30314548"
         },
@@ -322,15 +270,11 @@
       ],
       "commit": "385e7e34fd97cb18dd0c9169fe2f510d30314548",
       "commitDate": "2026-04-12",
-      "identity": "project",
       "problem": "Fly through clutter without GPS using an integrated lab flight stack.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "navigation",
       "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources.",
       "additionalLinks": [
         {
           "name": "kr_planning_msgs",
@@ -358,10 +302,6 @@
       "evidence": "Repository access guide + paper + current agreement",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/uzh-rpg/agilicious"
-        },
-        {
           "label": "Paper",
           "url": "https://rpg.ifi.uzh.ch/docs/ScienceRobotics22_Foehn.pdf"
         },
@@ -376,15 +316,11 @@
       ],
       "commit": "50bba456156f6f438bea212c643b02e162442fa7",
       "commitDate": "2023-03-07",
-      "identity": "project",
       "problem": "Make agile quadrotor experiments practical with co-designed flight hardware and software.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "frameworks",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "airstack",
@@ -400,10 +336,6 @@
       "status": "Emerging integrated",
       "evidence": "Source + submodules + wiring snapshot",
       "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/castacks/AirStack"
-        },
         {
           "label": "Inspected source tree · a6dad8ca",
           "url": "https://github.com/castacks/AirStack/tree/a6dad8caf54722e5eba3481367e914ce213e6135"
@@ -423,15 +355,11 @@
       ],
       "commit": "a6dad8caf54722e5eba3481367e914ce213e6135",
       "commitDate": "2026-09-04",
-      "identity": "project",
       "problem": "Run layered aerial autonomy with simulation and ground control in one environment.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "frameworks",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "aas",
@@ -448,10 +376,6 @@
       "evidence": "Source + architecture + full paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/JacopoPan/aerial-autonomy-stack"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2602.07264"
         },
@@ -466,15 +390,11 @@
       ],
       "commit": "b5ac7d537d6deb27ccdaae9b1dcec9b6863bd87d",
       "commitDate": "2026-09-07",
-      "identity": "project",
       "problem": "Move multi-drone perception and control experiments from simulation toward onboard deployment.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "frameworks",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "prometheus",
@@ -491,10 +411,6 @@
       "evidence": "Source + submodules",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/amov-lab/Prometheus"
-        },
-        {
           "label": "Inspected source tree · 5dcd8cfa",
           "url": "https://github.com/amov-lab/Prometheus/tree/5dcd8cfa764d558f3e15dcb88aa7d49e32c54cce"
         },
@@ -505,15 +421,11 @@
       ],
       "commit": "5dcd8cfa764d558f3e15dcb88aa7d49e32c54cce",
       "commitDate": "2025-11-21",
-      "identity": "project",
       "problem": "Integrate perception, planning and control examples around a PX4 development platform.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "frameworks",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "gaas",
@@ -530,10 +442,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/generalized-intelligence/GAAS"
-        },
-        {
           "label": "Inspected source tree · 29ab17d3",
           "url": "https://github.com/generalized-intelligence/GAAS/tree/29ab17d3e8a4ba18edef3a57c36d8db6329fac73"
         },
@@ -544,15 +452,11 @@
       ],
       "commit": "29ab17d3e8a4ba18edef3a57c36d8db6329fac73",
       "commitDate": "2021-10-25",
-      "identity": "project",
       "problem": "Assemble visual and LiDAR navigation on a legacy autonomous-flight platform.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "navigation",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "px4fast",
@@ -569,10 +473,6 @@
       "evidence": "Source + dependency files",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mzahana/px4_fast_planner"
-        },
-        {
           "label": "Inspected source tree · c3d958e4",
           "url": "https://github.com/mzahana/px4_fast_planner/tree/c3d958e4204af22cd51487492f15ebe6dfef7901"
         },
@@ -583,15 +483,11 @@
       ],
       "commit": "c3d958e4204af22cd51487492f15ebe6dfef7901",
       "commitDate": "2020-08-01",
-      "identity": "project",
       "problem": "Connect Fast-Planner trajectories to a PX4 flight-control setup.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "navigation",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "gary",
@@ -608,25 +504,17 @@
       "evidence": "Source tree + architecture + flight demos",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/GaryLee1210/UAV-Navigation-System"
-        },
-        {
           "label": "Inspected source tree · e7d4de8d",
           "url": "https://github.com/GaryLee1210/UAV-Navigation-System/tree/e7d4de8d5707542206b365fb101c64d7e4b5aa54"
         }
       ],
       "commit": "e7d4de8d5707542206b365fb101c64d7e4b5aa54",
       "commitDate": "2026-06-19",
-      "identity": "project",
       "problem": "Reproduce LiDAR localization, waypoint navigation and exploration on a small quadrotor.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "navigation",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "alt",
@@ -643,10 +531,6 @@
       "evidence": "Source + extension catalogue",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/altnautica/ADOSDroneAgent"
-        },
-        {
           "label": "Inspected source tree · 6ddd9ae6",
           "url": "https://github.com/altnautica/ADOSDroneAgent/tree/6ddd9ae6bc37777c893fbf137afaab847cccf3bc"
         },
@@ -661,15 +545,11 @@
       ],
       "commit": "6ddd9ae6bc37777c893fbf137afaab847cccf3bc",
       "commitDate": "2026-09-04",
-      "identity": "project",
       "problem": "Operate an onboard drone agent with fleet tools and selectable extensions.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "nogps",
@@ -686,10 +566,6 @@
       "evidence": "Complete repository tree inspected",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Yarok14Technologies/No-GPS_Autonomous-Drone-System"
-        },
-        {
           "label": "Inspected source tree · e94e962e",
           "url": "https://github.com/Yarok14Technologies/No-GPS_Autonomous-Drone-System/tree/e94e962e7d38653e3e19ae28225e99e5a491234f"
         },
@@ -700,13 +576,9 @@
       ],
       "commit": "e94e962e7d38653e3e19ae28225e99e5a491234f",
       "commitDate": "2025-11-23",
-      "identity": "project",
       "problem": "A claimed GPS-denied stack whose inspected repository contains no implementation.",
       "views": [],
-      "referenceOnly": true,
-      "assemblyGroup": null,
-      "problemGroup": "hardware",
-      "classificationReason": "Reference material retained for its narrower scope or release limitation."
+      "problemGroup": "hardware"
     },
     {
       "id": "lion",
@@ -723,23 +595,15 @@
       "evidence": "Source tree + README",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/OmerMersin/LIONav"
-        },
-        {
           "label": "Inspected source tree · 02986992",
           "url": "https://github.com/OmerMersin/LIONav/tree/02986992f9da3a71f289c379fb521e150032bf17"
         }
       ],
       "commit": "02986992f9da3a71f289c379fb521e150032bf17",
       "commitDate": "2026-03-09",
-      "identity": "project",
       "problem": "A described LiDAR navigation system whose implementation is private.",
       "views": [],
-      "referenceOnly": true,
-      "assemblyGroup": null,
-      "problemGroup": "hardware",
-      "classificationReason": "Reference material retained for its narrower scope or release limitation."
+      "problemGroup": "hardware"
     },
     {
       "id": "uniquad",
@@ -756,23 +620,15 @@
       "evidence": "Repository + paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/UniQuad"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2407.00578"
         }
       ],
-      "identity": "project",
       "problem": "Provide reference airframes and component designs for aerial-robotics experiments.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "px4",
@@ -789,10 +645,6 @@
       "evidence": "Official docs + repository",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/PX4/PX4-Autopilot"
-        },
-        {
           "label": "Removed path-planning interface",
           "url": "https://docs.px4.io/main/en/computer_vision/path_planning_interface"
         },
@@ -805,15 +657,11 @@
           "url": "https://raw.githubusercontent.com/PX4/PX4-Autopilot/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Stabilize the aircraft and execute flight modes, missions and external commands.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "ardu",
@@ -830,10 +678,6 @@
       "evidence": "Official BendyRuler / Dijkstra documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ArduPilot/ardupilot"
-        },
-        {
           "label": "BendyRuler",
           "url": "https://ardupilot.org/copter/docs/common-oa-bendyruler.html"
         },
@@ -846,15 +690,11 @@
           "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/HEAD/COPYING.txt"
         }
       ],
-      "identity": "project",
       "problem": "Control the aircraft and execute missions, with configurable built-in obstacle detours.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "oldavoid",
@@ -871,23 +711,15 @@
       "evidence": "Repository archive flag + PX4 docs",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/PX4/PX4-Avoidance"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/PX4/PX4-Avoidance/HEAD/LICENSE.md"
         }
       ],
-      "identity": "project",
       "problem": "Historical local/global planning and safe landing examples for PX4.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "mavros",
@@ -904,23 +736,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mavlink/mavros"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/mavlink/mavros/HEAD/LICENSE.md"
         }
       ],
-      "identity": "project",
       "problem": "Translate between ROS interfaces and a MAVLink autopilot.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "px4ros",
@@ -937,10 +761,6 @@
       "evidence": "Source + PX4 official docs",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Auterion/px4-ros2-interface-lib"
-        },
-        {
           "label": "Inspected source tree · 7e082628",
           "url": "https://github.com/Auterion/px4-ros2-interface-lib/tree/7e082628e89ec1825e19ca59f5f1c5deebd1f844"
         },
@@ -955,15 +775,11 @@
       ],
       "commit": "7e082628e89ec1825e19ca59f5f1c5deebd1f844",
       "commitDate": "2026-08-31",
-      "identity": "project",
       "problem": "Define external flight modes and control interfaces for PX4 through ROS 2.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "mavsdk",
@@ -980,23 +796,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mavlink/MAVSDK"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/mavlink/MAVSDK/HEAD/LICENSE.md"
         }
       ],
-      "identity": "project",
       "problem": "Build applications that command and monitor a MAVLink vehicle.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "mavctrl",
@@ -1013,23 +821,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Jaeyoung-Lim/mavros_controllers"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/Jaeyoung-Lim/mavros_controllers/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Geometric trajectory tracking and PX4/MAVROS integration examples.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "rpgctrl",
@@ -1046,23 +846,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/uzh-rpg/rpg_quadrotor_control"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/uzh-rpg/rpg_quadrotor_control/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Control and simulation packages used in RPG drone research.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "sdfmpc",
@@ -1079,23 +871,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ntnu-arl/sdf-nmpc"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/ntnu-arl/sdf-nmpc/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Signed-distance-field constrained nonlinear model predictive control, integrated by NTNU’s stack.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "cbf",
@@ -1112,10 +896,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ntnu-arl/composite_cbf"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2502.04101"
         },
@@ -1124,15 +904,11 @@
           "url": "https://raw.githubusercontent.com/ntnu-arl/composite_cbf/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Control-barrier-function module exposed through NTNU’s autonomy workspace.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "acados",
@@ -1149,23 +925,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/acados/acados"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/acados/acados/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Fast numerical optimal control library useful beneath MPC flight controllers.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "paparazzi",
@@ -1182,23 +950,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/paparazzi/paparazzi"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/paparazzi/paparazzi/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Long-running open UAV autopilot and ground-control ecosystem.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "crazy",
@@ -1215,23 +975,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/bitcraze/crazyflie-firmware"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/bitcraze/crazyflie-firmware/HEAD/LICENSE.txt"
         }
       ],
-      "identity": "project",
       "problem": "Open firmware ecosystem for small Crazyflie research drones and sensor decks.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "crazyswarm",
@@ -1248,23 +1000,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/IMRCLab/crazyswarm2"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/IMRCLab/crazyswarm2/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Coordinate experiments with multiple small Crazyflie drones.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "frameworks",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "clover",
@@ -1281,23 +1025,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/copterexpress/clover"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/copterexpress/clover/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Make educational autonomous-flight experiments accessible on a small reference kit.",
       "views": [
         "assembled"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "frameworks",
-      "problemGroup": "hardware",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "hardware"
     },
     {
       "id": "ual",
@@ -1314,23 +1050,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/grvcTeam/grvc-ual"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/grvcTeam/grvc-ual/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Unified aerial interface across autopilots and simulators.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "uxas",
@@ -1347,23 +1075,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/afrl-rq/OpenUxAS"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/afrl-rq/OpenUxAS/HEAD/LICENSE.md"
         }
       ],
-      "identity": "project",
       "problem": "Autonomous mission planning and multi-vehicle task allocation services.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "vins",
@@ -1378,21 +1098,12 @@
       "license": "GPL-3.0",
       "status": "Established component",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/VINS-Fusion"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Estimate motion by combining cameras and an inertial sensor.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "vinsmono",
@@ -1407,21 +1118,12 @@
       "license": "GPL-3.0",
       "status": "Established component",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/VINS-Mono"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Estimate motion using one camera and an inertial sensor.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "openvins",
@@ -1438,23 +1140,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/rpng/open_vins"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/rpng/open_vins/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Estimate position, orientation and velocity from calibrated camera/IMU measurements.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "orb",
@@ -1471,10 +1165,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/UZ-SLAMLab/ORB_SLAM3"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2007.11898"
         },
@@ -1483,15 +1173,11 @@
           "url": "https://raw.githubusercontent.com/UZ-SLAMLab/ORB_SLAM3/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Localize and build a visual landmark map, including visual-inertial configurations.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "msckf",
@@ -1508,10 +1194,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/KumarRobotics/msckf_vio"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/1712.00036"
         },
@@ -1520,15 +1202,11 @@
           "url": "https://raw.githubusercontent.com/KumarRobotics/msckf_vio/HEAD/LICENSE.txt"
         }
       ],
-      "identity": "project",
       "problem": "Estimate motion from stereo images and IMU measurements using a filter.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "rovio",
@@ -1545,23 +1223,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ethz-asl/rovio"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/ethz-asl/rovio/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Robust visual-inertial estimator using image patches in a filter.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "svo",
@@ -1578,23 +1248,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/uzh-rpg/rpg_svo_pro_open"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/uzh-rpg/rpg_svo_pro_open/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Open release of SVO Pro with visual-inertial backend support.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "okvis",
@@ -1611,10 +1273,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ethz-mrl/okvis2"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2202.09199"
         },
@@ -1623,15 +1281,11 @@
           "url": "https://raw.githubusercontent.com/ethz-mrl/okvis2/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Visual-inertial estimation with global mapping/loop-closure capabilities.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "kimera",
@@ -1648,23 +1302,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/MIT-SPARK/Kimera"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/1903.01067"
         }
       ],
-      "identity": "project",
       "problem": "Suite for visual-inertial localization and metric-semantic 3D scene reconstruction.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "fastlio",
@@ -1681,10 +1327,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/hku-mars/FAST_LIO"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2202.12177"
         },
@@ -1693,15 +1335,11 @@
           "url": "https://raw.githubusercontent.com/hku-mars/FAST_LIO/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Estimate motion and register LiDAR scans using inertial measurements.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "fastlivo",
@@ -1718,10 +1356,6 @@
       "evidence": "Repository + full paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/hku-mars/FAST-LIVO2"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2408.14035"
         },
@@ -1730,15 +1364,11 @@
           "url": "https://raw.githubusercontent.com/hku-mars/FAST-LIVO2/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Combine LiDAR, images and inertial measurements for state estimation.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "r3live",
@@ -1753,21 +1383,12 @@
       "license": "GPL-2.0",
       "status": "Research",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/hku-mars/r3live"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Sensor-fusion system for state estimation and colored 3D mapping.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "liosam",
@@ -1784,23 +1405,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/TixiaoShan/LIO-SAM"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/TixiaoShan/LIO-SAM/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Factor-graph LiDAR/IMU mapping with loop-closure and optional GPS constraints.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "pointlio",
@@ -1817,23 +1430,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/hku-mars/Point-LIO"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/hku-mars/Point-LIO/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Point-wise LiDAR/IMU estimation aimed at rapid motion and high-rate state output.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "dlio",
@@ -1850,23 +1455,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/vectr-ucla/direct_lidar_inertial_odometry"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/vectr-ucla/direct_lidar_inertial_odometry/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "LiDAR/IMU odometry with continuous-time motion correction.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "kiss",
@@ -1883,23 +1480,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/PRBonn/kiss-icp"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/PRBonn/kiss-icp/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Compact LiDAR odometry pipeline, useful as a baseline and integrated in AAS.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "mimosa",
@@ -1916,10 +1505,6 @@
       "evidence": "Source + license + stack manifest",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ntnu-arl/mimosa"
-        },
-        {
           "label": "Inspected source tree · 322b89ef",
           "url": "https://github.com/ntnu-arl/mimosa/tree/322b89ef1a6ecb3b29007681ce58529e76a12136"
         },
@@ -1934,15 +1519,11 @@
       ],
       "commit": "322b89ef1a6ecb3b29007681ce58529e76a12136",
       "commitDate": "2026-08-07",
-      "identity": "project",
       "problem": "Fuse complementary sensing modalities for robot odometry.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "d2",
@@ -1957,21 +1538,12 @@
       "license": "GPL-3.0",
       "status": "Research",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/D2SLAM"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Share visual-inertial SLAM information between drones and support wide-field camera rigs.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "rtab",
@@ -1988,23 +1560,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/introlab/rtabmap"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/introlab/rtabmap/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Graph-based SLAM framework with dense mapping and ROS integrations.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "stella",
@@ -2021,10 +1585,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/stella-cv/stella_vslam"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/1910.01122"
         },
@@ -2033,15 +1593,11 @@
           "url": "https://raw.githubusercontent.com/stella-cv/stella_vslam/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Maintained visual-SLAM family supporting varied camera models.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "isaacvio",
@@ -2058,23 +1614,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_visual_slam"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/NVIDIA-ISAAC-ROS/isaac_ros_visual_slam/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "ROS 2 integration for NVIDIA cuVSLAM with stereo/inertial configurations.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "octo",
@@ -2089,21 +1637,12 @@
       "license": "BSD-3-Clause",
       "status": "Established component",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/OctoMap/octomap"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Represent occupied, free and unknown 3D space with an octree.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "mapping",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "mapping"
     },
     {
       "id": "voxblox",
@@ -2120,23 +1659,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ethz-asl/voxblox"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/ethz-asl/voxblox/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Build a distance field that a motion planner can query for obstacle clearance.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "mapping",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "mapping"
     },
     {
       "id": "rog",
@@ -2153,10 +1684,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/hku-mars/ROG-Map"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2302.14819"
         },
@@ -2165,15 +1692,11 @@
           "url": "https://raw.githubusercontent.com/hku-mars/ROG-Map/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Maintain an efficient occupancy map that moves with the robot.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "mapping",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "mapping"
     },
     {
       "id": "wave",
@@ -2190,23 +1713,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ethz-asl/wavemap"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/ethz-asl/wavemap/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Wavelet-based multi-resolution volumetric mapping for efficient environment representation.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "mapping",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "mapping"
     },
     {
       "id": "nvblox",
@@ -2223,23 +1738,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/nvidia-isaac/nvblox"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/nvidia-isaac/nvblox/HEAD/LICENSE.md"
         }
       ],
-      "identity": "project",
       "problem": "Use a GPU to reconstruct 3D surfaces and distance information.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "mapping",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "mapping"
     },
     {
       "id": "ray",
@@ -2256,10 +1763,6 @@
       "evidence": "Repository + paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/RayFronts/RayFronts"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2504.06994"
         },
@@ -2268,15 +1771,11 @@
           "url": "https://raw.githubusercontent.com/RayFronts/RayFronts/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Represent where objects and semantic targets may be found in a scene.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "mapping",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "mapping"
     },
     {
       "id": "cermap",
@@ -2293,10 +1792,6 @@
       "evidence": "Source + README",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Zhefan-Xu/map_manager"
-        },
-        {
           "label": "Inspected source tree · d8112b85",
           "url": "https://github.com/Zhefan-Xu/map_manager/tree/d8112b85f6ad4e2519b0f34740ff0f6c466bca24"
         },
@@ -2307,15 +1802,11 @@
       ],
       "commit": "d8112b85f6ad4e2519b0f34740ff0f6c466bca24",
       "commitDate": "2024-10-01",
-      "identity": "project",
       "problem": "Modular maps for CERLAB navigation, including dynamic-object-aware mapping with onboard_detector.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "mapping",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "mapping"
     },
     {
       "id": "cerdetect",
@@ -2332,10 +1823,6 @@
       "evidence": "Source + README",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Zhefan-Xu/onboard_detector"
-        },
-        {
           "label": "Inspected source tree · 4b4be99e",
           "url": "https://github.com/Zhefan-Xu/onboard_detector/tree/4b4be99ea0697c0c617dd9c256507e94d83a307d"
         },
@@ -2346,15 +1833,11 @@
       ],
       "commit": "4b4be99ea0697c0c617dd9c256507e94d83a307d",
       "commitDate": "2025-04-02",
-      "identity": "project",
       "problem": "Onboard dynamic-obstacle detection/tracking component used by CERLAB mapping and planning.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "sensing",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "sensing"
     },
     {
       "id": "realsense",
@@ -2371,23 +1854,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/IntelRealSense/realsense-ros"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/IntelRealSense/realsense-ros/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "ROS interfaces for RealSense RGB-D and related sensor streams.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "sensing",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "sensing"
     },
     {
       "id": "oak",
@@ -2404,23 +1879,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/luxonis/depthai-ros"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/luxonis/depthai-ros/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "ROS integration for OAK stereo and onboard vision processing.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "sensing",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "sensing"
     },
     {
       "id": "oak4",
@@ -2435,21 +1902,12 @@
       "license": "Check repository license",
       "status": "Research",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/D2SLAM-Fusion/oak_ffc_4p_ros"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Specific four-camera OAK driver linked by the OmniNxt assembly guide.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "sensing",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "sensing"
     },
     {
       "id": "kalibr",
@@ -2466,10 +1924,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ethz-asl/kalibr"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/1807.08957"
         },
@@ -2478,15 +1932,11 @@
           "url": "https://raw.githubusercontent.com/ethz-asl/kalibr/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Camera/IMU and multi-camera calibration tooling used across VIO research.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "sensing",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "sensing"
     },
     {
       "id": "fast",
@@ -2503,10 +1953,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/Fast-Planner"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/1912.12644"
         },
@@ -2515,15 +1961,11 @@
           "url": "https://raw.githubusercontent.com/HKUST-Aerial-Robotics/Fast-Planner/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Search and optimize local routes for a quadrotor in clutter.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "ego",
@@ -2540,10 +1982,6 @@
       "evidence": "Source + README",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ZJU-FAST-Lab/ego-planner"
-        },
-        {
           "label": "Inspected source tree · bfda5128",
           "url": "https://github.com/ZJU-FAST-Lab/ego-planner/tree/bfda51284c8c1b476043255a8145ef925a3778a5"
         },
@@ -2554,15 +1992,11 @@
       ],
       "commit": "bfda51284c8c1b476043255a8145ef925a3778a5",
       "commitDate": "2025-03-08",
-      "identity": "project",
       "problem": "Generate smooth local trajectories without maintaining a full distance field.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "egoswarm",
@@ -2579,10 +2013,6 @@
       "evidence": "Source + README",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ZJU-FAST-Lab/ego-planner-swarm"
-        },
-        {
           "label": "Inspected source tree · 92fe9f72",
           "url": "https://github.com/ZJU-FAST-Lab/ego-planner-swarm/tree/92fe9f7227b2da819133eb8e0e8c7fc000f6ae20"
         },
@@ -2593,15 +2023,11 @@
       ],
       "commit": "92fe9f7227b2da819133eb8e0e8c7fc000f6ae20",
       "commitDate": "2025-03-08",
-      "identity": "project",
       "problem": "Replan local trajectories while coordinating with other drones.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "egov2",
@@ -2618,23 +2044,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ZJU-FAST-Lab/EGO-Planner-v2"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/ZJU-FAST-Lab/EGO-Planner-v2/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Related EGO-family release associated with the 2022 Science Robotics swarm work.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "gco",
@@ -2651,10 +2069,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ZJU-FAST-Lab/GCOPTER"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2103.00190"
         },
@@ -2663,15 +2077,11 @@
           "url": "https://raw.githubusercontent.com/ZJU-FAST-Lab/GCOPTER/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Optimize dynamically feasible polynomial trajectories efficiently.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "super",
@@ -2688,10 +2098,6 @@
       "evidence": "Source + full Science Robotics paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/hku-mars/SUPER"
-        },
-        {
           "label": "Paper",
           "url": "https://github.com/hku-mars/SUPER/blob/master/misc/scirobotics.ado6187.pdf"
         },
@@ -2706,16 +2112,12 @@
       ],
       "commit": "2ad3419c127a617c6d7df6925e81a14175a9c096",
       "commitDate": "2025-06-04",
-      "identity": "project",
       "problem": "Plan fast LiDAR-based flight while preserving a backup trajectory in known free space.",
       "views": [
         "assembled",
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "navigation",
-      "problemGroup": "motion",
-      "classificationReason": "An assembled system and a focused research contribution; the same project appears in both contexts."
+      "problemGroup": "motion"
     },
     {
       "id": "faster",
@@ -2732,10 +2134,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mit-acl/faster"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2001.04420"
         },
@@ -2744,15 +2142,11 @@
           "url": "https://raw.githubusercontent.com/mit-acl/faster/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Explore possible motion into unknown space while retaining a safe backup.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "mader",
@@ -2769,10 +2163,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mit-acl/mader"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2010.11061"
         },
@@ -2781,15 +2171,11 @@
           "url": "https://raw.githubusercontent.com/mit-acl/mader/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Decentralized asynchronous trajectory coordination among dynamic agents.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "rmader",
@@ -2806,10 +2192,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mit-acl/rmader"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2303.06222"
         },
@@ -2818,15 +2200,11 @@
           "url": "https://raw.githubusercontent.com/mit-acl/rmader/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "MADER extension addressing communication delays in decentralized trajectory planning.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "panther",
@@ -2843,10 +2221,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mit-acl/panther"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2103.06372"
         },
@@ -2855,15 +2229,11 @@
           "url": "https://raw.githubusercontent.com/mit-acl/panther/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Joint position/yaw planning accounts for field of view and dynamic obstacles.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "deeppan",
@@ -2880,10 +2250,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mit-acl/deep_panther"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2209.01268"
         },
@@ -2892,15 +2258,11 @@
           "url": "https://raw.githubusercontent.com/mit-acl/deep_panther/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Learns a fast policy from PANTHER-style trajectory optimization.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "dynus",
@@ -2917,10 +2279,6 @@
       "evidence": "Repository + paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mit-acl/dynus"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2504.16734"
         },
@@ -2929,15 +2287,11 @@
           "url": "https://raw.githubusercontent.com/mit-acl/dynus/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Account for uncertainty and moving obstacles during trajectory planning.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "mighty",
@@ -2954,10 +2308,6 @@
       "evidence": "Source + manifest + reported hardware demos",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mit-acl/mighty"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2511.10822"
         },
@@ -2972,15 +2322,11 @@
       ],
       "commit": "163940216d056ef3e86c8d69e42adebb9a82db0f",
       "commitDate": "2026-08-03",
-      "identity": "project",
       "problem": "Generate efficient trajectories using a Hermite-spline representation.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "sando",
@@ -2997,10 +2343,6 @@
       "evidence": "Source + architecture + reported hardware demos",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/mit-acl/sando"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2604.07599"
         },
@@ -3015,15 +2357,11 @@
       ],
       "commit": "93b2eed6bb7e300d212372fe20fc8231508162e0",
       "commitDate": "2026-04-10",
-      "identity": "project",
       "problem": "Plan through unknown environments containing both moving and static obstacles.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "ipc",
@@ -3038,21 +2376,12 @@
       "license": "Check repository license",
       "status": "Research",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/hku-mars/IPC"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Combines motion planning and control for quadrotors using an optimization formulation.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "fapp",
@@ -3069,10 +2398,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/arclab-hku/FAPP"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2312.08743"
         },
@@ -3081,15 +2406,11 @@
           "url": "https://raw.githubusercontent.com/arclab-hku/FAPP/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Recent planning work with GCOPTER and EGO-Planner v2 foundations acknowledged in the release.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "apace",
@@ -3106,10 +2427,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/APACE"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2403.08365"
         },
@@ -3118,15 +2435,11 @@
           "url": "https://raw.githubusercontent.com/HKUST-Aerial-Robotics/APACE/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Plan motion with the quality of visual perception in mind.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "la",
@@ -3143,10 +2456,6 @@
       "evidence": "Source tree + README + paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Robotics-STAR-Lab/LA-Planner"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2503.15273"
         },
@@ -3161,15 +2470,11 @@
       ],
       "commit": "fe85a7840c4304326f66d035a024dd3bb0b69739",
       "commitDate": "2025-07-21",
-      "identity": "project",
       "problem": "Choose motion that keeps localization possible in visually difficult environments.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "avoidmpc",
@@ -3186,10 +2491,6 @@
       "evidence": "Source tree + paper + README",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/SJTU-ViSYS-team/avoid-mpc"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2503.10141"
         },
@@ -3204,15 +2505,11 @@
       ],
       "commit": "04717780ba6f2a0d5f4daaec4d75290e29d627a8",
       "commitDate": "2025-12-02",
-      "identity": "project",
       "problem": "Generate obstacle-avoiding control from point clouds and sparse waypoints.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "aeromppi",
@@ -3229,10 +2526,6 @@
       "evidence": "Complete repository tree + paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/XinChen-stars/AERO_MPPI"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2509.17340"
         },
@@ -3243,13 +2536,9 @@
       ],
       "commit": "b251a110399adcc58fd27c848e3b3e1e03a2c231",
       "commitDate": "2026-03-04",
-      "identity": "project",
       "problem": "Paper describes GPU ensemble trajectory optimization with Isaac Sim/Lab.",
       "views": [],
-      "referenceOnly": true,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Reference material retained for its narrower scope or release limitation."
+      "problemGroup": "motion"
     },
     {
       "id": "fuel",
@@ -3266,10 +2555,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/FUEL"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2010.11561"
         },
@@ -3278,15 +2563,11 @@
           "url": "https://raw.githubusercontent.com/HKUST-Aerial-Robotics/FUEL/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Choose frontiers and flight trajectories to explore an unknown environment.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "exploration",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "exploration"
     },
     {
       "id": "racer",
@@ -3303,23 +2584,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Robotics-STAR-Lab/RACER"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2209.08533"
         }
       ],
-      "identity": "project",
       "problem": "Divide and coordinate exploration among multiple drones.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "exploration",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "exploration"
     },
     {
       "id": "falcon",
@@ -3336,23 +2609,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/FALCON"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2407.00577"
         }
       ],
-      "identity": "project",
       "problem": "Exploration planner combining coverage guidance and online navigation.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "exploration",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "exploration"
     },
     {
       "id": "fc",
@@ -3369,10 +2634,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/FC-Planner"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2309.13882"
         },
@@ -3381,15 +2642,11 @@
           "url": "https://raw.githubusercontent.com/HKUST-Aerial-Robotics/FC-Planner/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Plan coverage of a complex structure whose 3D representation is already available.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "exploration",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "exploration"
     },
     {
       "id": "gb",
@@ -3406,10 +2663,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ntnu-arl/gbplanner_ros"
-        },
-        {
           "label": "Inspected source tree · 7301b535",
           "url": "https://github.com/ntnu-arl/gbplanner_ros/tree/7301b5350915cf3a4055072ad559842db37b4ca9"
         },
@@ -3420,15 +2673,11 @@
       ],
       "commit": "7301b5350915cf3a4055072ad559842db37b4ca9",
       "commitDate": "2024-06-13",
-      "identity": "project",
       "problem": "Use local and global graphs to explore a previously unknown environment.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "exploration",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "exploration"
     },
     {
       "id": "mb",
@@ -3445,23 +2694,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ntnu-arl/mbplanner_ros"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/ntnu-arl/mbplanner_ros/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Exploration/navigation through sampled motion primitives for agile robots.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "exploration",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "exploration"
     },
     {
       "id": "active3d",
@@ -3478,10 +2719,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ethz-asl/mav_active_3d_planning"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/1909.09548"
         },
@@ -3490,16 +2727,12 @@
           "url": "https://raw.githubusercontent.com/ethz-asl/mav_active_3d_planning/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Choose flight paths that gather useful information for 3D reconstruction.",
       "views": [
         "assembled",
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "missions",
-      "problemGroup": "exploration",
-      "classificationReason": "An assembled system and a focused research contribution; the same project appears in both contexts."
+      "problemGroup": "exploration"
     },
     {
       "id": "mavvox",
@@ -3516,10 +2749,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ethz-asl/mav_voxblox_planning"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/1611.03631"
         },
@@ -3528,15 +2757,11 @@
           "url": "https://raw.githubusercontent.com/ethz-asl/mav_voxblox_planning/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Local/global MAV planning on Voxblox maps.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "airfar",
@@ -3551,21 +2776,12 @@
       "license": "Check repository license",
       "status": "Research",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Bottle101/Air-FAR"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Aerial route-planning adaptation using visibility-graph ideas in 3D environments.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "exploration",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "exploration"
     },
     {
       "id": "teach",
@@ -3582,23 +2798,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/HKUST-Aerial-Robotics/Teach-Repeat-Replan"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/HKUST-Aerial-Robotics/Teach-Repeat-Replan/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Records a demonstrated route, then repeats and replans while executing it.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "exploration",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "exploration"
     },
     {
       "id": "jps",
@@ -3615,23 +2823,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/KumarRobotics/jps3d"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/KumarRobotics/jps3d/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Jump Point Search for efficient 2D/3D grid path finding.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "decomp",
@@ -3648,23 +2848,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/sikang/DecompUtil"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/sikang/DecompUtil/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Convex decomposition utilities for obstacle-free corridors around paths.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "traj",
@@ -3681,23 +2873,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ethz-asl/mav_trajectory_generation"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/ethz-asl/mav_trajectory_generation/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Polynomial trajectory optimization and sampling utilities for aerial vehicles.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "ompl",
@@ -3714,10 +2898,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ompl/ompl"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2603.04668"
         },
@@ -3726,15 +2906,11 @@
           "url": "https://raw.githubusercontent.com/ompl/ompl/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "General sampling-based motion-planning algorithms including RRT-family methods.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "cerplan",
@@ -3751,10 +2927,6 @@
       "evidence": "Source + README",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Zhefan-Xu/trajectory_planner"
-        },
-        {
           "label": "Inspected source tree · a84b4914",
           "url": "https://github.com/Zhefan-Xu/trajectory_planner/tree/a84b491456e4f97d400627e1e2cd07392ac91333"
         },
@@ -3765,15 +2937,11 @@
       ],
       "commit": "a84b491456e4f97d400627e1e2cd07392ac91333",
       "commitDate": "2023-12-30",
-      "identity": "project",
       "problem": "Local trajectory planning including B-spline and polynomial modules, wired to CERLAB maps/global planning.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "cerglobal",
@@ -3790,23 +2958,15 @@
       "evidence": "CERLAB .gitmodules",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/Zhefan-Xu/global_planner"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/Zhefan-Xu/global_planner/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Global route-planning module included as a CERLAB autonomy submodule.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "exploration",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "exploration"
     },
     {
       "id": "agile",
@@ -3823,10 +2983,6 @@
       "evidence": "Repository + full paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/uzh-rpg/agile_autonomy"
-        },
-        {
           "label": "Paper",
           "url": "https://rpg.ifi.uzh.ch/docs/Loquercio21_Science.pdf"
         },
@@ -3835,16 +2991,12 @@
           "url": "https://raw.githubusercontent.com/uzh-rpg/agile_autonomy/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Learn rapid visual navigation from an expert with privileged scene information.",
       "views": [
         "assembled",
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "experiments",
-      "problemGroup": "learning",
-      "classificationReason": "An assembled system and a focused research contribution; the same project appears in both contexts."
+      "problemGroup": "learning"
     },
     {
       "id": "yopo",
@@ -3861,10 +3013,6 @@
       "evidence": "Source + license + paper links",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/TJU-Aerial-Robotics/YOPO"
-        },
-        {
           "label": "Inspected source tree · bd8a7f91",
           "url": "https://github.com/TJU-Aerial-Robotics/YOPO/tree/bd8a7f91953cfef9f1aa9a48d7ff0ab7bceee132"
         },
@@ -3875,15 +3023,11 @@
       ],
       "commit": "bd8a7f91953cfef9f1aa9a48d7ff0ab7bceee132",
       "commitDate": "2026-08-14",
-      "identity": "project",
       "problem": "Predict useful local trajectories from depth, state and a goal.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "rlnav",
@@ -3900,10 +3044,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ntnu-arl/rl_nav"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2605.12735"
         },
@@ -3912,15 +3052,11 @@
           "url": "https://raw.githubusercontent.com/ntnu-arl/rl_nav/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Turn LiDAR and state observations into acceleration and yaw commands with a learned policy.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "vit",
@@ -3937,10 +3073,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/anish-bhattacharya/ViT-for-quadrotor-obstacle-avoidance"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2405.10391"
         },
@@ -3949,15 +3081,11 @@
           "url": "https://raw.githubusercontent.com/anish-bhattacharya/ViT-for-quadrotor-obstacle-avoidance/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Vision-transformer research for quadrotor obstacle avoidance from camera observations.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "mavrl",
@@ -3972,21 +3100,12 @@
       "license": "Check repository license",
       "status": "Research",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/tudelft/mavrl"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Learning infrastructure for micro-aerial-vehicle navigation and control experiments.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "dronet",
@@ -4003,23 +3122,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/uzh-rpg/rpg_public_dronet"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/uzh-rpg/rpg_public_dronet/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Predict steering and collision probability from a monocular image.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "pulp",
@@ -4036,10 +3147,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/pulp-platform/pulp-dronet"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2407.12675"
         },
@@ -4048,15 +3155,11 @@
           "url": "https://raw.githubusercontent.com/pulp-platform/pulp-dronet/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Run compact visual steering and collision prediction on a tiny embedded platform.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "raptor",
@@ -4073,10 +3176,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/rl-tools/raptor"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2311.13081"
         },
@@ -4085,15 +3184,11 @@
           "url": "https://raw.githubusercontent.com/rl-tools/raptor/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Sim-to-real reinforcement-learning flight-control work using rl-tools.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "halo",
@@ -4110,10 +3205,6 @@
       "evidence": "Source tree + deployment scripts + paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/KumarRobotics/HALO"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2511.17497"
         },
@@ -4124,16 +3215,12 @@
       ],
       "commit": "760f6fb61d6c69fcf963ebead5ab0fb5f1474ccb",
       "commitDate": "2026-08-21",
-      "identity": "project",
       "problem": "Explore from an overhead camera and search for targets described in language.",
       "views": [
         "assembled",
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "missions",
-      "problemGroup": "learning",
-      "classificationReason": "An assembled system and a focused research contribution; the same project appears in both contexts."
+      "problemGroup": "learning"
     },
     {
       "id": "raven",
@@ -4150,10 +3237,6 @@
       "evidence": "Submodules + setup + paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/castacks/RAVEN"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2509.23563"
         },
@@ -4168,16 +3251,12 @@
       ],
       "commit": "91ef2e7aacb9d2cbb6bbaf72bdcac7754638a778",
       "commitDate": "2026-05-31",
-      "identity": "project",
       "problem": "Use semantic memory and language-guided behaviors to navigate toward meaningful targets.",
       "views": [
         "assembled",
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "missions",
-      "problemGroup": "learning",
-      "classificationReason": "An assembled system and a focused research contribution; the same project appears in both contexts."
+      "problemGroup": "learning"
     },
     {
       "id": "aerovla",
@@ -4194,10 +3273,6 @@
       "evidence": "Source tree + training/evaluation README",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/XuPeng23/AeroVLA"
-        },
-        {
           "label": "Inspected source tree · e37685af",
           "url": "https://github.com/XuPeng23/AeroVLA/tree/e37685afb8953d1f5a09155d7255960cee1bfd9d"
         },
@@ -4208,15 +3283,11 @@
       ],
       "commit": "e37685afb8953d1f5a09155d7255960cee1bfd9d",
       "commitDate": "2026-07-29",
-      "identity": "project",
       "problem": "Translate visual observations and language instructions into UAV actions in a benchmark.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "airvln",
@@ -4231,21 +3302,12 @@
       "license": "Check code/data/asset terms",
       "status": "Research",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ASGO-MM/AirVLN"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Environment and dataset for language-guided aerial navigation.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "travel",
@@ -4262,23 +3324,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/buaa-colalab/TravelUAV"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2410.07087"
         }
       ],
-      "identity": "project",
       "problem": "Benchmark/platform for language-directed UAV navigation and landing tasks.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "openfly",
@@ -4295,10 +3349,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/SHAILAB-IPEC/OpenFly-Platform"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2502.18041"
         },
@@ -4307,15 +3357,11 @@
           "url": "https://raw.githubusercontent.com/SHAILAB-IPEC/OpenFly-Platform/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Aerial embodied-AI data and model platform for navigation research.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "learning",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "learning"
     },
     {
       "id": "flightmare",
@@ -4332,23 +3378,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/uzh-rpg/flightmare"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/uzh-rpg/flightmare/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Simulate quadrotor dynamics and rendered observations for learning and evaluation.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "flightbench",
@@ -4365,10 +3403,6 @@
       "evidence": "Repository + paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/thu-uav/FlightBench"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2406.05687"
         },
@@ -4377,16 +3411,12 @@
           "url": "https://raw.githubusercontent.com/thu-uav/FlightBench/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Compare classical and learned visual navigation under shared test scenarios.",
       "views": [
         "assembled",
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": "experiments",
-      "problemGroup": "evaluation",
-      "classificationReason": "An assembled system and a focused research contribution; the same project appears in both contexts."
+      "problemGroup": "evaluation"
     },
     {
       "id": "avoidbench",
@@ -4403,23 +3433,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/tudelft/AvoidBench"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2301.07430"
         }
       ],
-      "identity": "project",
       "problem": "Simulation/evaluation infrastructure for comparing MAV avoidance in controlled scenarios.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "aerialgym",
@@ -4436,10 +3458,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ntnu-arl/aerial_gym_simulator"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2305.16510"
         },
@@ -4448,15 +3466,11 @@
           "url": "https://raw.githubusercontent.com/ntnu-arl/aerial_gym_simulator/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Run many aerial-robot learning and sensing experiments in parallel.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "airgym",
@@ -4473,23 +3487,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/FP-Flight/AirGym"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/FP-Flight/AirGym/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "GPU flight learning with control interfaces related to PX4 and an AirGym-Real deployment project.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "pegasus",
@@ -4506,23 +3512,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/PegasusSimulator/PegasusSimulator"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/PegasusSimulator/PegasusSimulator/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Bring multirotor dynamics and autopilot interfaces into Isaac Sim.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "marsim",
@@ -4539,10 +3537,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/hku-mars/MARSIM"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2211.10716"
         },
@@ -4551,15 +3545,11 @@
           "url": "https://raw.githubusercontent.com/hku-mars/MARSIM/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Point-cloud-environment aerial simulation used with HKU-MARS planning work.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "rotors",
@@ -4574,21 +3564,12 @@
       "license": "Apache-2.0",
       "status": "Legacy platform",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ethz-asl/rotors_simulator"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Gazebo/ROS multirotor simulation infrastructure widely used in earlier aerial robotics.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "airsim",
@@ -4605,10 +3586,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/microsoft/AirSim"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/1705.05065"
         },
@@ -4617,15 +3594,11 @@
           "url": "https://raw.githubusercontent.com/microsoft/AirSim/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Widely used Unreal-based simulation for drones and visual autonomy.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "projectair",
@@ -4642,23 +3615,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/iamaisim/ProjectAirSim"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/iamaisim/ProjectAirSim/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Distinct Project AirSim repository for aerial simulation and autonomy workflows.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "forge",
@@ -4675,10 +3640,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ctu-mrs/flight_forge"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2502.05038"
         },
@@ -4687,15 +3648,11 @@
           "url": "https://raw.githubusercontent.com/ctu-mrs/flight_forge/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "MRS-linked Unreal Engine 5 simulation for procedurally generated flight environments.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "pybullet",
@@ -4712,10 +3669,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/utiasDSL/gym-pybullet-drones"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2103.02142"
         },
@@ -4724,15 +3677,11 @@
           "url": "https://raw.githubusercontent.com/utiasDSL/gym-pybullet-drones/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "PyBullet-based quadrotor environments for control and reinforcement-learning research.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "safe",
@@ -4749,10 +3698,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/utiasDSL/safe-control-gym"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2108.06266"
         },
@@ -4761,15 +3706,11 @@
           "url": "https://raw.githubusercontent.com/utiasDSL/safe-control-gym/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Standardized control environments with constraints, disturbances and quadrotor/cart-pole tasks.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "rotorpy",
@@ -4786,23 +3727,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/spencerfolk/rotorpy"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/spencerfolk/rotorpy/HEAD/LICENSE.md"
         }
       ],
-      "identity": "project",
       "problem": "Python multirotor dynamics, aerodynamic disturbance and control simulation.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "omnidrones",
@@ -4819,10 +3752,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/btx0424/OmniDrones"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2309.12825"
         },
@@ -4831,15 +3760,11 @@
           "url": "https://raw.githubusercontent.com/btx0424/OmniDrones/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Isaac Sim-based parallel drone learning environment.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "xt",
@@ -4856,10 +3781,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/robin-shaun/XTDrone"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2003.09700"
         },
@@ -4868,15 +3789,11 @@
           "url": "https://raw.githubusercontent.com/robin-shaun/XTDrone/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Drone simulation and algorithm examples with autopilot/ROS integration.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "nav2",
@@ -4893,10 +3810,6 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/ros-navigation/navigation2"
-        },
-        {
           "label": "Paper linked by authors",
           "url": "https://arxiv.org/abs/2003.00368"
         },
@@ -4905,13 +3818,9 @@
           "url": "https://raw.githubusercontent.com/ros-navigation/navigation2/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "ROS 2 navigation infrastructure with costmaps, planners, controllers and behavior trees.",
       "views": [],
-      "referenceOnly": true,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Reference material retained for its narrower scope or release limitation."
+      "problemGroup": "motion"
     },
     {
       "id": "fael",
@@ -4926,19 +3835,10 @@
       "license": "Check repository license",
       "status": "Adjacent domain",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/SYSU-RoboticsLab/FAEL"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Exploration research worth reading for methods and evaluation.",
       "views": [],
-      "referenceOnly": true,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Reference material retained for its narrower scope or release limitation."
+      "problemGroup": "motion"
     },
     {
       "id": "tare",
@@ -4953,19 +3853,10 @@
       "license": "Check repository license",
       "status": "Adjacent domain",
       "evidence": "Repository documentation",
-      "sources": [
-        {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/caochao39/tare_planner"
-        }
-      ],
-      "identity": "project",
+      "sources": [],
       "problem": "Hierarchical exploration planning with a strong terrain/ground-robot research context.",
       "views": [],
-      "referenceOnly": true,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Reference material retained for its narrower scope or release limitation."
+      "problemGroup": "motion"
     },
     {
       "id": "skydio",
@@ -4982,10 +3873,6 @@
       "evidence": "Manufacturer support and product documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://www.skydio.com/x10"
-        },
-        {
           "label": "Manufacturer safety limitations",
           "url": "https://support.skydio.com/hc/en-us/articles/360000586653-Skydio-Safety-and-Operating-Guide"
         },
@@ -4998,13 +3885,9 @@
           "url": "https://support.skydio.com/hc/en-us/articles/20593492028059-What-attachments-are-available-with-Skydio-X10"
         }
       ],
-      "identity": "project",
       "problem": "Provide commercial autonomous flight on the manufacturer’s own aircraft.",
       "views": [],
-      "referenceOnly": true,
-      "assemblyGroup": null,
-      "problemGroup": "hardware",
-      "classificationReason": "Reference material retained for its narrower scope or release limitation."
+      "problemGroup": "hardware"
     },
     {
       "id": "dji",
@@ -5021,21 +3904,13 @@
       "evidence": "User manual v1.2, §4.5",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://www.dji.com/mavic-4-pro"
-        },
-        {
           "label": "User manual v1.2, §4.5, p.36",
           "url": "https://dl.djicdn.com/downloads/mavic-4-pro/20250925/DJI_Mavic_4_Pro_User_Manual_v1.2_en.pdf"
         }
       ],
-      "identity": "project",
       "problem": "Provide commercial waypoint flight and model-specific pilot assistance.",
       "views": [],
-      "referenceOnly": true,
-      "assemblyGroup": null,
-      "problemGroup": "hardware",
-      "classificationReason": "Reference material retained for its narrower scope or release limitation."
+      "problemGroup": "hardware"
     },
     {
       "id": "sym",
@@ -5052,23 +3927,15 @@
       "evidence": "Repository documentation",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/symforce-org/symforce"
-        },
-        {
           "label": "License file inspected",
           "url": "https://raw.githubusercontent.com/symforce-org/symforce/HEAD/LICENSE"
         }
       ],
-      "identity": "project",
       "problem": "Open symbolic computation/code generation library originating at Skydio.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "rappids",
@@ -5085,23 +3952,15 @@
       "evidence": "Repository + author paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/nlbucki/RAPPIDS"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/2003.01245"
         }
       ],
-      "identity": "project",
       "problem": "Find local collision-free motion quickly from a single depth image.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "nanomap",
@@ -5118,23 +3977,15 @@
       "evidence": "Repository + author paper",
       "sources": [
         {
-          "label": "Project repository / documentation",
-          "url": "https://github.com/peteflorence/nanomap_ros"
-        },
-        {
           "label": "Paper",
           "url": "https://arxiv.org/abs/1802.09076"
         }
       ],
-      "identity": "project",
       "problem": "Query nearby geometry while accounting for uncertainty in the robot’s past poses.",
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "mapping",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "mapping"
     },
     {
       "id": "cerflight",
@@ -5150,7 +4001,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5164,10 +4014,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "exploration",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "exploration"
     },
     {
       "id": "cerremote",
@@ -5183,7 +4030,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5197,10 +4043,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "certime",
@@ -5216,7 +4059,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5230,10 +4072,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "motion",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "motion"
     },
     {
       "id": "certrack",
@@ -5249,7 +4088,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5263,10 +4101,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "cersim",
@@ -5282,7 +4117,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5296,10 +4130,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "krcontrol",
@@ -5315,7 +4146,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5329,10 +4159,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "mrslsim",
@@ -5348,7 +4175,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5362,10 +4188,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     },
     {
       "id": "mrscore",
@@ -5381,7 +4204,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5395,10 +4217,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "quarter",
@@ -5414,7 +4233,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5428,10 +4246,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "sensing",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "sensing"
     },
     {
       "id": "vdb",
@@ -5447,7 +4262,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5461,10 +4275,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "mapping",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "mapping"
     },
     {
       "id": "vdbros",
@@ -5480,7 +4291,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Repository documentation + parent assembly manifest",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5494,10 +4304,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "mapping",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "mapping"
     },
     {
       "id": "mrscontrol",
@@ -5513,7 +4320,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Parent repository table; individual implementation not re-audited",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5527,10 +4333,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "mrsestimate",
@@ -5546,7 +4349,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Parent repository table; individual implementation not re-audited",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5560,10 +4362,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "position",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "position"
     },
     {
       "id": "mrsmanager",
@@ -5579,7 +4378,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Parent repository table; individual implementation not re-audited",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5593,10 +4391,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "mrshw",
@@ -5612,7 +4407,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Parent repository table; individual implementation not re-audited",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5626,10 +4420,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "mrstracker",
@@ -5645,7 +4436,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Parent repository table; individual implementation not re-audited",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5659,10 +4449,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "control",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "control"
     },
     {
       "id": "mrssim",
@@ -5678,7 +4465,6 @@
       "license": "Module license not separately audited",
       "status": "Research component",
       "evidence": "Parent repository table; individual implementation not re-audited",
-      "identity": "project",
       "sources": [
         {
           "label": "Project repository",
@@ -5692,10 +4478,7 @@
       "views": [
         "focused"
       ],
-      "referenceOnly": false,
-      "assemblyGroup": null,
-      "problemGroup": "evaluation",
-      "classificationReason": "Independently identifiable project. Its role is explained by the inspected sources."
+      "problemGroup": "evaluation"
     }
   ],
   "edges": [
@@ -5705,7 +4488,6 @@
       "type": "Uses",
       "note": "Vendored VINS-Fusion estimator in the reference build.",
       "source": "https://github.com/ZJU-FAST-Lab/Fast-Drone-250/blob/8ff64274b161bb829653faf5946656658e7e2c9f/readme_en.md",
-      "id": "fastdrone--vins--uses",
       "scope": "project relationship"
     },
     {
@@ -5714,7 +4496,6 @@
       "type": "Uses",
       "note": "Vendored EGO planner drives local navigation.",
       "source": "https://github.com/ZJU-FAST-Lab/Fast-Drone-250/blob/8ff64274b161bb829653faf5946656658e7e2c9f/readme_en.md",
-      "id": "fastdrone--ego--uses",
       "scope": "project relationship"
     },
     {
@@ -5723,7 +4504,6 @@
       "type": "Uses",
       "note": "Flight-controller firmware in the reference setup.",
       "source": "https://github.com/ZJU-FAST-Lab/Fast-Drone-250/blob/8ff64274b161bb829653faf5946656658e7e2c9f/readme_en.md",
-      "id": "fastdrone--px4--uses",
       "scope": "project relationship"
     },
     {
@@ -5732,7 +4512,6 @@
       "type": "Uses",
       "note": "Companion-to-autopilot interface.",
       "source": "https://github.com/ZJU-FAST-Lab/Fast-Drone-250/blob/8ff64274b161bb829653faf5946656658e7e2c9f/readme_en.md",
-      "id": "fastdrone--mavros--uses",
       "scope": "project relationship"
     },
     {
@@ -5741,7 +4520,6 @@
       "type": "Uses",
       "note": "Reference depth-camera driver/setup.",
       "source": "https://github.com/ZJU-FAST-Lab/Fast-Drone-250/blob/8ff64274b161bb829653faf5946656658e7e2c9f/readme_en.md",
-      "id": "fastdrone--realsense--uses",
       "scope": "project relationship"
     },
     {
@@ -5750,7 +4528,6 @@
       "type": "Uses",
       "note": "Mapping submodule.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/.gitmodules",
-      "id": "cerlab--cermap--uses",
       "scope": "project relationship"
     },
     {
@@ -5759,7 +4536,6 @@
       "type": "Uses",
       "note": "Local trajectory-planning submodule.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/.gitmodules",
-      "id": "cerlab--cerplan--uses",
       "scope": "project relationship"
     },
     {
@@ -5768,7 +4544,6 @@
       "type": "Uses",
       "note": "Global planning submodule.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/.gitmodules",
-      "id": "cerlab--cerglobal--uses",
       "scope": "project relationship"
     },
     {
@@ -5777,7 +4552,6 @@
       "type": "Uses",
       "note": "Onboard detection submodule.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/.gitmodules",
-      "id": "cerlab--cerdetect--uses",
       "scope": "project relationship"
     },
     {
@@ -5786,7 +4560,6 @@
       "type": "Uses",
       "note": "Real-flight branch connects to PX4; simulator branch is separate.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/README.md",
-      "id": "cerlab--px4--uses",
       "scope": "project relationship"
     },
     {
@@ -5795,7 +4568,6 @@
       "type": "Uses",
       "note": "Real-flight communication through MAVROS.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/README.md",
-      "id": "cerlab--mavros--uses",
       "scope": "project relationship"
     },
     {
@@ -5804,7 +4576,6 @@
       "type": "Optional",
       "note": "Dynamic-map mode uses onboard_detector.",
       "source": "https://github.com/Zhefan-Xu/map_manager/blob/d8112b85f6ad4e2519b0f34740ff0f6c466bca24/README.md",
-      "id": "cermap--cerdetect--optional",
       "scope": "project relationship"
     },
     {
@@ -5813,7 +4584,6 @@
       "type": "Uses",
       "note": "Planner uses map_manager APIs and maps.",
       "source": "https://github.com/Zhefan-Xu/trajectory_planner/blob/a84b491456e4f97d400627e1e2cd07392ac91333/README.md",
-      "id": "cerplan--cermap--uses",
       "scope": "project relationship"
     },
     {
@@ -5822,7 +4592,6 @@
       "type": "Uses",
       "note": "Global-planning dependency in CERLAB pipeline.",
       "source": "https://github.com/Zhefan-Xu/trajectory_planner/blob/a84b491456e4f97d400627e1e2cd07392ac91333/README.md",
-      "id": "cerplan--cerglobal--uses",
       "scope": "project relationship"
     },
     {
@@ -5831,7 +4600,6 @@
       "type": "Uses",
       "note": "OctoMap dependency in planning build configuration.",
       "source": "https://github.com/Zhefan-Xu/trajectory_planner/blob/a84b491456e4f97d400627e1e2cd07392ac91333/README.md",
-      "id": "cerplan--octo--uses",
       "scope": "project relationship"
     },
     {
@@ -5840,7 +4608,6 @@
       "type": "Uses",
       "note": "MIMOSA workspace and its factor-graph dependencies.",
       "source": "https://github.com/ntnu-arl/unified_autonomy_stack/blob/cb78bf7f57d074fc0999dd23bb1cfa1b1754d44d/repos/ws_mimosa.repos",
-      "id": "ntnu--mimosa--uses",
       "scope": "project relationship"
     },
     {
@@ -5849,7 +4616,6 @@
       "type": "Uses",
       "note": "Pins gbplanner3_test rather than assuming default branch.",
       "source": "https://github.com/ntnu-arl/unified_autonomy_stack/blob/cb78bf7f57d074fc0999dd23bb1cfa1b1754d44d/repos/ws_gbplanner.repos",
-      "id": "ntnu--gb--uses",
       "scope": "project relationship"
     },
     {
@@ -5858,7 +4624,6 @@
       "type": "Uses",
       "note": "Voxblox mapping in graph-planner workspace.",
       "source": "https://github.com/ntnu-arl/unified_autonomy_stack/blob/cb78bf7f57d074fc0999dd23bb1cfa1b1754d44d/repos/ws_gbplanner.repos",
-      "id": "ntnu--voxblox--uses",
       "scope": "project relationship"
     },
     {
@@ -5867,7 +4632,6 @@
       "type": "Uses",
       "note": "NMPC control and ROS wrapper workspace.",
       "source": "https://github.com/ntnu-arl/unified_autonomy_stack/blob/cb78bf7f57d074fc0999dd23bb1cfa1b1754d44d/repos/ws_nmpc.repos",
-      "id": "ntnu--sdfmpc--uses",
       "scope": "project relationship"
     },
     {
@@ -5876,7 +4640,6 @@
       "type": "Optional",
       "note": "Alternative safety-filter workspace.",
       "source": "https://github.com/ntnu-arl/unified_autonomy_stack/blob/cb78bf7f57d074fc0999dd23bb1cfa1b1754d44d/repos/ws_cbf.repos",
-      "id": "ntnu--cbf--optional",
       "scope": "project relationship"
     },
     {
@@ -5885,7 +4648,6 @@
       "type": "Optional",
       "note": "Alternative learned navigation module.",
       "source": "https://github.com/ntnu-arl/unified_autonomy_stack/blob/cb78bf7f57d074fc0999dd23bb1cfa1b1754d44d/repos/ws_rl.repos",
-      "id": "ntnu--rlnav--optional",
       "scope": "project relationship"
     },
     {
@@ -5894,7 +4656,6 @@
       "type": "Uses",
       "note": "MAVROS workspace for autopilot interface.",
       "source": "https://github.com/ntnu-arl/unified_autonomy_stack/blob/cb78bf7f57d074fc0999dd23bb1cfa1b1754d44d/repos/ws_mavros.repos",
-      "id": "ntnu--mavros--uses",
       "scope": "project relationship"
     },
     {
@@ -5903,7 +4664,6 @@
       "type": "Uses",
       "note": "Reference flight-control interface; other MAVLink-compatible vehicles may be adapted.",
       "source": "https://arxiv.org/abs/2605.12735",
-      "id": "ntnu--px4--uses",
       "scope": "project relationship"
     },
     {
@@ -5912,7 +4672,6 @@
       "type": "Uses",
       "note": "Guide links pr_fix_main branch for Omni-VINS and Omni-Depth.",
       "source": "https://github.com/HKUST-Aerial-Robotics/OmniNxt/blob/79ce1d4b69a5a8c861417716adaac00c2bc6f594/README.md",
-      "id": "omni--d2--uses",
       "scope": "project relationship"
     },
     {
@@ -5921,7 +4680,6 @@
       "type": "Code reuse",
       "note": "Guide explicitly modifies EGO-Planner in D2SLAM-Fusion/planner-EgoPlanner; not stock upstream compatibility.",
       "source": "https://github.com/HKUST-Aerial-Robotics/OmniNxt/blob/79ce1d4b69a5a8c861417716adaac00c2bc6f594/README.md",
-      "id": "omni--ego--code-reuse",
       "scope": "project relationship"
     },
     {
@@ -5930,7 +4688,6 @@
       "type": "Uses",
       "note": "Specific four-fisheye camera driver linked by guide.",
       "source": "https://github.com/HKUST-Aerial-Robotics/OmniNxt/blob/79ce1d4b69a5a8c861417716adaac00c2bc6f594/README.md",
-      "id": "omni--oak4--uses",
       "scope": "project relationship"
     },
     {
@@ -5939,7 +4696,6 @@
       "type": "Uses",
       "note": "Nxt-FC / PX4 reference flight-control path.",
       "source": "https://github.com/HKUST-Aerial-Robotics/OmniNxt/blob/79ce1d4b69a5a8c861417716adaac00c2bc6f594/README.md",
-      "id": "omni--px4--uses",
       "scope": "project relationship"
     },
     {
@@ -5948,7 +4704,6 @@
       "type": "Optional",
       "note": "Listed MRS module/integration; availability depends on current ROS branch.",
       "source": "https://github.com/ctu-mrs/mrs_uav_system/blob/3340bfe3ff7cf5cc694d0dfd23c5f34d4605ec43/README.md",
-      "id": "mrs--openvins--optional",
       "scope": "project relationship"
     },
     {
@@ -5957,7 +4712,6 @@
       "type": "Optional",
       "note": "Listed MRS module/integration; availability depends on current ROS branch.",
       "source": "https://github.com/ctu-mrs/mrs_uav_system/blob/3340bfe3ff7cf5cc694d0dfd23c5f34d4605ec43/README.md",
-      "id": "mrs--pointlio--optional",
       "scope": "project relationship"
     },
     {
@@ -5966,7 +4720,6 @@
       "type": "Optional",
       "note": "Listed MRS module/integration; availability depends on current ROS branch.",
       "source": "https://github.com/ctu-mrs/mrs_uav_system/blob/3340bfe3ff7cf5cc694d0dfd23c5f34d4605ec43/README.md",
-      "id": "mrs--octo--optional",
       "scope": "project relationship"
     },
     {
@@ -5975,7 +4728,6 @@
       "type": "Uses",
       "note": "PX4 API module in the flight framework.",
       "source": "https://github.com/ctu-mrs/mrs_uav_system/blob/3340bfe3ff7cf5cc694d0dfd23c5f34d4605ec43/README.md",
-      "id": "mrs--px4--uses",
       "scope": "project relationship"
     },
     {
@@ -5984,7 +4736,6 @@
       "type": "Optional",
       "note": "PX4 platform adapter; other backends also exist.",
       "source": "https://github.com/aerostack2/as2_platform_pixhawk",
-      "id": "as2--px4--optional",
       "scope": "project relationship"
     },
     {
@@ -5993,7 +4744,6 @@
       "type": "Uses",
       "note": "Submodule is castacks/PegasusSimulator-AirStack-Integration fork.",
       "source": "https://github.com/castacks/AirStack/blob/a6dad8caf54722e5eba3481367e914ce213e6135/.gitmodules",
-      "id": "airstack--pegasus--uses",
       "scope": "project relationship"
     },
     {
@@ -6002,7 +4752,6 @@
       "type": "Uses",
       "note": "Observed reference stack wiring launches MAVROS.",
       "source": "https://github.com/castacks/AirStack/blob/a6dad8caf54722e5eba3481367e914ce213e6135/stacks/full_default/wiring.md",
-      "id": "airstack--mavros--uses",
       "scope": "project relationship"
     },
     {
@@ -6011,7 +4760,6 @@
       "type": "Uses",
       "note": "Reference simulator/onboard autopilot interface.",
       "source": "https://github.com/castacks/AirStack/blob/a6dad8caf54722e5eba3481367e914ce213e6135/README.md",
-      "id": "airstack--px4--uses",
       "scope": "project relationship"
     },
     {
@@ -6020,7 +4768,6 @@
       "type": "Optional",
       "note": "Legacy simulator alternative to Isaac Sim.",
       "source": "https://github.com/castacks/AirStack/blob/a6dad8caf54722e5eba3481367e914ce213e6135/README.md",
-      "id": "airstack--airsim--optional",
       "scope": "project relationship"
     },
     {
@@ -6029,7 +4776,6 @@
       "type": "Uses",
       "note": "Documented component of supported AAS configurations.",
       "source": "https://github.com/JacopoPan/aerial-autonomy-stack/blob/b5ac7d537d6deb27ccdaae9b1dcec9b6863bd87d/README.md",
-      "id": "aas--px4--uses",
       "scope": "project relationship"
     },
     {
@@ -6038,7 +4784,6 @@
       "type": "Uses",
       "note": "Documented component of supported AAS configurations.",
       "source": "https://github.com/JacopoPan/aerial-autonomy-stack/blob/b5ac7d537d6deb27ccdaae9b1dcec9b6863bd87d/README.md",
-      "id": "aas--ardu--uses",
       "scope": "project relationship"
     },
     {
@@ -6047,7 +4792,6 @@
       "type": "Uses",
       "note": "Documented component of supported AAS configurations.",
       "source": "https://github.com/JacopoPan/aerial-autonomy-stack/blob/b5ac7d537d6deb27ccdaae9b1dcec9b6863bd87d/README.md",
-      "id": "aas--mavros--uses",
       "scope": "project relationship"
     },
     {
@@ -6056,7 +4800,6 @@
       "type": "Uses",
       "note": "Documented component of supported AAS configurations.",
       "source": "https://github.com/JacopoPan/aerial-autonomy-stack/blob/b5ac7d537d6deb27ccdaae9b1dcec9b6863bd87d/README.md",
-      "id": "aas--kiss--uses",
       "scope": "project relationship"
     },
     {
@@ -6065,7 +4808,6 @@
       "type": "Uses",
       "note": "Estimator/flight-interface dependency in documented stack.",
       "source": "https://github.com/KumarRobotics/kr_autonomous_flight/blob/385e7e34fd97cb18dd0c9169fe2f510d30314548/external_all.yaml",
-      "id": "kumar--msckf--uses",
       "scope": "project relationship"
     },
     {
@@ -6074,7 +4816,6 @@
       "type": "Uses",
       "note": "Fast-Planner dependency in example assembly.",
       "source": "https://github.com/mzahana/px4_fast_planner/blob/c3d958e4204af22cd51487492f15ebe6dfef7901/README.md",
-      "id": "px4fast--fast--uses",
       "scope": "project relationship"
     },
     {
@@ -6083,7 +4824,6 @@
       "type": "Uses",
       "note": "mavros_controllers dependency in integration setup.",
       "source": "https://github.com/mzahana/px4_fast_planner/blob/c3d958e4204af22cd51487492f15ebe6dfef7901/README.md",
-      "id": "px4fast--mavctrl--uses",
       "scope": "project relationship"
     },
     {
@@ -6092,7 +4832,6 @@
       "type": "Uses",
       "note": "Autopilot in the example.",
       "source": "https://github.com/mzahana/px4_fast_planner/blob/c3d958e4204af22cd51487492f15ebe6dfef7901/README.md",
-      "id": "px4fast--px4--uses",
       "scope": "project relationship"
     },
     {
@@ -6101,7 +4840,6 @@
       "type": "Optional",
       "note": "Documented selectable estimation/planning path; reference flight chain in README.",
       "source": "https://github.com/GaryLee1210/UAV-Navigation-System/blob/e7d4de8d5707542206b365fb101c64d7e4b5aa54/README.md",
-      "id": "gary--fastlio--optional",
       "scope": "project relationship"
     },
     {
@@ -6110,7 +4848,6 @@
       "type": "Optional",
       "note": "Documented selectable estimation/planning path; reference flight chain in README.",
       "source": "https://github.com/GaryLee1210/UAV-Navigation-System/blob/e7d4de8d5707542206b365fb101c64d7e4b5aa54/README.md",
-      "id": "gary--dlio--optional",
       "scope": "project relationship"
     },
     {
@@ -6119,7 +4856,6 @@
       "type": "Optional",
       "note": "Documented selectable estimation/planning path; reference flight chain in README.",
       "source": "https://github.com/GaryLee1210/UAV-Navigation-System/blob/e7d4de8d5707542206b365fb101c64d7e4b5aa54/README.md",
-      "id": "gary--ego--optional",
       "scope": "project relationship"
     },
     {
@@ -6128,7 +4864,6 @@
       "type": "Optional",
       "note": "Documented selectable estimation/planning path; reference flight chain in README.",
       "source": "https://github.com/GaryLee1210/UAV-Navigation-System/blob/e7d4de8d5707542206b365fb101c64d7e4b5aa54/README.md",
-      "id": "gary--fuel--optional",
       "scope": "project relationship"
     },
     {
@@ -6137,7 +4872,6 @@
       "type": "Uses",
       "note": "Documented selectable estimation/planning path; reference flight chain in README.",
       "source": "https://github.com/GaryLee1210/UAV-Navigation-System/blob/e7d4de8d5707542206b365fb101c64d7e4b5aa54/README.md",
-      "id": "gary--mavros--uses",
       "scope": "project relationship"
     },
     {
@@ -6146,7 +4880,6 @@
       "type": "Uses",
       "note": "Documented selectable estimation/planning path; reference flight chain in README.",
       "source": "https://github.com/GaryLee1210/UAV-Navigation-System/blob/e7d4de8d5707542206b365fb101c64d7e4b5aa54/README.md",
-      "id": "gary--px4--uses",
       "scope": "project relationship"
     },
     {
@@ -6155,7 +4888,6 @@
       "type": "Code reuse",
       "note": "Vendors EGO integration and the internal px4ctrl package from a pinned Fast-Drone-250 revision; does not run the whole original assembly unchanged.",
       "source": "https://github.com/GaryLee1210/UAV-Navigation-System/blob/e7d4de8d5707542206b365fb101c64d7e4b5aa54/README.md",
-      "id": "gary--fastdrone--code-reuse",
       "scope": "project relationship"
     },
     {
@@ -6164,7 +4896,6 @@
       "type": "Optional",
       "note": "Vision-navigation extension can use OpenVINS for pose; not an avoidance planner.",
       "source": "https://docs.altnautica.com/drone-agent/extensions-catalog",
-      "id": "alt--openvins--optional",
       "scope": "project relationship"
     },
     {
@@ -6173,7 +4904,6 @@
       "type": "Optional",
       "note": "Vision extension supports VINS-Fusion pose backend.",
       "source": "https://docs.altnautica.com/drone-agent/extensions-catalog",
-      "id": "alt--vins--optional",
       "scope": "project relationship"
     },
     {
@@ -6182,7 +4912,6 @@
       "type": "Optional",
       "note": "MAVLink autopilot backend.",
       "source": "https://docs.altnautica.com/drone-agent/overview",
-      "id": "alt--px4--optional",
       "scope": "project relationship"
     },
     {
@@ -6191,7 +4920,6 @@
       "type": "Optional",
       "note": "MAVLink autopilot backend.",
       "source": "https://docs.altnautica.com/drone-agent/overview",
-      "id": "alt--ardu--optional",
       "scope": "project relationship"
     },
     {
@@ -6200,7 +4928,6 @@
       "type": "Code reuse",
       "note": "EGO derives from Fast-Planner infrastructure/ideas; this is research ancestry.",
       "source": "https://github.com/ZJU-FAST-Lab/ego-planner/blob/bfda51284c8c1b476043255a8145ef925a3778a5/README.md",
-      "id": "ego--fast--code-reuse",
       "scope": "project relationship"
     },
     {
@@ -6209,7 +4936,6 @@
       "type": "Code reuse",
       "note": "Improved EGO-family extension with swarm support.",
       "source": "https://github.com/ZJU-FAST-Lab/ego-planner-swarm/blob/92fe9f7227b2da819133eb8e0e8c7fc000f6ae20/README.md",
-      "id": "egoswarm--ego--code-reuse",
       "scope": "project relationship"
     },
     {
@@ -6218,7 +4944,6 @@
       "type": "Code reuse",
       "note": "Related EGO-family swarm release; distinct repository.",
       "source": "https://github.com/ZJU-FAST-Lab/EGO-Planner-v2/blob/HEAD/README.md",
-      "id": "egov2--ego--code-reuse",
       "scope": "project relationship"
     },
     {
@@ -6227,7 +4952,6 @@
       "type": "Uses",
       "note": "ROG-Map occupancy representation included in SUPER.",
       "source": "https://github.com/hku-mars/SUPER/blob/2ad3419c127a617c6d7df6925e81a14175a9c096/README.md",
-      "id": "super--rog--uses",
       "scope": "project relationship"
     },
     {
@@ -6236,7 +4960,6 @@
       "type": "Uses",
       "note": "MARSIM simulation component included in repository.",
       "source": "https://github.com/hku-mars/SUPER/blob/2ad3419c127a617c6d7df6925e81a14175a9c096/README.md",
-      "id": "super--marsim--uses",
       "scope": "project relationship"
     },
     {
@@ -6245,7 +4968,6 @@
       "type": "Research lineage",
       "note": "Optimizer foundations acknowledged; not an unchanged full GCOPTER runtime dependency.",
       "source": "https://github.com/hku-mars/SUPER/blob/2ad3419c127a617c6d7df6925e81a14175a9c096/README.md",
-      "id": "super--gco--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6254,7 +4976,6 @@
       "type": "Research lineage",
       "note": "Backup/committed-trajectory conceptual ancestry, not a software dependency.",
       "source": "https://github.com/hku-mars/SUPER/blob/2ad3419c127a617c6d7df6925e81a14175a9c096/README.md",
-      "id": "super--faster--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6263,7 +4984,6 @@
       "type": "Uses",
       "note": "FAST-LIO2 is the state estimator in the published SUPER system.",
       "source": "https://github.com/hku-mars/SUPER/blob/master/misc/scirobotics.ado6187.pdf",
-      "id": "super--fastlio--uses",
       "scope": "project relationship"
     },
     {
@@ -6272,7 +4992,6 @@
       "type": "Research lineage",
       "note": "Extends decentralized MADER planning to communication delays.",
       "source": "https://github.com/mit-acl/rmader/blob/HEAD/Readme.md",
-      "id": "rmader--mader--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6281,7 +5000,6 @@
       "type": "Research lineage",
       "note": "Learns from PANTHER expert optimization.",
       "source": "https://github.com/mit-acl/deep_panther/blob/HEAD/Readme.md",
-      "id": "deeppan--panther--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6290,7 +5008,6 @@
       "type": "Code reuse",
       "note": "L-BFGS implementation adapted from GCOPTER; not full planner reuse.",
       "source": "https://github.com/mit-acl/mighty/blob/163940216d056ef3e86c8d69e42adebb9a82db0f/README.md",
-      "id": "mighty--gco--code-reuse",
       "scope": "project relationship"
     },
     {
@@ -6299,7 +5016,6 @@
       "type": "Uses",
       "note": "DecompROS2/decomp_util dependencies in mighty.repos.",
       "source": "https://github.com/mit-acl/mighty/blob/163940216d056ef3e86c8d69e42adebb9a82db0f/mighty.repos",
-      "id": "mighty--decomp--uses",
       "scope": "project relationship"
     },
     {
@@ -6308,7 +5024,6 @@
       "type": "Uses",
       "note": "MINCO used for yaw trajectory representation.",
       "source": "https://github.com/Robotics-STAR-Lab/LA-Planner/blob/fe85a7840c4304326f66d035a024dd3bb0b69739/README.md",
-      "id": "la--gco--uses",
       "scope": "project relationship"
     },
     {
@@ -6317,7 +5032,6 @@
       "type": "Research lineage",
       "note": "Authors identify FUEL exploration framework as inspiration.",
       "source": "https://github.com/Robotics-STAR-Lab/LA-Planner/blob/fe85a7840c4304326f66d035a024dd3bb0b69739/README.md",
-      "id": "la--fuel--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6326,7 +5040,6 @@
       "type": "Research lineage",
       "note": "Authors identify perception-aware APACE design as partial inspiration.",
       "source": "https://github.com/Robotics-STAR-Lab/LA-Planner/blob/fe85a7840c4304326f66d035a024dd3bb0b69739/README.md",
-      "id": "la--apace--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6335,7 +5048,6 @@
       "type": "Uses",
       "note": "VINS-Fusion in the perception-aware pipeline.",
       "source": "https://github.com/HKUST-Aerial-Robotics/APACE/blob/HEAD/README.md",
-      "id": "apace--vins--uses",
       "scope": "project relationship"
     },
     {
@@ -6344,7 +5056,6 @@
       "type": "Evaluation",
       "note": "AirSim simulation environment in release.",
       "source": "https://github.com/HKUST-Aerial-Robotics/APACE/blob/HEAD/README.md",
-      "id": "apace--airsim--evaluation",
       "scope": "project relationship"
     },
     {
@@ -6353,7 +5064,6 @@
       "type": "Evaluation",
       "note": "Current release demonstrates MPC in AirSim; Flightmare version is TODO.",
       "source": "https://github.com/SJTU-ViSYS-team/avoid-mpc/blob/04717780ba6f2a0d5f4daaec4d75290e29d627a8/README.md",
-      "id": "avoidmpc--airsim--evaluation",
       "scope": "project relationship"
     },
     {
@@ -6362,7 +5072,6 @@
       "type": "Research lineage",
       "note": "GCOPTER foundation acknowledged.",
       "source": "https://github.com/arclab-hku/FAPP/blob/HEAD/README.md",
-      "id": "fapp--gco--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6371,7 +5080,6 @@
       "type": "Research lineage",
       "note": "EGO-Planner v2 foundation acknowledged.",
       "source": "https://github.com/arclab-hku/FAPP/blob/HEAD/README.md",
-      "id": "fapp--egov2--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6380,7 +5088,6 @@
       "type": "Research lineage",
       "note": "Fast-Planner foundation for local trajectory generation.",
       "source": "https://github.com/HKUST-Aerial-Robotics/FUEL/blob/HEAD/README.md",
-      "id": "fuel--fast--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6389,7 +5096,6 @@
       "type": "Research lineage",
       "note": "Extends exploration ideas/infrastructure to multiple drones.",
       "source": "https://github.com/Robotics-STAR-Lab/RACER/blob/HEAD/README.md",
-      "id": "racer--fuel--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6398,7 +5104,6 @@
       "type": "Uses",
       "note": "Voxblox map backend in documented planning system.",
       "source": "https://github.com/ntnu-arl/unified_autonomy_stack/blob/cb78bf7f57d074fc0999dd23bb1cfa1b1754d44d/repos/ws_gbplanner.repos",
-      "id": "gb--voxblox--uses",
       "scope": "project relationship"
     },
     {
@@ -6407,7 +5112,6 @@
       "type": "Uses",
       "note": "Documented map/trajectory/simulation dependency.",
       "source": "https://github.com/ethz-asl/mav_active_3d_planning/blob/HEAD/README.md",
-      "id": "active3d--voxblox--uses",
       "scope": "project relationship"
     },
     {
@@ -6416,7 +5120,6 @@
       "type": "Uses",
       "note": "Documented map/trajectory/simulation dependency.",
       "source": "https://github.com/ethz-asl/mav_active_3d_planning/blob/HEAD/README.md",
-      "id": "active3d--traj--uses",
       "scope": "project relationship"
     },
     {
@@ -6425,7 +5128,6 @@
       "type": "Uses",
       "note": "Documented map/trajectory/simulation dependency.",
       "source": "https://github.com/ethz-asl/mav_active_3d_planning/blob/HEAD/README.md",
-      "id": "active3d--rotors--uses",
       "scope": "project relationship"
     },
     {
@@ -6434,7 +5136,6 @@
       "type": "Uses",
       "note": "Planning uses Voxblox maps.",
       "source": "https://github.com/ethz-asl/mav_voxblox_planning/blob/HEAD/README.md",
-      "id": "mavvox--voxblox--uses",
       "scope": "project relationship"
     },
     {
@@ -6443,7 +5144,6 @@
       "type": "Research lineage",
       "note": "Multi-sensor extension of VINS-Mono.",
       "source": "https://github.com/HKUST-Aerial-Robotics/VINS-Fusion/blob/HEAD/README.md",
-      "id": "vins--vinsmono--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6452,7 +5152,6 @@
       "type": "Evaluation",
       "note": "Policies trained in Aerial Gym; inference is deployed in rl_nav.",
       "source": "https://github.com/ntnu-arl/rl_nav/blob/HEAD/README.md",
-      "id": "rlnav--aerialgym--evaluation",
       "scope": "project relationship"
     },
     {
@@ -6461,7 +5160,6 @@
       "type": "Evaluation",
       "note": "Simulation/expert-data generation and training ecosystem.",
       "source": "https://github.com/uzh-rpg/agile_autonomy/blob/HEAD/README.md",
-      "id": "agile--flightmare--evaluation",
       "scope": "project relationship"
     },
     {
@@ -6470,7 +5168,6 @@
       "type": "Evaluation",
       "note": "Related research flight platform; release licenses must be checked independently.",
       "source": "https://github.com/uzh-rpg/agilicious/blob/50bba456156f6f438bea212c643b02e162442fa7/README.md",
-      "id": "agile--agilicious--evaluation",
       "scope": "project relationship"
     },
     {
@@ -6479,7 +5176,6 @@
       "type": "Evaluation",
       "note": "Integrated baseline in benchmark; not a runtime dependency of every compared method.",
       "source": "https://github.com/thu-uav/FlightBench/blob/HEAD/README.md",
-      "id": "flightbench--fast--evaluation",
       "scope": "project relationship"
     },
     {
@@ -6488,7 +5184,6 @@
       "type": "Evaluation",
       "note": "Integrated baseline in benchmark; not a runtime dependency of every compared method.",
       "source": "https://github.com/thu-uav/FlightBench/blob/HEAD/README.md",
-      "id": "flightbench--ego--evaluation",
       "scope": "project relationship"
     },
     {
@@ -6497,7 +5192,6 @@
       "type": "Evaluation",
       "note": "Integrated baseline in benchmark; not a runtime dependency of every compared method.",
       "source": "https://github.com/thu-uav/FlightBench/blob/HEAD/README.md",
-      "id": "flightbench--agile--evaluation",
       "scope": "project relationship"
     },
     {
@@ -6506,7 +5200,6 @@
       "type": "Uses",
       "note": "Simulation foundation for benchmark.",
       "source": "https://github.com/thu-uav/FlightBench/blob/HEAD/README.md",
-      "id": "flightbench--flightmare--uses",
       "scope": "project relationship"
     },
     {
@@ -6515,7 +5208,6 @@
       "type": "Uses",
       "note": "Simulation foundation for avoidance experiments.",
       "source": "https://github.com/tudelft/AvoidBench/blob/HEAD/README.md",
-      "id": "avoidbench--flightmare--uses",
       "scope": "project relationship"
     },
     {
@@ -6524,7 +5216,6 @@
       "type": "Uses",
       "note": "AirStack pinned as autonomy/simulation submodule.",
       "source": "https://github.com/castacks/RAVEN/blob/91ef2e7aacb9d2cbb6bbaf72bdcac7754638a778/.gitmodules",
-      "id": "raven--airstack--uses",
       "scope": "project relationship"
     },
     {
@@ -6533,7 +5224,6 @@
       "type": "Uses",
       "note": "RayFronts pinned as semantic perception/map submodule.",
       "source": "https://github.com/castacks/RAVEN/blob/91ef2e7aacb9d2cbb6bbaf72bdcac7754638a778/.gitmodules",
-      "id": "raven--ray--uses",
       "scope": "project relationship"
     },
     {
@@ -6542,7 +5232,6 @@
       "type": "Research lineage",
       "note": "Acknowledged semantic mapping/code foundation.",
       "source": "https://github.com/KumarRobotics/HALO/blob/760f6fb61d6c69fcf963ebead5ab0fb5f1474ccb/README.md",
-      "id": "halo--ray--research-lineage",
       "scope": "project relationship"
     },
     {
@@ -6551,7 +5240,6 @@
       "type": "Evaluation",
       "note": "Uses TravelUAV datasets and closed-loop environments.",
       "source": "https://github.com/XuPeng23/AeroVLA/blob/e37685afb8953d1f5a09155d7255960cee1bfd9d/README.md",
-      "id": "aerovla--travel--evaluation",
       "scope": "project relationship"
     },
     {
@@ -6560,7 +5248,6 @@
       "type": "Uses",
       "note": "AirSim simulation interface in released evaluation.",
       "source": "https://github.com/XuPeng23/AeroVLA/blob/e37685afb8953d1f5a09155d7255960cee1bfd9d/README.md",
-      "id": "aerovla--airsim--uses",
       "scope": "project relationship"
     },
     {
@@ -6569,7 +5256,6 @@
       "type": "Code reuse",
       "note": "Embedded implementation of DroNet-style network.",
       "source": "https://github.com/pulp-platform/pulp-dronet/blob/HEAD/README.md",
-      "id": "pulp--dronet--code-reuse",
       "scope": "project relationship"
     },
     {
@@ -6578,7 +5264,6 @@
       "type": "Evaluation",
       "note": "Nano-drone reference deployment platform.",
       "source": "https://github.com/pulp-platform/pulp-dronet/blob/HEAD/README.md",
-      "id": "pulp--crazy--evaluation",
       "scope": "project relationship"
     },
     {
@@ -6587,7 +5272,6 @@
       "type": "Uses",
       "note": "Crazyflie vehicle/firmware ecosystem.",
       "source": "https://github.com/IMRCLab/crazyswarm2/blob/HEAD/README.md",
-      "id": "crazyswarm--crazy--uses",
       "scope": "project relationship"
     },
     {
@@ -6596,7 +5280,6 @@
       "type": "Uses",
       "note": "Flight-controller backend in educational platform.",
       "source": "https://github.com/copterexpress/clover/blob/HEAD/README.md",
-      "id": "clover--px4--uses",
       "scope": "project relationship"
     },
     {
@@ -6605,7 +5288,6 @@
       "type": "Uses",
       "note": "MRS flight-stack integration.",
       "source": "https://github.com/ctu-mrs/flight_forge/blob/HEAD/README.md",
-      "id": "forge--mrs--uses",
       "scope": "project relationship"
     },
     {
@@ -6614,7 +5296,6 @@
       "type": "Research lineage",
       "note": "Originated at Skydio; does not expose proprietary autonomy.",
       "source": "https://github.com/symforce-org/symforce",
-      "id": "sym--skydio--research-lineage",
       "scope": "project origin"
     },
     {
@@ -6623,7 +5304,6 @@
       "type": "Uses",
       "note": "Separate repository listed in the parent assembly’s submodules.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/.gitmodules",
-      "id": "cerlab--cerflight--uses",
       "scope": "project relationship"
     },
     {
@@ -6632,7 +5312,6 @@
       "type": "Uses",
       "note": "Separate repository listed in the parent assembly’s submodules.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/.gitmodules",
-      "id": "cerlab--cerremote--uses",
       "scope": "project relationship"
     },
     {
@@ -6641,7 +5320,6 @@
       "type": "Uses",
       "note": "Separate repository listed in the parent assembly’s submodules.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/.gitmodules",
-      "id": "cerlab--certime--uses",
       "scope": "project relationship"
     },
     {
@@ -6650,7 +5328,6 @@
       "type": "Uses",
       "note": "Separate repository listed in the parent assembly’s submodules.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/.gitmodules",
-      "id": "cerlab--certrack--uses",
       "scope": "project relationship"
     },
     {
@@ -6659,7 +5336,6 @@
       "type": "Uses",
       "note": "Separate repository listed in the parent assembly’s submodules.",
       "source": "https://github.com/Zhefan-Xu/CERLAB-UAV-Autonomy/blob/e045ce55b4d06b4e04c1c2c7ef066a54368d36a9/.gitmodules",
-      "id": "cerlab--cersim--uses",
       "scope": "project relationship"
     },
     {
@@ -6668,7 +5344,6 @@
       "type": "Uses",
       "note": "Mission-level orchestration combines this lab module; branch-specific setup is documented.",
       "source": "https://github.com/Zhefan-Xu/autonomous_flight/blob/HEAD/README.md",
-      "id": "cerflight--cerplan--uses",
       "scope": "project relationship"
     },
     {
@@ -6677,7 +5352,6 @@
       "type": "Uses",
       "note": "Mission-level orchestration combines this lab module; branch-specific setup is documented.",
       "source": "https://github.com/Zhefan-Xu/autonomous_flight/blob/HEAD/README.md",
-      "id": "cerflight--cermap--uses",
       "scope": "project relationship"
     },
     {
@@ -6686,7 +5360,6 @@
       "type": "Uses",
       "note": "Mission-level orchestration combines this lab module; branch-specific setup is documented.",
       "source": "https://github.com/Zhefan-Xu/autonomous_flight/blob/HEAD/README.md",
-      "id": "cerflight--certrack--uses",
       "scope": "project relationship"
     },
     {
@@ -6695,7 +5368,6 @@
       "type": "Uses",
       "note": "Explicit ROS dependency used to send flight-control commands.",
       "source": "https://github.com/Zhefan-Xu/tracking_controller/blob/HEAD/README.md",
-      "id": "certrack--mavros--uses",
       "scope": "project relationship"
     },
     {
@@ -6704,7 +5376,6 @@
       "type": "Optional",
       "note": "Optional PX4-based simulation wrapper; the custom simulator is another path.",
       "source": "https://github.com/Zhefan-Xu/uav_simulator/blob/HEAD/README.md",
-      "id": "cersim--px4--optional",
       "scope": "project relationship"
     },
     {
@@ -6713,7 +5384,6 @@
       "type": "Uses",
       "note": "External repository pinned by the assembly’s external_all.yaml.",
       "source": "https://github.com/KumarRobotics/kr_autonomous_flight/blob/385e7e34fd97cb18dd0c9169fe2f510d30314548/external_all.yaml",
-      "id": "kumar--krcontrol--uses",
       "scope": "project relationship"
     },
     {
@@ -6722,7 +5392,6 @@
       "type": "Uses",
       "note": "External repository pinned by the assembly’s external_all.yaml.",
       "source": "https://github.com/KumarRobotics/kr_autonomous_flight/blob/385e7e34fd97cb18dd0c9169fe2f510d30314548/external_all.yaml",
-      "id": "kumar--mrslsim--uses",
       "scope": "project relationship"
     },
     {
@@ -6731,7 +5400,6 @@
       "type": "Uses",
       "note": "MRS core is installed as part of the MRS UAV System.",
       "source": "https://github.com/ctu-mrs/mrs_uav_core",
-      "id": "mrs--mrscore--uses",
       "scope": "project relationship"
     },
     {
@@ -6740,7 +5408,6 @@
       "type": "Uses",
       "note": "Independent repository in the MRS core submodule table.",
       "source": "https://github.com/ctu-mrs/mrs_uav_core",
-      "id": "mrscore--mrscontrol--uses",
       "scope": "project relationship"
     },
     {
@@ -6749,7 +5416,6 @@
       "type": "Uses",
       "note": "Independent repository in the MRS core submodule table.",
       "source": "https://github.com/ctu-mrs/mrs_uav_core",
-      "id": "mrscore--mrsestimate--uses",
       "scope": "project relationship"
     },
     {
@@ -6758,7 +5424,6 @@
       "type": "Uses",
       "note": "Independent repository in the MRS core submodule table.",
       "source": "https://github.com/ctu-mrs/mrs_uav_core",
-      "id": "mrscore--mrsmanager--uses",
       "scope": "project relationship"
     },
     {
@@ -6767,7 +5432,6 @@
       "type": "Uses",
       "note": "Independent repository in the MRS core submodule table.",
       "source": "https://github.com/ctu-mrs/mrs_uav_core",
-      "id": "mrscore--mrshw--uses",
       "scope": "project relationship"
     },
     {
@@ -6776,7 +5440,6 @@
       "type": "Uses",
       "note": "Independent repository in the MRS core submodule table.",
       "source": "https://github.com/ctu-mrs/mrs_uav_core",
-      "id": "mrscore--mrstracker--uses",
       "scope": "project relationship"
     },
     {
@@ -6785,7 +5448,6 @@
       "type": "Uses",
       "note": "Independent repository in the MRS core submodule table.",
       "source": "https://github.com/ctu-mrs/mrs_uav_core",
-      "id": "mrscore--mrssim--uses",
       "scope": "project relationship"
     },
     {
@@ -6794,7 +5456,6 @@
       "type": "Uses",
       "note": "OmniNxt explicitly links this calibration tool.",
       "source": "https://github.com/HKUST-Aerial-Robotics/OmniNxt/blob/79ce1d4b69a5a8c861417716adaac00c2bc6f594/README.md",
-      "id": "omni--quarter--uses",
       "scope": "project relationship"
     },
     {
@@ -6803,7 +5464,6 @@
       "type": "Code reuse",
       "note": "Calibration method is based on Kalibr; the workflow and variants are described in the project README.",
       "source": "https://github.com/D2SLAM-Fusion/tools-quarterKalibr/blob/HEAD/README.md",
-      "id": "quarter--kalibr--code-reuse",
       "scope": "project relationship"
     },
     {
@@ -6812,7 +5472,6 @@
       "type": "Uses",
       "note": "The castacks fork is a submodule in AirStack’s assembly.",
       "source": "https://github.com/castacks/AirStack/blob/a6dad8caf54722e5eba3481367e914ce213e6135/.gitmodules",
-      "id": "airstack--vdb--uses",
       "scope": "project relationship"
     },
     {
@@ -6821,7 +5480,6 @@
       "type": "Uses",
       "note": "The castacks fork is a submodule in AirStack’s assembly.",
       "source": "https://github.com/castacks/AirStack/blob/a6dad8caf54722e5eba3481367e914ce213e6135/.gitmodules",
-      "id": "airstack--vdbros--uses",
       "scope": "project relationship"
     },
     {
@@ -6830,7 +5488,6 @@
       "type": "Uses",
       "note": "ROS 2 wrapper around the VDB Mapping core.",
       "source": "https://github.com/castacks/vdb_mapping_ros2/blob/HEAD/README.md",
-      "id": "vdbros--vdb--uses",
       "scope": "project relationship"
     }
   ],
