@@ -7,10 +7,12 @@ __pycache__/
 !.env.example
 node_modules/
 
-# Local research sources and generated previews.
+# Local research sources, generated previews and the built atlas.
 research/evidence/
 research/DESIGN.md
 research/*.py
+!research/build_html.py
+research/drone-autonomy-atlas.html
 research/browser-checks.json
 *.png
 
