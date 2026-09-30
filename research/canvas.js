@@ -1,6 +1,37 @@
 "use strict";
-const D = JSON.parse(document.getElementById("atlas-data").textContent),
-  P = new Map(D.projects.map((p) => [p.id, p])),
+const D = JSON.parse(document.getElementById("atlas-data").textContent);
+// dataset.json leaves out fields that follow from others. Rebuild them here,
+// only where missing, so D and the dataset download are the full records.
+const REASONS = {
+  reference:
+    "Reference material retained for its narrower scope or release limitation.",
+  both: "An assembled system and a focused research contribution; the same project appears in both contexts.",
+  single:
+    "Independently identifiable project. Its role is explained by the inspected sources.",
+};
+const assemblyOf = new Map(
+  D.canvas.assemblyGroups.flatMap((g) => g.projects.map((id) => [id, g.id])),
+);
+for (const p of D.projects) {
+  p.identity ??= "project";
+  p.referenceOnly ??= p.views.length === 0;
+  p.assemblyGroup ??= assemblyOf.get(p.id) ?? null;
+  p.classificationReason ??= p.referenceOnly
+    ? REASONS.reference
+    : p.views.length > 1
+      ? REASONS.both
+      : REASONS.single;
+  if (p.sources[0]?.url !== p.repo)
+    p.sources.unshift({
+      label: "Project repository / documentation",
+      url: p.repo,
+    });
+}
+for (const e of D.edges)
+  e.id ??= [e.a, e.b, e.type.toLowerCase().replace(/[^a-z0-9]+/g, "-")].join(
+    "--",
+  );
+const P = new Map(D.projects.map((p) => [p.id, p])),
   E = new Map(D.edges.map((e) => [e.id, e]));
 const $ = (s) => document.querySelector(s),
   $$ = (s) => [...document.querySelectorAll(s)],
