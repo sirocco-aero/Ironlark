@@ -57,19 +57,14 @@ source's lights, `tools/render_lighting_reference.py` and `tools/compare_views.p
 
 - **Bounced light**: Webots has none; under the canopy Cycles' sunlight bounces
   off leaves and ground. Inside the forest the fog adds ×1.67 light to Cycles' ×1.37.
-- **Fog**: robot `Camera` devices lack it; calibrate against
-  `./ironlark render-reference` (needs more than ~26 GB RAM).
-- **Terrain**: four 4K baked tiles (~100 m each). The source tiles its ground
-  materials under masks; matching that needs a Webots detail-map patch, and
-  would be sharper up close with far less VRAM.
+- **Fog**: calibrate against `./ironlark render-reference` (needs more than
+  ~26 GB RAM).
 - **River**: done: the source's clear water (`PBRAppearance.transmission`) with flowing white foam
   (`flowFoam`), mirroring the banks and trees through screen-space reflections.
   No refraction offset yet: the bed shows straight through.
-- **Foliage shimmer**: needles thinner than a pixel flip in and out as the view
-  moves (22% of pixels for a 2 cm step). Needs multisampling with
-  alpha-to-coverage for masked materials.
-- **LiDAR vs foliage**: range sensors ignore `alphaCutoff`, so twig cards
-  would read as solid planes. Fix before LiDAR work.
+- **Foliage shimmer**: temporal anti-aliasing covers the main view; robot cameras
+  render single frames, so needles thinner than a pixel still flip in and out
+  there. Supersample them if vision needs it.
 
 Known bugs: with ambient occlusion off (`ambientOcclusionRadius 0` or the GTAO
 preference) most trees do not draw; cause not yet found.
@@ -116,8 +111,8 @@ later, each when a capability needs it.
 
 ### 1. Finish the forest's looks
 
-Approved look: tag `looks-good-2026-09-26`. Check every change against it
-(A/B renders of the same views) and against Cycles (`tools/render_lighting_reference.py`;
+Approved look: tag `looks-good-2026-09-28`. Judge a change by A/B renders of main and
+the branch at the same views, and against Cycles (`tools/render_lighting_reference.py`;
 render it at the preview's aspect, 1920×861 or half, or crop to the same vertical FOV).
 
 Handoff state (2026-09-26), partly unverified:
