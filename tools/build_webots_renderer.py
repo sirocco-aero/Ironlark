@@ -5,24 +5,25 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import tarfile
 import tempfile
+import uuid
+from contextlib import contextmanager
 from urllib.request import urlretrieve
 
 from forest_process import run_stage
+from renderer_support import (RELEASE, COMMIT, NATIVE_NAMES, renderer_identity,
+                              require_renderer_prerequisites, compiler_command, renderer_problem, sdk_problems)
 
 SIM = Path(__file__).resolve().parents[1]
 CACHE = SIM / ".cache"
-RELEASE = "R2025a"
-COMMIT = "c6793d8f7230a311c4bc2a3101d9f1a8bc0aa01b"
 PATCHES = SIM / "native/patches"
 BRANCH = "ironlark"
 # Compiled into WREN beside the patched sources: Ironlark's vertex indexer, and meshoptimizer's vertex cache
 # optimizer (MIT, zeux/meshoptimizer 9e1f07b).
-NATIVE_SOURCES = [SIM / "native/vertex_index.hpp"] + [
-    SIM / "native/meshoptimizer" / name for name in ("meshoptimizer.h", "vcacheoptimizer.cpp", "allocator.cpp")
-]
+NATIVE_SOURCES = [SIM / name for name in NATIVE_NAMES]
 PACKAGES = {
     "libOIS.1.4.tar.bz2": "ec13db6efd6901e80e9c4b437319c7949253a47fee768515a3aa1e6ca122225d",
     "libassimp-5.2.3.tar.bz2": "31c12e4e9f6bf52259dc599c8fcdb77c511c170e18cdc70543b10903aa28c697",
@@ -78,9 +79,6 @@ def overlay_resources(runtime, installed, source):
     changed = {Path(name).relative_to("resources") for name in changed}
     parents = {parent for name in changed for parent in name.parents if parent != Path(".")}
     root = runtime / "resources"
-    if root.is_symlink():
-        root.unlink()
-    shutil.rmtree(root, ignore_errors=True)
     root.mkdir()
 
     def mirror(folder):
@@ -90,20 +88,80 @@ def overlay_resources(runtime, installed, source):
                 (root / name).mkdir()
                 mirror(name)
             elif name in changed:
-                link(root / name, source / "resources" / name)
+                shutil.copy2(source / "resources" / name, root / name)
             else:
                 link(root / name, child)
 
     mirror(Path("."))
     for name in changed:  # files the series adds
-        link(root / name, source / "resources" / name)
+        if not (root / name).exists():
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source / "resources" / name, root / name)
+    return {str(name): hashlib.sha256((root / name).read_bytes()).hexdigest() for name in sorted(changed)}
 
 
-def main():
+@contextmanager
+def build_lock(cache):
+    import fcntl  # reached only after the explicit Linux platform check
+    cache.mkdir(parents=True, exist_ok=True)
+    with (cache / "renderer-build.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("Another renderer build is running.") from error
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def atomic_json(path, data):
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(data, indent=2))
+    temporary.replace(path)
+
+
+def publish_runtime(staged, destination):
+    """Publish immutable generations with an atomic pointer; retain the previous build."""
+    pointer = destination.with_name(destination.name + ".next")
+    if pointer.is_symlink():
+        pointer.unlink()  # only the builder's interrupted temporary pointer
+    pointer.symlink_to(staged.resolve(), target_is_directory=True)
+    backup = destination.with_name(destination.name + "-previous")
+    moved = False
+    try:
+        if destination.exists() and not destination.is_symlink():
+            if backup.exists():
+                raise RuntimeError(f"Cannot migrate renderer: {backup} already exists; retain/rename it first.")
+            destination.rename(backup)
+            moved = True
+        pointer.replace(destination)
+    except BaseException:
+        if moved and not destination.exists():
+            backup.rename(destination)
+        raise
+
+
+def fetch_archive(url, archive, expected):
+    """Never reuse interrupted or corrupt downloads; preserve reusable completed inputs."""
+    if archive.is_file() and hashlib.sha256(archive.read_bytes()).hexdigest() == expected:
+        return
+    partial = archive.with_name(archive.name + ".part")
+    urlretrieve(url, partial)
+    if hashlib.sha256(partial.read_bytes()).hexdigest() != expected:
+        raise RuntimeError(f"Unexpected dependency archive contents: {archive.name}")
+    partial.replace(archive)
+
+
+def build_renderer():
+    identity = renderer_identity(SIM)
     source = CACHE / "webots-source"
     installed = SIM / "webots"
-    if (installed / "resources/version.txt").read_text().strip() != RELEASE:
+    version = installed / "resources/version.txt"
+    if not version.is_file() or version.read_text().strip() != RELEASE:
         raise RuntimeError(f"This patch requires the Webots {RELEASE} installation.")
+    if problems := sdk_problems(installed):
+        raise RuntimeError("Renderer SDK incomplete:\n" + "\n".join(problems))
     if not source.exists():
         call(
             "git",
@@ -131,6 +189,8 @@ def main():
         )
     if subprocess.run(["git", "-C", str(source), "cat-file", "-e", COMMIT + "^{commit}"]).returncode:
         raise RuntimeError(f"Unexpected Webots checkout: no {COMMIT}")
+    if subprocess.run(["git", "-C", str(source), "diff", "--quiet", "HEAD", "--"]).returncode:
+        raise RuntimeError("Webots source has tracked edits; save them with tools/save_webots_patch.py before building.")
     call(
         "git",
         "-C",
@@ -178,12 +238,10 @@ def main():
             shutil.copyfile(path, copy)
     for name, expected in PACKAGES.items():
         archive = source / "dependencies" / name
-        if not archive.exists():
-            urlretrieve(
+        fetch_archive(
                 "https://cyberbotics.com/files/repository/dependencies/linux64/release/"
                 + name,
-                archive,
-            )
+                archive, expected)
         with archive.open("rb") as stream:
             if hashlib.file_digest(stream, "sha256").hexdigest() != expected:
                 raise RuntimeError(f"Unexpected dependency archive contents: {name}")
@@ -196,7 +254,7 @@ def main():
     # The runtime package omits three header modules. Obtain the matching Qt
     # headers without replacing its working Qt libraries or the system Qt.
     qt = CACHE / "Qt/6.5.3/gcc_64/include"
-    if not (qt / "QtOpenGLWidgets/QOpenGLWidget").exists():
+    if not all((qt / name).exists() for name in ("QtOpenGLWidgets/QOpenGLWidget", "QtQml/QtQml", "QtXml/QtXml")):
         call(
             "uvx",
             "--from",
@@ -227,11 +285,12 @@ def main():
     logs = CACHE / "build-logs"
     # Rebasing the branch rewrites the files of every later patch, and make goes by modification time.
     # ccache, when installed, recompiles only what actually changed.
-    compilers = []
+    compilers = ["CC=" + shlex.join(compiler_command("c")), "CXX=" + shlex.join(compiler_command("c++"))]
     if shutil.which("ccache"):
         os.environ.setdefault("CCACHE_DIR", str(CACHE / "ccache"))
         os.environ.setdefault("CCACHE_MAXSIZE", "1G")
-        compilers = ["CC=ccache gcc", "CXX=ccache g++"]
+        compilers = ["CC=ccache " + shlex.join(compiler_command("c")),
+                     "CXX=ccache " + shlex.join(compiler_command("c++"))]
     for name in ("glad", "wren", "webots"):
         print(f"Compiling {name} (two jobs)", flush=True)
         run_stage(
@@ -242,36 +301,64 @@ def main():
                 "-j2",
                 "release",
                 "WEBOTS_HOME=" + str(source),
-                "LD_FLAGS=-rdynamic -L" + str(source / "dependencies"),
+                "LD_FLAGS=-rdynamic -L" + shlex.quote(str(source / "dependencies")),
                 *compilers,
             ],
             logs / f"{name}-build.log",
         )
     # A separate installation keeps the stock binary available for comparison.
-    runtime = CACHE / "webots-renderer"
-    runtime.mkdir(exist_ok=True)
+    runtime = CACHE / ("webots-renderer-generation-" + uuid.uuid4().hex)
+    runtime.mkdir()
     for path in installed.iterdir():
         if path.name not in ("bin", "webots", "resources"):
             link(runtime / path.name, path)
-    overlay_resources(runtime, installed, source)
+    overlay = overlay_resources(runtime, installed, source)
     (runtime / "bin").mkdir(exist_ok=True)
     for path in (installed / "bin").iterdir():
         if path.name != "webots-bin":
             link(runtime / "bin" / path.name, path)
     shutil.copy2(source / "bin/webots-bin", runtime / "bin/webots-bin")
     shutil.copy2(installed / "webots", runtime / "webots")
-    manifest = {
-        "upstream_commit": COMMIT,
-        "patches": [p.name for p in patches],
-        "series_sha256": hashlib.sha256(b"".join(p.read_bytes() for p in patches)).hexdigest(),
-        "series_commit": tip,
-        "native_sha256": hashlib.sha256(
-            b"".join(path.read_bytes() for path in NATIVE_SOURCES)
-        ).hexdigest(),
-    }
-    (runtime / "ironlark-renderer.json").write_text(json.dumps(manifest, indent=2))
-    print(f"Patched Webots ready: {runtime}", flush=True)
+    if identity != renderer_identity(SIM):
+        raise RuntimeError("Renderer inputs changed during the build; rerun build-renderer.")
+    manifest = {**identity, "series_commit": tip, "resource_overlay": overlay,
+                "binaries": {name: hashlib.sha256((runtime / name).read_bytes()).hexdigest()
+                             for name in ("webots", "bin/webots-bin")}}
+    atomic_json(runtime / "ironlark-renderer.json", manifest)
+    if problem := renderer_problem(runtime, SIM):
+        raise RuntimeError("Staged renderer validation failed: " + problem)
+    publish_runtime(runtime, CACHE / "webots-renderer")
+    print(f"Patched Webots ready: {CACHE / 'webots-renderer'}", flush=True)
+
+
+def locked_build():
+    with build_lock(CACHE):
+        # A crash during the one-time directory-to-pointer migration retains
+        # the old installation here. Recover it before another build starts.
+        previous = CACHE / "webots-renderer-previous"
+        destination = CACHE / "webots-renderer"
+        if not destination.exists() and not destination.is_symlink() and previous.is_dir():
+            previous.rename(destination)
+        if shutil.disk_usage(CACHE).free < 2 * 1024**3:
+            raise RuntimeError("Renderer build needs at least 2 GiB free cache disk space; first builds need more.")
+        try:
+            build_renderer()
+        except PermissionError as error:
+            raise RuntimeError(f"Renderer cache/SDK is not writable: {error.filename}; fix ownership/permissions.") from error
+
+
+def main():
+    require_renderer_prerequisites()
+    try:
+        locked_build()
+    except PermissionError as error:
+        raise RuntimeError(f"Renderer cache/SDK is not writable: {error.filename}; fix ownership/permissions.") from error
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        raise SystemExit(str(error))
+    except KeyboardInterrupt:
+        raise SystemExit("Renderer build interrupted; previous runtime and reusable build inputs retained.")
