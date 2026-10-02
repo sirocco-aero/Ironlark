@@ -13,13 +13,12 @@ import subprocess
 import sys
 import time
 
-if sys.platform.startswith("linux"):
-    import fcntl
+import fcntl
 
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "tools"))
-from renderer_support import select_webots, renderer_problem, renderer_preflight, preflight_report, host_platform
+from renderer_support import select_webots, renderer_problem, renderer_preflight, preflight_report
 CACHE = ROOT / ".cache"
 IMAGE = "ironlark-sitl:copter-4.7.1"
 ROS_IMAGE = "ironlark-ros:humble"
@@ -100,7 +99,7 @@ def setup():
     print("Setup complete. Run ./ironlark doctor, then ./ironlark run.")
 
 
-def doctor(overview=True, home=None):
+def doctor(overview=True, home=None, record=False):
     selection_error = None
     if home is None:
         try:
@@ -135,6 +134,8 @@ def doctor(overview=True, home=None):
             ).returncode
             == 0
         )
+    if record:
+        checks["ROS recording/replay image (./ironlark setup)"] = ros_image_ready()
     for name, ok in checks.items():
         print(f"{'OK     ' if ok else 'MISSING'} {name}")
     runtime_ready = all(checks.values())
@@ -160,11 +161,8 @@ def doctor(overview=True, home=None):
         print(f"{'OK     ' if shutil.which('xvfb-run') else 'MISSING'} Headless check: xvfb-run")
         print(f"{'OK     ' if os.environ.get('DISPLAY') else 'MISSING'} "
               "Graphical run: X11/XWayland DISPLAY (GPU/context checked by Webots at startup)")
-        ros_ready = checks["Docker executable"] and subprocess.run(
-            ["docker", "image", "inspect", ROS_IMAGE], stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL).returncode == 0
+        ros_ready = ros_image_ready()
         print(f"{'OK     ' if ros_ready else 'MISSING'} ROS recording/replay image (./ironlark setup)")
-        print("Build-world: requires setup, Blender/scene downloads and writable cache; renderer not required.")
     if not runtime_ready:
         raise RuntimeError("Complete setup first. See README.md.")
 
@@ -280,14 +278,20 @@ def sensing_cost(run):
     }
 
 
+def ros_image_ready():
+    return shutil.which("docker") is not None and subprocess.run(
+        ["docker", "image", "inspect", ROS_IMAGE], stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL).returncode == 0
+
+
+def require_ros_image():
+    if not ros_image_ready():
+        raise RuntimeError("ROS recording/replay image unavailable; check Docker access and run ./ironlark setup.")
+
+
 def ros_container(name, run, command):
     """The ROS 2 container: host network (DDS kept to localhost), the project read-only, the run's
     folder for bags and logs."""
-    if not shutil.which("docker"):
-        raise RuntimeError("ROS recording/replay needs Docker; run ./ironlark setup after installing it.")
-    if subprocess.run(["docker", "image", "inspect", ROS_IMAGE], stdout=subprocess.DEVNULL,
-                      stderr=subprocess.DEVNULL).returncode:
-        raise RuntimeError("ROS recording/replay image unavailable; check Docker access and run ./ironlark setup.")
     return [
         "docker", "run", "--rm", "--name", name, "--network", "host",
         "--user", f"{os.getuid()}:{os.getgid()}",
@@ -304,6 +308,7 @@ def replay(run):
     run = Path(run).resolve()
     if not (run / "bag").is_dir():
         raise RuntimeError(f"No bag in {run}. Record one with ./ironlark run --record.")
+    require_ros_image()
     call(*ros_container(f"ironlark-replay-{os.getpid()}", run, "ros2 bag info bag && ros2 bag play bag"))
 
 
@@ -314,31 +319,25 @@ def build_drone():
 def check_replay(run):
     """A recorded flight replayed: same messages, stamps and transforms (tools/check_replay.py)."""
     run = Path(run).resolve()
+    require_ros_image()
     call(*ros_container(f"ironlark-replay-check-{os.getpid()}", run, "python3 /project/tools/check_replay.py /run/ironlark"))
 
 
 def check_recording(run):
     """The recorded sensors against the empty world's calibration wall (tools/check_recording.py)."""
     run = Path(run).resolve()
+    require_ros_image()
     call(*ros_container(f"ironlark-check-{os.getpid()}", run, "python3 /project/tools/check_recording.py /run/ironlark"))
 
 
 def flight(headless, editor=False, world="forest", record=False):
     home = webots_home(world)  # Refuse an incompatible forest before creating any run artifacts.
-    doctor(overview=False, home=home)
-    if not os.environ.get("HOME"):
-        raise RuntimeError("Webots runtime needs HOME set to a writable user directory.")
-    if not Path(os.environ["HOME"]).is_dir() or not os.access(os.environ["HOME"], os.W_OK):
-        raise RuntimeError("Webots runtime needs HOME set to an existing writable user directory.")
+    doctor(overview=False, home=home, record=record)
     if not headless and not os.environ.get("DISPLAY"):
         raise RuntimeError("Webots R2025a needs an X11/XWayland DISPLAY; Wayland-only is unsupported. "
                            "Enable XWayland or use ./ironlark check for headless.")
     if headless and not shutil.which("xvfb-run"):
         raise RuntimeError("Headless checks require xvfb-run.")
-    if record:
-        if subprocess.run(["docker", "image", "inspect", ROS_IMAGE], stdout=subprocess.DEVNULL,
-                          stderr=subprocess.DEVNULL).returncode:
-            raise RuntimeError("Recording needs the ROS image; run ./ironlark setup.")
     if not (ROOT / "protos/IronlarkDrone.proto").is_file():
         build_drone()
     CACHE.mkdir(exist_ok=True)
@@ -348,8 +347,6 @@ def flight(headless, editor=False, world="forest", record=False):
         except BlockingIOError as exc:
             raise RuntimeError("Another Ironlark flight is running.") from exc
         check_ports()
-        if headless and not shutil.which("xvfb-run"):
-            raise RuntimeError("Headless checks require xvfb-run.")
         run = ROOT / "runs" / (time.strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}")
         run.mkdir(parents=True)
         (run / "manifest.json").write_text(
@@ -582,9 +579,6 @@ def flight(headless, editor=False, world="forest", record=False):
 
 
 def main():
-    _, _, unsupported = host_platform()
-    if unsupported:
-        raise RuntimeError(unsupported)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",

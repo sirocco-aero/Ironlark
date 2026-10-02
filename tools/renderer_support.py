@@ -1,9 +1,6 @@
 """Linux renderer capabilities and identity, shared by the launcher and builder."""
 
 import hashlib
-import platform
-import sys
-from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -112,65 +109,6 @@ def select_webots(root=ROOT, world="empty", override=None):
     return home.resolve()
 
 
-def apt_candidate(package):
-    """True/False for a known APT result, None when querying is unavailable."""
-    if not shutil.which("apt-cache"):
-        return None
-    try:
-        result = subprocess.run(["apt-cache", "policy", package], capture_output=True, text=True, timeout=10,
-                                env={**os.environ, "LC_ALL": "C"})
-        if result.returncode:
-            return None
-        for line in result.stdout.splitlines():
-            if line.strip().startswith("Candidate:"):
-                return line.split(":", 1)[1].strip() != "(none)"
-        return False
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-
-
-def package_suggestions(groups, candidate=apt_candidate):
-    packages, unavailable = [], []
-    for alternatives in groups:
-        states = [(name, candidate(name)) for name in alternatives]
-        chosen = next((name for name, state in states if state is True), None)
-        if chosen and chosen not in packages:
-            packages.append(chosen)
-        elif not chosen:
-            unavailable.append("/".join(alternatives))
-    return packages, unavailable
-
-
-@dataclass
-class Preflight:
-    missing: list
-    packages: list
-    unavailable: list
-    platform: str
-
-
-def host_platform():
-    """Explicit platform policy, without claiming untested host releases."""
-    if not sys.platform.startswith("linux"):
-        return "unsupported non-Linux platform", False, "Linux x86-64 is required"
-    if platform.machine().lower() not in ("x86_64", "amd64"):
-        return "unsupported architecture", False, f"Linux x86-64 is required; found {platform.machine()}"
-    try:
-        release = platform.freedesktop_os_release()
-    except OSError:
-        release = {}
-    distribution = release.get("ID", "unknown")
-    version = release.get("VERSION_ID", "unknown")
-    apt_family = distribution in ("ubuntu", "debian") or "debian" in release.get("ID_LIKE", "").split()
-    if distribution == "ubuntu":
-        description = f"Ubuntu {version} host: best effort (22.04 containers are the tested baseline)"
-    elif apt_family:
-        description = f"{distribution} {version}: Debian-derived host, best effort"
-    else:
-        description = f"{distribution} {version}: unknown Linux host, capability checks only"
-    return description, apt_family, None
-
-
 def compiler_command(language):
     variable, default = ("CC", "gcc") if language == "c" else ("CXX", "g++")
     if variable not in os.environ:
@@ -192,19 +130,9 @@ def probe_command(command):
         return False
 
 
-def renderer_preflight():
-    description, apt_family, unsupported = host_platform()
-    if unsupported:
-        return Preflight([unsupported], [], [], description)
-    missing, groups = [], []
-    missing.extend(sdk_problems(ROOT / "webots"))
-    # Webots assigns its own flags. Explicitly reject flag overrides rather than
-    # probing options that its Makefiles would silently ignore. Sysroot/include/
-    # link options can be embedded in CC/CXX and passed to make unchanged.
-    for variable in ("CPPFLAGS", "CFLAGS", "CXXFLAGS", "LDFLAGS"):
-        if os.environ.get(variable):
-            missing.append(f"{variable} overrides are unsupported; unset it and put custom toolchain options in CC/CXX")
-    cppflags, ldflags = [], []
+def renderer_preflight(root=ROOT):
+    missing = sdk_problems(Path(root) / "webots")
+    # Webots sets its own flags; probe the compiler commands passed to make.
     with tempfile.TemporaryDirectory(prefix="ironlark-renderer-") as scratch:
         binary = Path(scratch) / "probe"
         compilers = {}
@@ -217,49 +145,37 @@ def renderer_preflight():
                 continue
             source = Path(scratch) / ("compiler." + extension)
             source.write_text("int main(void) { return 0; }\n")
-            working = probe_command([*compiler, *cppflags, str(source), *ldflags, "-o", str(binary)])
+            working = probe_command([*compiler, str(source), "-o", str(binary)])
             compilers[language] = working
             if not working:
                 missing.append(f"{language} compiler compile/link: {' '.join(compiler)}")
-                groups.append(("build-essential",))
         makefile = Path(scratch) / "Makefile"
         makefile.write_text("all:\n\t@echo ironlark-preflight\n")
-        for executable, command, packages in (
-            ("make", ["make", "-f", str(makefile)], ("build-essential",)),
-            ("git", ["git", "--version"], ("git",)), ("uvx", ["uvx", "--version"], ())):
+        for executable, command in (
+            ("make", ["make", "-f", str(makefile)]), ("git", ["git", "--version"]),
+            ("uvx", ["uvx", "--version"])):
             if not probe_command(command):
                 missing.append(f"working executable: {executable}" + (" (install uv)" if executable == "uvx" else ""))
-                if packages:
-                    groups.append(packages)
         if compilers["c++"]:
             source, binary = Path(scratch) / "probe.cpp", Path(scratch) / "probe"
-            for label, header, expression, library, flags, packages in PROBES:
+            for label, header, expression, library, flags in PROBES:
                 extra = "#include FT_FREETYPE_H\n" if label == "FreeType" else ""
                 source.write_text(f"#include <{header}>\n{extra}int main() {{ {expression}; return 0; }}\n")
-                if not probe_command([*compiler_command("c++"), *cppflags,
-                                      str(source), *flags, *ldflags, "-l" + library, "-o", str(binary)]):
+                if not probe_command([*compiler_command("c++"), str(source), *flags, "-l" + library, "-o", str(binary)]):
                     missing.append(f"{label}: compile/link <{header}> with -l{library}")
-                    groups.append(packages)
         else:
             missing.append("Header/library probes require a working C++ compiler; rerun after fixing it")
-    packages, unavailable = package_suggestions(groups) if apt_family else ([], [])
-    return Preflight(missing, packages, unavailable, description)
+    return missing
 
 
-def preflight_report(result):
-    missing, packages, unavailable = result.missing, result.packages, result.unavailable
+def preflight_report(missing):
     if not missing:
-        return result.platform + "\nOK      Renderer build prerequisites (compile/link probes passed)"
-    lines = [result.platform, "Renderer build prerequisites missing:", *(f"  - {item}" for item in missing)]
-    if packages:
-        lines += ["APT suggestion (run yourself):", "  sudo apt install " + " ".join(packages)]
-    if unavailable:
-        lines.append("APT candidate unavailable/unverified: " + ", ".join(unavailable) +
-                     "; install equivalent development capabilities using your host's package tools.")
-    return "\n".join(lines)
+        return "OK      Renderer build prerequisites (compile/link probes passed)"
+    return "\n".join(["Renderer build prerequisites missing:", *(f"  - {item}" for item in missing),
+                      "Install the missing tools/development libraries, then rerun ./ironlark doctor."])
 
 
 def require_renderer_prerequisites():
-    result = renderer_preflight()
-    if result.missing:
-        raise RuntimeError(preflight_report(result))
+    missing = renderer_preflight()
+    if missing:
+        raise RuntimeError(preflight_report(missing))

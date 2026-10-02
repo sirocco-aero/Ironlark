@@ -171,6 +171,49 @@ class Selection(unittest.TestCase):
         self.assertEqual(served.read_text(), "edited again")
 
 
+class Prerequisites(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name)
+        make_project(self.root)
+
+    def preflight(self, **variables):
+        env = {**os.environ, **variables}
+        code = "import json,sys; sys.path.insert(0,sys.argv[1]); import renderer_support as r; print(json.dumps(r.renderer_preflight(sys.argv[2])))"
+        return json.loads(subprocess.check_output([sys.executable, "-c", code, str(ROOT / "tools"), str(self.root)], env=env, text=True))
+
+    @unittest.skipUnless(shutil.which("gcc") and shutil.which("g++"), "C and C++ compilers required")
+    def test_missing_headers_reported_together_using_real_compiler(self):
+        missing = self.preflight(CC="gcc", CXX="g++ -nostdinc", CFLAGS="ignored-by-webots", LDFLAGS="ignored-by-webots")
+        for label in ("OpenGL", "GLU", "OpenAL", "FreeType", "zlib"):
+            self.assertTrue(any(item.startswith(label + ":") for item in missing), missing)
+        self.assertFalse(any("overrides" in item for item in missing))
+
+    def test_failed_and_invalid_compilers_reported(self):
+        missing = self.preflight(CC="'invalid", CXX="/bin/false")
+        self.assertTrue(any("Invalid CC" in item for item in missing))
+        self.assertTrue(any("c++ compiler compile/link" in item for item in missing))
+
+    def test_incomplete_sdk_reports_missing_parts(self):
+        (self.root / "webots/include/ode/ode/ode.h").unlink()
+        self.assertIn("installed SDK missing: include/ode/ode/ode.h", renderer.sdk_problems(self.root / "webots"))
+
+    def test_failed_preflight_stops_builder_before_checkout_and_downloads(self):
+        shutil.rmtree(self.root / ".cache/webots-source")
+        (self.root / "tools").mkdir()
+        for name in ("renderer_support.py", "build_webots_renderer.py", "forest_process.py"):
+            shutil.copyfile(ROOT / "tools" / name, self.root / "tools" / name)
+        result = subprocess.run([sys.executable, str(self.root / "tools/build_webots_renderer.py")],
+                                env={**os.environ, "CC": "/bin/false", "CXX": "/bin/false"},
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("c compiler compile/link", result.stderr)
+        self.assertIn("c++ compiler compile/link", result.stderr)
+        self.assertFalse((self.root / ".cache/webots-source").exists())
+        self.assertFalse((self.root / ".cache/Qt").exists())
+
+
 class Downloads(unittest.TestCase):
     def test_corrupt_archive_replaced_and_completed_download_reused(self):
         with tempfile.TemporaryDirectory() as scratch:
