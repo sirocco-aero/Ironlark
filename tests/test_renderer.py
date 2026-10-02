@@ -52,6 +52,16 @@ def make_project(root):
     return source
 
 
+def compilers_on_path(directory, **scripts):
+    """gcc and g++ as shell scripts ahead of the real ones on PATH, as the environment of a subprocess."""
+    directory.mkdir(exist_ok=True)
+    for name, body in scripts.items():
+        path = directory / name.replace("gxx", "g++")
+        path.write_text("#!/bin/sh\n" + body + "\n")
+        path.chmod(0o755)
+    return {"PATH": f"{directory}{os.pathsep}{os.environ['PATH']}"}
+
+
 def write_manifest(root):
     path = root / ".cache/webots-renderer/ironlark-renderer.json"
     path.write_text(json.dumps(renderer.renderer_identity(root)))
@@ -74,7 +84,7 @@ class Selection(unittest.TestCase):
             renderer.select_webots(self.root, "forest", str(self.stock))
 
     def test_forest_rejects_missing_manifest(self):
-        with self.assertRaisesRegex(RuntimeError, "build-renderer"):
+        with self.assertRaisesRegex(RuntimeError, "build-renderer first[.]$"):
             renderer.select_webots(self.root, "forest")
 
     def test_forest_rejects_malformed_manifest(self):
@@ -148,6 +158,30 @@ class Selection(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "R2025a"):
             renderer.select_webots(self.root, "forest")
 
+    def test_edits_to_served_resources_are_live_and_others_require_build(self):
+        shaders = self.stock / "resources/wren/shaders"
+        shaders.mkdir(parents=True)
+        (shaders / "pbr.frag").write_text("stock shader")
+        (shaders / "skybox.frag").write_text("stock sky")
+        (self.source / "resources/wren/shaders/skybox.frag").write_text("stock sky")
+        (self.source / "resources/Makefile.include").write_text("CC = gcc\n")
+        git(self.source, "add", ".")
+        git(self.source, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "Resources")
+        base = git(self.source, "rev-parse", "HEAD")
+        shader = self.source / "resources/wren/shaders/pbr.frag"
+        shader.write_text("patch in progress")
+        builder.overlay_resources(self.home, self.stock, self.source, base)
+        write_manifest(self.root)
+        shader.write_text("edited after the build")
+        self.assertEqual(renderer.select_webots(self.root, "forest"), self.home)
+        (self.source / "resources/wren/shaders/skybox.frag").write_text("edited sky")
+        with self.assertRaisesRegex(RuntimeError, "skybox.frag is edited but served from stock"):
+            renderer.select_webots(self.root, "forest")
+        (self.source / "resources/wren/shaders/skybox.frag").write_text("stock sky")
+        (self.source / "resources/Makefile.include").write_text("CC = clang\n")
+        with self.assertRaisesRegex(RuntimeError, "checkout_diff"):
+            renderer.select_webots(self.root, "forest")
+
     def test_live_overlay_serves_working_tree_and_new_nested_resources(self):
         stock_shader = self.stock / "resources/wren/shaders/pbr.frag"
         stock_shader.parent.mkdir(parents=True)
@@ -185,15 +219,16 @@ class Prerequisites(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("gcc") and shutil.which("g++"), "C and C++ compilers required")
     def test_missing_headers_reported_together_using_real_compiler(self):
-        missing = self.preflight(CC="gcc", CXX="g++ -nostdinc", CFLAGS="ignored-by-webots", LDFLAGS="ignored-by-webots")
+        missing = self.preflight(**compilers_on_path(self.root / "bin", gxx=f'exec {shutil.which("g++")} -nostdinc "$@"'),
+                                 CFLAGS="ignored-by-webots", LDFLAGS="ignored-by-webots")
         for label in ("OpenGL", "GLU", "OpenAL", "FreeType", "zlib"):
             self.assertTrue(any(item.startswith(label + ":") for item in missing), missing)
         self.assertFalse(any("overrides" in item for item in missing))
 
-    def test_failed_and_invalid_compilers_reported(self):
-        missing = self.preflight(CC="'invalid", CXX="/bin/false")
-        self.assertTrue(any("Invalid CC" in item for item in missing))
-        self.assertTrue(any("c++ compiler compile/link" in item for item in missing))
+    def test_failed_compilers_reported(self):
+        missing = self.preflight(**compilers_on_path(self.root / "bin", gcc="exit 1", gxx="exit 1"))
+        self.assertIn("c compiler compile/link: gcc", missing)
+        self.assertIn("c++ compiler compile/link: g++", missing)
 
     def test_incomplete_sdk_reports_missing_parts(self):
         (self.root / "webots/include/ode/ode/ode.h").unlink()
@@ -205,7 +240,7 @@ class Prerequisites(unittest.TestCase):
         for name in ("renderer_support.py", "build_webots_renderer.py", "forest_process.py"):
             shutil.copyfile(ROOT / "tools" / name, self.root / "tools" / name)
         result = subprocess.run([sys.executable, str(self.root / "tools/build_webots_renderer.py")],
-                                env={**os.environ, "CC": "/bin/false", "CXX": "/bin/false"},
+                                env={**os.environ, **compilers_on_path(self.root / "bin", gcc="exit 1", gxx="exit 1")},
                                 capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("c compiler compile/link", result.stderr)

@@ -14,8 +14,8 @@ valley. What comes next is in
 
 Needs Linux x86-64, OpenGL, Docker, [uv](https://docs.astral.sh/uv/), `git`,
 `xvfb-run`, and [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a)
-extracted to `./webots/`. `build-renderer` also needs C and C++ compilers, make,
-and the development files of OpenGL, GLU, OpenAL, FreeType and zlib; `doctor`
+extracted to `./webots/`. `build-renderer` also needs gcc, g++, make, and the
+development files of OpenGL, GLU, OpenAL, FreeType and zlib; `doctor`
 compiles and links against each to list what's missing.
 
 ```sh
@@ -44,8 +44,10 @@ compiles and links against each to list what's missing.
 For empty-world flights, Webots is chosen in order: `WEBOTS_HOME`, a current
 patched build, `./webots/`. The forest needs a current `build-renderer`: stock
 Webots cannot read its patched fields, DDS textures or HDR sky. A change to the
-patch series, the native sources or the Webots checkout makes a build stale. To
-ignore a `WEBOTS_HOME` override in sh or fish, use `env -u WEBOTS_HOME ./ironlark run`.
+patch series, the native sources or the Webots checkout makes a build stale,
+except an edit to a shader or node file the build already serves from the
+checkout, which is live. To ignore a `WEBOTS_HOME` override in sh or fish, use
+`env -u WEBOTS_HOME ./ironlark run`.
 
 `build-renderer` compiles uncommitted edits in the Webots checkout and serves
 changed resources from its working tree. A failed compile leaves the previous

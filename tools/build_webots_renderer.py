@@ -5,15 +5,13 @@ import json
 import os
 from pathlib import Path
 import shutil
-import shlex
 import subprocess
 import tarfile
 import tempfile
 from urllib.request import urlretrieve
 
 from forest_process import run_stage
-from renderer_support import (RELEASE, COMMIT, NATIVE_NAMES, renderer_identity,
-                              require_renderer_prerequisites, compiler_command, sdk_problems)
+from renderer_support import RELEASE, COMMIT, NATIVE_NAMES, renderer_identity, require_renderer_prerequisites
 
 SIM = Path(__file__).resolve().parents[1]
 CACHE = SIM / ".cache"
@@ -115,11 +113,6 @@ def fetch_archive(url, archive, expected):
 def build_renderer():
     source = CACHE / "webots-source"
     installed = SIM / "webots"
-    version = installed / "resources/version.txt"
-    if not version.is_file() or version.read_text().strip() != RELEASE:
-        raise RuntimeError(f"This patch requires the Webots {RELEASE} installation.")
-    if problems := sdk_problems(installed):
-        raise RuntimeError("Renderer SDK incomplete:\n" + "\n".join(problems))
     if not source.exists():
         call(
             "git",
@@ -238,12 +231,11 @@ def build_renderer():
     logs = CACHE / "build-logs"
     # Rebasing the branch rewrites the files of every later patch, and make goes by modification time.
     # ccache, when installed, recompiles only what actually changed.
-    compilers = ["CC=" + shlex.join(compiler_command("c")), "CXX=" + shlex.join(compiler_command("c++"))]
+    compilers = []
     if shutil.which("ccache"):
         os.environ.setdefault("CCACHE_DIR", str(CACHE / "ccache"))
         os.environ.setdefault("CCACHE_MAXSIZE", "1G")
-        compilers = ["CC=ccache " + shlex.join(compiler_command("c")),
-                     "CXX=ccache " + shlex.join(compiler_command("c++"))]
+        compilers = ["CC=ccache gcc", "CXX=ccache g++"]
     identity = renderer_identity(SIM)
     for name in ("glad", "wren", "webots"):
         print(f"Compiling {name} (two jobs)", flush=True)
@@ -255,14 +247,12 @@ def build_renderer():
                 "-j2",
                 "release",
                 "WEBOTS_HOME=" + str(source),
-                "LD_FLAGS=-rdynamic -L" + shlex.quote(str(source / "dependencies")),
+                "LD_FLAGS=-rdynamic -L" + str(source / "dependencies"),
                 *compilers,
             ],
             logs / f"{name}-build.log",
         )
     # A separate installation keeps the stock binary available for comparison.
-    if identity != renderer_identity(SIM):
-        raise RuntimeError("Renderer inputs changed during the build; rerun build-renderer.")
     runtime = CACHE / "webots-renderer"
     runtime.mkdir(exist_ok=True)
     for path in installed.iterdir():

@@ -4,8 +4,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shlex
-import shutil
 import subprocess
 import tempfile
 
@@ -27,11 +25,18 @@ PROBES = (
 )
 
 
+# Files in the folders under resources/ (shaders, node definitions) are what the runtime links from the
+# checkout's working tree; the files at its top include the Makefiles the build reads.
+LINKED_RESOURCES = "resources/*/**"
+
+
 def checkout_identity(source):
-    """Include staged and unstaged tracked edits so builds can test a patch in progress."""
+    """Include staged and unstaged tracked edits so builds can test a patch in progress. Edits to linked
+    resources are left out: one the runtime serves is live (renderer_problem checks that it is)."""
     head = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True, stderr=subprocess.PIPE).strip()
     diff = subprocess.check_output(["git", "-C", str(source), "diff", "--binary", "--no-ext-diff",
-                                    "--no-textconv", "HEAD", "--"], stderr=subprocess.PIPE)
+                                    "--no-textconv", "HEAD", "--", ".", ":(exclude,glob)" + LINKED_RESOURCES],
+                                   stderr=subprocess.PIPE)
     return {"checkout_commit": head, "checkout_diff_sha256": hashlib.sha256(diff).hexdigest()}
 
 
@@ -85,6 +90,12 @@ def renderer_problem(home, root=ROOT):
         differences = [key for key, value in expected.items() if recorded.get(key) != value]
         if differences:
             return "stale patched renderer (" + ", ".join(differences) + ")"
+        source = Path(root) / ".cache/webots-source"
+        edited = subprocess.check_output(["git", "-C", str(source), "diff", "-z", "--name-only", "HEAD", "--",
+                                          ":(glob)" + LINKED_RESOURCES], text=True, stderr=subprocess.PIPE)
+        for name in filter(None, edited.split("\0")):
+            if os.path.realpath(home / name) != os.path.realpath(source / name):
+                return f"stale patched renderer ({name} is edited but served from stock Webots)"
         if (home / "resources/version.txt").read_text().strip() != RELEASE:
             return f"patched runtime must be Webots {RELEASE}"
         if not all((home / path).is_file() and os.access(home / path, os.X_OK)
@@ -102,25 +113,12 @@ def select_webots(root=ROOT, world="empty", override=None):
         patched if world == "forest" or renderer_problem(patched, root) is None else root / "webots")
     if world == "forest" and (problem := renderer_problem(home, root)):
         prefix = f"WEBOTS_HOME points to {home}: {problem}. " if override else f"{problem}. "
+        suffix = ", then rerun with env -u WEBOTS_HOME to select that build" if override else ""
         raise RuntimeError(prefix + "The forest requires Ironlark's patched Webots renderer. "
-                           "Run ./ironlark build-renderer first; use env -u WEBOTS_HOME ./ironlark run to select that build.")
+                           "Run ./ironlark build-renderer first" + suffix + ".")
     if override and not (home / "webots").is_file():
         raise RuntimeError(f"WEBOTS_HOME points to an invalid installation: {home}; remove the override or select Webots {RELEASE}.")
     return home.resolve()
-
-
-def compiler_command(language):
-    variable, default = ("CC", "gcc") if language == "c" else ("CXX", "g++")
-    if variable not in os.environ:
-        alternatives = ("gcc", "cc", "clang") if language == "c" else ("g++", "c++", "clang++")
-        default = next((name for name in alternatives if shutil.which(name)), default)
-    try:
-        command = shlex.split(os.environ.get(variable, default))
-        if not command:
-            raise RuntimeError(f"Invalid {variable}: empty compiler command")
-        return command
-    except ValueError as error:
-        raise RuntimeError(f"Invalid {variable}: {error}") from error
 
 
 def probe_command(command):
@@ -132,23 +130,16 @@ def probe_command(command):
 
 def renderer_preflight(root=ROOT):
     missing = sdk_problems(Path(root) / "webots")
-    # Webots sets its own flags; probe the compiler commands passed to make.
+    # The Webots Makefiles compile with gcc and g++ and set their own flags.
     with tempfile.TemporaryDirectory(prefix="ironlark-renderer-") as scratch:
         binary = Path(scratch) / "probe"
         compilers = {}
-        for language, extension in (("c", "c"), ("c++", "cpp")):
-            try:
-                compiler = compiler_command(language)
-            except RuntimeError as error:
-                compilers[language] = False
-                missing.append(str(error))
-                continue
+        for language, compiler, extension in (("c", "gcc", "c"), ("c++", "g++", "cpp")):
             source = Path(scratch) / ("compiler." + extension)
             source.write_text("int main(void) { return 0; }\n")
-            working = probe_command([*compiler, str(source), "-o", str(binary)])
-            compilers[language] = working
-            if not working:
-                missing.append(f"{language} compiler compile/link: {' '.join(compiler)}")
+            compilers[language] = probe_command([compiler, str(source), "-o", str(binary)])
+            if not compilers[language]:
+                missing.append(f"{language} compiler compile/link: {compiler}")
         makefile = Path(scratch) / "Makefile"
         makefile.write_text("all:\n\t@echo ironlark-preflight\n")
         for executable, command in (
@@ -161,7 +152,7 @@ def renderer_preflight(root=ROOT):
             for label, header, expression, library, flags in PROBES:
                 extra = "#include FT_FREETYPE_H\n" if label == "FreeType" else ""
                 source.write_text(f"#include <{header}>\n{extra}int main() {{ {expression}; return 0; }}\n")
-                if not probe_command([*compiler_command("c++"), str(source), *flags, "-l" + library, "-o", str(binary)]):
+                if not probe_command(["g++", str(source), *flags, "-l" + library, "-o", str(binary)]):
                     missing.append(f"{label}: compile/link <{header}> with -l{library}")
         else:
             missing.append("Header/library probes require a working C++ compiler; rerun after fixing it")
