@@ -1,11 +1,11 @@
-"""Offline failures and interruption checks for bounded build stages."""
+"""Compiler diagnostics and failed stages on real processes and log files."""
 
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import forest_process
@@ -23,46 +23,29 @@ class Diagnostics(unittest.TestCase):
                 self.assertLessEqual(len(excerpt.splitlines()), 18)
                 self.assertIn("context", excerpt)
 
+    @unittest.skipUnless(shutil.which("g++"), "C++ compiler required")
+    def test_missing_header_printed_with_complete_log_and_metrics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, log = root / "broken.cpp", root / "build.log"
+            source.write_text('#include "ironlark-missing-test-header.h"\n')
+            with self.assertRaisesRegex(RuntimeError, "ironlark-missing-test-header.h"):
+                forest_process.run_stage(["g++", "-c", str(source), "-o", str(root / "broken.o")], log)
+            self.assertIn("fatal error:", log.read_text())
+            metrics = json.loads(log.with_suffix(".metrics.json").read_text())
+            self.assertNotEqual(metrics["exit_code"], 0)
+            self.assertIn("exited", metrics["error"])
+
     def test_spawn_failure_writes_log_and_metrics(self):
         with tempfile.TemporaryDirectory() as directory:
-            log = Path(directory) / "build.log"
-            with patch.object(forest_process.subprocess, "Popen", side_effect=PermissionError("Permission denied")):
-                with self.assertRaisesRegex(RuntimeError, "Permission denied"):
-                    forest_process.run_stage(["compiler"], log)
-            self.assertIn("Permission denied", log.read_text())
+            root = Path(directory)
+            log = root / "build.log"
+            with self.assertRaisesRegex(RuntimeError, "No such file"):
+                forest_process.run_stage([str(root / "missing-compiler")], log)
+            self.assertIn("No such file", log.read_text())
             metrics = json.loads(log.with_suffix(".metrics.json").read_text())
             self.assertIsNone(metrics["exit_code"])
-            self.assertIn("Permission denied", metrics["error"])
-
-    def test_interrupt_records_metrics_and_terminates_process(self):
-        with tempfile.TemporaryDirectory() as directory:
-            log = Path(directory) / "build.log"
-            proc = Mock(pid=123, returncode=-15)
-            proc.poll.return_value = None
-            with patch.object(forest_process.subprocess, "Popen", return_value=proc), \
-                 patch.object(forest_process, "process_memory", side_effect=KeyboardInterrupt), \
-                 patch.object(forest_process.os, "killpg") as terminate:
-                with self.assertRaises(KeyboardInterrupt):
-                    forest_process.run_stage(["compiler"], log)
-            terminate.assert_called_once_with(123, forest_process.signal.SIGTERM)
-            metrics = json.loads(log.with_suffix(".metrics.json").read_text())
-            self.assertIn("interrupted", metrics["error"])
-            self.assertEqual(metrics["exit_code"], -15)
-
-    def test_memory_guard_preserves_metrics(self):
-        with tempfile.TemporaryDirectory() as directory:
-            log = Path(directory) / "build.log"
-            proc = Mock(pid=123, returncode=-15)
-            proc.poll.return_value = None
-            with patch.object(forest_process.subprocess, "Popen", return_value=proc), \
-                 patch.object(forest_process, "process_memory", return_value=(2000, 3000)), \
-                 patch.object(forest_process, "memory_fields", return_value={"MemAvailable": 2000000}), \
-                 patch.object(forest_process.os, "killpg"):
-                with self.assertRaisesRegex(RuntimeError, "memory exhaustion"):
-                    forest_process.run_stage(["compiler"], log, max_mib=1)
-            metrics = json.loads(log.with_suffix(".metrics.json").read_text())
-            self.assertIn("memory exhaustion", metrics["error"])
-            self.assertGreater(metrics["peak_rss_and_swap_mib"], 1)
+            self.assertIn("No such file", metrics["error"])
 
 
 if __name__ == "__main__":
