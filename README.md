@@ -12,22 +12,25 @@ valley. What comes next is in
 
 ## Quick start
 
-Needs Linux x86-64, OpenGL, Docker, [uv](https://docs.astral.sh/uv/),
+Needs Linux x86-64, OpenGL, Docker, [uv](https://docs.astral.sh/uv/), `git`,
 `xvfb-run`, and [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a)
-extracted to `./webots/` (or set `WEBOTS_HOME`).
+extracted to `./webots/`. `build-renderer` also needs gcc, g++, make, and the
+development files of OpenGL, GLU, OpenAL, FreeType and zlib; `doctor`
+compiles and links against each to list what's missing.
 
 ```sh
-./ironlark setup           # pinned ArduPilot image, Python env
-./ironlark build-world     # forest world (downloads Blender and the scene)
-./ironlark build-renderer  # Ironlark's patched Webots, which the worlds need
-./ironlark run             # watch a flight, fullscreen
-./ironlark check           # same flight, headless, pass/fail
+./ironlark setup           # pinned SITL/ROS images, Python env and bridge assets
+./ironlark doctor          # list missing runtime and build requirements
+./ironlark build-renderer  # compile the patched renderer
+./ironlark check           # validate takeoff/hover/land in the empty world
+./ironlark build-world     # resumable forest export and drone build
+./ironlark run             # watch the forest flight, fullscreen
 ```
 
 | Command | Does |
 | --- | --- |
 | `setup` | Builds ArduPilot Copter 4.7.1 (`dbe7921`) in an Ubuntu 22.04 image, which keeps only the SITL binary, its parameters and pymavlink (0.3 GB; Docker's build cache holds the rest); extracts its Iris model and Webots bridge to `.cache/`; creates `.venv/` (Python 3.12.11, NumPy, Pillow). System Python is untouched. |
-| `doctor` | Checks every prerequisite. |
+| `doctor` | Lists missing runtime and renderer build requirements, and forest readiness. |
 | `build-world` | Downloads Blender 4.2.9 and the [Poly Haven Pine Forest](https://polyhaven.com/collections/pine_forest) scene (checksummed), exports it stage by stage, and assembles `worlds/pine_forest/`. Resumable; `--skip-export` only reassembles. |
 | `build-drone` | Models the drone in Blender and writes `protos/IronlarkDrone.proto` (also run by `build-world`, and by `run`/`check` when missing). |
 | `build-renderer` | Builds patched Webots into `.cache/webots-renderer/`. See [Webots patches](#webots-patches). |
@@ -38,8 +41,19 @@ extracted to `./webots/` (or set `WEBOTS_HOME`).
 | `check-replay RUN` | Replays a recorded flight while recording it again and compares: same messages, stamps and static transforms. |
 | `check` | The same flight on a virtual display, empty world by default. Exits nonzero on failure. |
 
-Webots is chosen in order: `WEBOTS_HOME`, the patched build if present, `./webots/`.
-Build stages run with two jobs and stop at 4.5 GiB RSS; logs go to `.cache/build-logs/`.
+For empty-world flights, Webots is chosen in order: `WEBOTS_HOME`, a current
+patched build, `./webots/`. The forest needs a current `build-renderer`: stock
+Webots cannot read its patched fields, DDS textures or HDR sky. A change to the
+patch series, the native sources or the Webots checkout makes a build stale,
+except an edit to a shader or node file the build already serves from the
+checkout, which is live. To ignore a `WEBOTS_HOME` override in sh or fish, use
+`env -u WEBOTS_HOME ./ironlark run`.
+
+`build-renderer` compiles uncommitted edits in the Webots checkout and serves
+changed resources from its working tree. A failed compile leaves the previous
+runtime in place and prints the compiler and linker errors; downloads are
+checked through `.part` files. Build stages run with two jobs and stop at
+4.5 GiB RSS; logs and metrics go to `.cache/build-logs/`.
 First setup needs internet and several GB of disk. OS packages in the image float,
 so builds are source-pinned, not bit-identical.
 
@@ -161,7 +175,7 @@ upstream pull request.
 
 A newer Webots release: in the checkout, `git fetch --depth 1 origin tag R2025b`
 and `git rebase --onto R2025b c6793d8f`, resolving conflicts patch by patch;
-then `RELEASE` and `COMMIT` in `tools/build_webots_renderer.py`, that release
+then `RELEASE` and `COMMIT` in `tools/renderer_support.py`, that release
 installed as `./webots/`, and a save.
 
 `tools/render_lighting_reference.py` renders the built world in Cycles under the

@@ -11,18 +11,15 @@ import tempfile
 from urllib.request import urlretrieve
 
 from forest_process import run_stage
+from renderer_support import RELEASE, COMMIT, NATIVE_NAMES, renderer_identity, require_renderer_prerequisites
 
 SIM = Path(__file__).resolve().parents[1]
 CACHE = SIM / ".cache"
-RELEASE = "R2025a"
-COMMIT = "c6793d8f7230a311c4bc2a3101d9f1a8bc0aa01b"
 PATCHES = SIM / "native/patches"
 BRANCH = "ironlark"
 # Compiled into WREN beside the patched sources: Ironlark's vertex indexer, and meshoptimizer's vertex cache
 # optimizer (MIT, zeux/meshoptimizer 9e1f07b).
-NATIVE_SOURCES = [SIM / "native/vertex_index.hpp"] + [
-    SIM / "native/meshoptimizer" / name for name in ("meshoptimizer.h", "vcacheoptimizer.cpp", "allocator.cpp")
-]
+NATIVE_SOURCES = [SIM / name for name in NATIVE_NAMES]
 PACKAGES = {
     "libOIS.1.4.tar.bz2": "ec13db6efd6901e80e9c4b437319c7949253a47fee768515a3aa1e6ca122225d",
     "libassimp-5.2.3.tar.bz2": "31c12e4e9f6bf52259dc599c8fcdb77c511c170e18cdc70543b10903aa28c697",
@@ -67,12 +64,12 @@ def link(path, target):
         path.symlink_to(target, target_is_directory=target.is_dir())
 
 
-def overlay_resources(runtime, installed, source):
+def overlay_resources(runtime, installed, source, base=COMMIT):
     """Mirror stock resources as symlinks, serving files the series changed
     (shaders, node definitions) from the patched source."""
     changed = subprocess.check_output(
         # Working tree, not just the committed series: a patch in progress is live too.
-        ["git", "-C", str(source), "diff", "--name-only", COMMIT, "--", "resources"],
+        ["git", "-C", str(source), "diff", "--name-only", base, "--", "resources"],
         text=True,
     ).split()
     changed = {Path(name).relative_to("resources") for name in changed}
@@ -80,7 +77,8 @@ def overlay_resources(runtime, installed, source):
     root = runtime / "resources"
     if root.is_symlink():
         root.unlink()
-    shutil.rmtree(root, ignore_errors=True)
+    if root.exists():
+        shutil.rmtree(root)
     root.mkdir()
 
     def mirror(folder):
@@ -96,14 +94,25 @@ def overlay_resources(runtime, installed, source):
 
     mirror(Path("."))
     for name in changed:  # files the series adds
-        link(root / name, source / "resources" / name)
+        if not (root / name).exists():
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            link(root / name, source / "resources" / name)
 
 
-def main():
+def fetch_archive(url, archive, expected):
+    """Never reuse interrupted or corrupt downloads; preserve reusable completed inputs."""
+    if archive.is_file() and hashlib.sha256(archive.read_bytes()).hexdigest() == expected:
+        return
+    partial = archive.with_name(archive.name + ".part")
+    urlretrieve(url, partial)
+    if hashlib.sha256(partial.read_bytes()).hexdigest() != expected:
+        raise RuntimeError(f"Unexpected dependency archive contents: {archive.name}")
+    partial.replace(archive)
+
+
+def build_renderer():
     source = CACHE / "webots-source"
     installed = SIM / "webots"
-    if (installed / "resources/version.txt").read_text().strip() != RELEASE:
-        raise RuntimeError(f"This patch requires the Webots {RELEASE} installation.")
     if not source.exists():
         call(
             "git",
@@ -178,15 +187,10 @@ def main():
             shutil.copyfile(path, copy)
     for name, expected in PACKAGES.items():
         archive = source / "dependencies" / name
-        if not archive.exists():
-            urlretrieve(
+        fetch_archive(
                 "https://cyberbotics.com/files/repository/dependencies/linux64/release/"
                 + name,
-                archive,
-            )
-        with archive.open("rb") as stream:
-            if hashlib.file_digest(stream, "sha256").hexdigest() != expected:
-                raise RuntimeError(f"Unexpected dependency archive contents: {name}")
+                archive, expected)
         with tarfile.open(archive) as tar:
             tar.extractall(
                 source,
@@ -196,7 +200,7 @@ def main():
     # The runtime package omits three header modules. Obtain the matching Qt
     # headers without replacing its working Qt libraries or the system Qt.
     qt = CACHE / "Qt/6.5.3/gcc_64/include"
-    if not (qt / "QtOpenGLWidgets/QOpenGLWidget").exists():
+    if not all((qt / name).exists() for name in ("QtOpenGLWidgets/QOpenGLWidget", "QtQml/QtQml", "QtXml/QtXml")):
         call(
             "uvx",
             "--from",
@@ -232,6 +236,7 @@ def main():
         os.environ.setdefault("CCACHE_DIR", str(CACHE / "ccache"))
         os.environ.setdefault("CCACHE_MAXSIZE", "1G")
         compilers = ["CC=ccache gcc", "CXX=ccache g++"]
+    identity = renderer_identity(SIM)
     for name in ("glad", "wren", "webots"):
         print(f"Compiling {name} (two jobs)", flush=True)
         run_stage(
@@ -260,18 +265,20 @@ def main():
             link(runtime / "bin" / path.name, path)
     shutil.copy2(source / "bin/webots-bin", runtime / "bin/webots-bin")
     shutil.copy2(installed / "webots", runtime / "webots")
-    manifest = {
-        "upstream_commit": COMMIT,
-        "patches": [p.name for p in patches],
-        "series_sha256": hashlib.sha256(b"".join(p.read_bytes() for p in patches)).hexdigest(),
-        "series_commit": tip,
-        "native_sha256": hashlib.sha256(
-            b"".join(path.read_bytes() for path in NATIVE_SOURCES)
-        ).hexdigest(),
-    }
+    manifest = {**identity, "series_commit": tip}
     (runtime / "ironlark-renderer.json").write_text(json.dumps(manifest, indent=2))
-    print(f"Patched Webots ready: {runtime}", flush=True)
+    print(f"Patched Webots ready: {CACHE / 'webots-renderer'}", flush=True)
+
+
+def main():
+    require_renderer_prerequisites()
+    build_renderer()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        raise SystemExit(str(error))
+    except KeyboardInterrupt:
+        raise SystemExit("Renderer build interrupted; see .cache/build-logs/ and rerun ./ironlark build-renderer.")
