@@ -1,90 +1,56 @@
-"""Launcher workflow gates without Docker, display, network, or generated assets."""
+"""Drive launcher refusal through its CLI, without creating run artifacts."""
 
-from importlib.machinery import SourceFileLoader
-from importlib.util import module_from_spec, spec_from_loader
+import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
 
-ROOT = Path(__file__).resolve().parents[1]
-loader = SourceFileLoader("ironlark_workflow_tests", str(ROOT / "ironlark"))
-launcher = module_from_spec(spec_from_loader(loader.name, loader))
-loader.exec_module(launcher)
+from tests.test_renderer import ROOT, make_project, write_manifest
 
 
 class Workflows(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="ironlark workflow ")
-        self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
-        for name, value in (("ROOT", self.root), ("CACHE", self.root / ".cache")):
-            mocked = patch.object(launcher, name, value)
-            mocked.start()
-            self.addCleanup(mocked.stop)
+        self.scratch = tempfile.TemporaryDirectory(prefix="ironlark workflow ")
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name)
+        make_project(self.root)
+        shutil.copyfile(ROOT / "ironlark", self.root / "ironlark")
+        (self.root / "tools").mkdir()
+        shutil.copyfile(ROOT / "tools/renderer_support.py", self.root / "tools/renderer_support.py")
 
-    def test_forest_rejection_precedes_any_run_artifacts(self):
-        with patch.object(launcher, "webots_home", side_effect=RuntimeError("forest requires patched renderer")), \
-             patch.object(launcher, "doctor") as doctor, patch.object(launcher, "build_drone") as drone:
-            with self.assertRaisesRegex(RuntimeError, "patched renderer"):
-                launcher.flight(headless=True, world="forest")
-        doctor.assert_not_called()
-        drone.assert_not_called()
-        self.assertEqual(list(self.root.iterdir()), [])
+    def refused(self, expected):
+        env = os.environ.copy()
+        env.pop("WEBOTS_HOME", None)
+        result = subprocess.run([sys.executable, str(self.root / "ironlark"), "run"],
+                                capture_output=True, text=True, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(expected, result.stderr)
+        self.assertFalse((self.root / "runs").exists())
+        self.assertFalse((self.root / ".cache/flight.lock").exists())
 
-    def test_missing_headless_tool_fails_before_drone_build(self):
-        with patch.object(launcher, "webots_home", return_value=self.root / "webots"), \
-             patch.object(launcher, "doctor"), patch.dict(launcher.os.environ, {"HOME": str(self.root)}, clear=True), \
-             patch.object(launcher.shutil, "which", return_value=None), \
-             patch.object(launcher, "build_drone") as drone, patch.object(launcher, "check_ports"):
-            with self.assertRaisesRegex(RuntimeError, "xvfb-run"):
-                launcher.flight(headless=True, world="empty")
-        drone.assert_not_called()
+    def test_missing_manifest_refused_before_run_artifacts(self):
+        self.refused("build-renderer")
 
-    def test_visible_run_does_not_need_ros_or_xvfb(self):
-        with patch.object(launcher, "webots_home", return_value=self.root / "webots"), \
-             patch.object(launcher, "doctor"), \
-             patch.dict(launcher.os.environ, {"HOME": str(self.root), "DISPLAY": ":1"}, clear=True), \
-             patch.object(launcher.shutil, "which", return_value=None), \
-             patch.object(launcher.subprocess, "run") as run, \
-             patch.object(launcher, "build_drone", side_effect=RuntimeError("drone build boundary")):
-            with self.assertRaisesRegex(RuntimeError, "drone build boundary"):
-                launcher.flight(headless=False, world="empty", record=False)
-        run.assert_not_called()
+    def test_old_manifest_refused_before_run_artifacts(self):
+        manifest = write_manifest(self.root)
+        recorded = json.loads(manifest.read_text())
+        del recorded["schema"]
+        manifest.write_text(json.dumps(recorded))
+        self.refused("schema")
 
-    def test_missing_display_fails_before_drone_build(self):
-        with patch.object(launcher, "webots_home", return_value=self.root / "webots"), \
-             patch.object(launcher, "doctor"), patch.dict(launcher.os.environ, {"HOME": str(self.root)}, clear=True), \
-             patch.object(launcher, "build_drone") as drone:
-            with self.assertRaisesRegex(RuntimeError, "DISPLAY|display"):
-                launcher.flight(headless=False, world="empty")
-        drone.assert_not_called()
+    def test_changed_patch_refused_before_run_artifacts(self):
+        write_manifest(self.root)
+        (self.root / "native/patches/0001.patch").write_text("changed patch")
+        self.refused("series_sha256")
 
-    def test_wayland_only_requires_xwayland_for_stock_launcher(self):
-        with patch.object(launcher, "webots_home", return_value=self.root / "webots"), \
-             patch.object(launcher, "doctor"), \
-             patch.dict(launcher.os.environ, {"HOME": str(self.root), "WAYLAND_DISPLAY": "wayland-0"}, clear=True), \
-             patch.object(launcher, "build_drone", side_effect=RuntimeError("unexpected drone build")) as drone:
-            with self.assertRaisesRegex(RuntimeError, "XWayland|DISPLAY|display"):
-                launcher.flight(headless=False, world="empty")
-        drone.assert_not_called()
-
-    def test_recording_requires_ros_image_before_drone_build(self):
-        with patch.object(launcher, "webots_home", return_value=self.root / "webots"), \
-             patch.object(launcher, "doctor"), \
-             patch.dict(launcher.os.environ, {"HOME": str(self.root), "DISPLAY": ":1"}, clear=True), \
-             patch.object(launcher.subprocess, "run", return_value=Mock(returncode=1)), \
-             patch.object(launcher, "build_drone") as drone:
-            with self.assertRaisesRegex(RuntimeError, "ROS"):
-                launcher.flight(headless=False, world="empty", record=True)
-        drone.assert_not_called()
-
-    def test_replay_reports_missing_docker_without_launch(self):
-        with patch.object(launcher.shutil, "which", return_value=None), \
-             patch.object(launcher.subprocess, "run") as run:
-            with self.assertRaisesRegex(RuntimeError, "Docker"):
-                launcher.ros_container("record", self.root, "ros2 bag play bag")
-        run.assert_not_called()
+    def test_working_tree_edit_refused_before_run_artifacts(self):
+        write_manifest(self.root)
+        (self.root / ".cache/webots-source/src/renderer.cpp").write_text("int value = 2;\n")
+        self.refused("checkout_diff_sha256")
 
 
 if __name__ == "__main__":

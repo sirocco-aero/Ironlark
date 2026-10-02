@@ -1,34 +1,41 @@
 """Linux renderer capabilities and identity, shared by the launcher and builder."""
 
 import hashlib
+import platform
+import sys
+from dataclasses import dataclass
 import json
 import os
-import platform
-import re
 from pathlib import Path
 import shlex
 import shutil
 import subprocess
-import sys
 import tempfile
-from dataclasses import dataclass
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = "R2025a"
 COMMIT = "c6793d8f7230a311c4bc2a3101d9f1a8bc0aa01b"
-SCHEMA = 1
+SCHEMA = 2
 NATIVE_NAMES = ("native/vertex_index.hpp", "native/meshoptimizer/meshoptimizer.h",
                 "native/meshoptimizer/vcacheoptimizer.cpp", "native/meshoptimizer/allocator.cpp")
 # Only host capabilities used by glad, wren and webots; Qt and other SDK headers
 # come from the installed runtime or the builder's pinned downloads.
 PROBES = (
-    ("OpenGL", "GL/gl.h", "glGetError()", "GL", (), ("libgl-dev", "libgl1-mesa-dev")),
-    ("GLU", "GL/glu.h", "gluErrorString(0)", "GLU", (), ("libglu1-mesa-dev",)),
-    ("OpenAL", "AL/al.h", "alGetError()", "openal", (), ("libopenal-dev",)),
+    ("OpenGL", "GL/gl.h", "glGetError()", "GL", ()),
+    ("GLU", "GL/glu.h", "gluErrorString(0)", "GLU", ()),
+    ("OpenAL", "AL/al.h", "alGetError()", "openal", ()),
     ("FreeType", "ft2build.h", "FT_Library library; FT_Init_FreeType(&library)",
-     "freetype", ("-I/usr/include/freetype2",), ("libfreetype-dev", "libfreetype6-dev")),
-    ("zlib", "zlib.h", "zlibVersion()", "z", (), ("zlib1g-dev",)),
+     "freetype", ("-I/usr/include/freetype2",)),
+    ("zlib", "zlib.h", "zlibVersion()", "z", ()),
 )
+
+
+def checkout_identity(source):
+    """Include staged and unstaged tracked edits so builds can test a patch in progress."""
+    head = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True, stderr=subprocess.PIPE).strip()
+    diff = subprocess.check_output(["git", "-C", str(source), "diff", "--binary", "--no-ext-diff",
+                                    "--no-textconv", "HEAD", "--"], stderr=subprocess.PIPE)
+    return {"checkout_commit": head, "checkout_diff_sha256": hashlib.sha256(diff).hexdigest()}
 
 
 def renderer_identity(root=ROOT):
@@ -41,17 +48,8 @@ def renderer_identity(root=ROOT):
         "patches": [p.name for p in patches],
         "series_sha256": hashlib.sha256(b"".join(p.read_bytes() for p in patches)).hexdigest(),
         "native_sha256": hashlib.sha256(b"".join((root / p).read_bytes() for p in NATIVE_NAMES)).hexdigest(),
+        **checkout_identity(root / ".cache/webots-source"),
     }
-
-
-def required_overlay(root=ROOT):
-    """Resource paths from the checked-in series, without consulting a checkout."""
-    required = set()
-    for patch in sorted((Path(root) / "native/patches").glob("*.patch")):
-        required.update(re.findall(r"^\+\+\+ b/resources/(.+)$", patch.read_text(), re.M))
-        required.difference_update(re.findall(r"^--- a/resources/(.+)\n\+\+\+ /dev/null$",
-                                             patch.read_text(), re.M))
-    return required
 
 
 def sdk_problems(home):
@@ -95,25 +93,7 @@ def renderer_problem(home, root=ROOT):
         if not all((home / path).is_file() and os.access(home / path, os.X_OK)
                    for path in ("webots", "bin/webots-bin")):
             return "incomplete patched renderer (missing executable)"
-        overlay = recorded.get("resource_overlay")
-        if not isinstance(overlay, dict) or not overlay:
-            return "missing patched resource overlay"
-        if not required_overlay(root) <= set(overlay):
-            return "incomplete patched resource overlay"
-        for name, digest in overlay.items():
-            relative = Path(name)
-            if relative.is_absolute() or ".." in relative.parts:
-                return "malformed patched resource overlay"
-            path = home / "resources" / relative
-            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-                return "missing or changed patched resource overlay: " + name
-        binaries = recorded.get("binaries")
-        if not isinstance(binaries, dict):
-            return "missing renderer binary identity"
-        for name in ("webots", "bin/webots-bin"):
-            if binaries.get(name) != hashlib.sha256((home / name).read_bytes()).hexdigest():
-                return "changed renderer executable: " + name
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, subprocess.CalledProcessError):
         return "malformed or incomplete patched-renderer manifest/runtime"
     return None
 
@@ -126,9 +106,9 @@ def select_webots(root=ROOT, world="empty", override=None):
     if world == "forest" and (problem := renderer_problem(home, root)):
         prefix = f"WEBOTS_HOME points to {home}: {problem}. " if override else f"{problem}. "
         raise RuntimeError(prefix + "The forest requires Ironlark's patched Webots renderer. "
-                           "Run ./ironlark build-renderer first; unset WEBOTS_HOME to use that build.")
+                           "Run ./ironlark build-renderer first; use env -u WEBOTS_HOME ./ironlark run to select that build.")
     if override and not (home / "webots").is_file():
-        raise RuntimeError(f"WEBOTS_HOME points to an invalid installation: {home}; unset it or select Webots {RELEASE}.")
+        raise RuntimeError(f"WEBOTS_HOME points to an invalid installation: {home}; remove the override or select Webots {RELEASE}.")
     return home.resolve()
 
 
