@@ -12,13 +12,11 @@ valley. What comes next is in
 
 ## Quick start
 
-Needs Linux x86-64, a working OpenGL display/GPU driver, Docker (with daemon
-access), [uv](https://docs.astral.sh/uv/) including `uvx`, `git`, `xvfb-run` for
-headless checks, and
-[Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a)
-extracted to `./webots/`. Renderer compilation also needs C and C++ compilers,
-make, and development libraries for OpenGL, GLU, OpenAL, FreeType and zlib.
-`doctor` lists missing tools and libraries using compile/link probes.
+Needs Linux x86-64, OpenGL, Docker, [uv](https://docs.astral.sh/uv/), `git`,
+`xvfb-run`, and [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a)
+extracted to `./webots/`. `build-renderer` also needs C and C++ compilers, make,
+and the development files of OpenGL, GLU, OpenAL, FreeType and zlib; `doctor`
+compiles and links against each to list what's missing.
 
 ```sh
 ./ironlark setup           # pinned SITL/ROS images, Python env and bridge assets
@@ -26,7 +24,6 @@ make, and development libraries for OpenGL, GLU, OpenAL, FreeType and zlib.
 ./ironlark build-renderer  # compile the patched renderer
 ./ironlark check           # validate takeoff/hover/land in the empty world
 ./ironlark build-world     # resumable forest export and drone build
-./ironlark doctor          # verify forest readiness
 ./ironlark run             # watch the forest flight, fullscreen
 ```
 
@@ -46,15 +43,15 @@ make, and development libraries for OpenGL, GLU, OpenAL, FreeType and zlib.
 
 For empty-world flights, Webots is chosen in order: `WEBOTS_HOME`, a current
 patched build, `./webots/`. The forest needs a current `build-renderer`: stock
-Webots cannot read its patched fields, DDS textures or HDR sky. Existing builds
-need one rebuild for the new manifest; changes to the patch series, native
-sources or Webots checkout edits require another. To ignore a `WEBOTS_HOME`
-override in sh or fish, use `env -u WEBOTS_HOME ./ironlark run`.
+Webots cannot read its patched fields, DDS textures or HDR sky. A change to the
+patch series, the native sources or the Webots checkout makes a build stale. To
+ignore a `WEBOTS_HOME` override in sh or fish, use `env -u WEBOTS_HOME ./ironlark run`.
 
-Builds compile uncommitted Webots edits and serve changed resources from its
-working tree. Failed compiles leave the previous runtime in place; downloads
-use checksum-verified `.part` files. Compiler/linker errors print on failure;
-full logs and metrics stay in `.cache/build-logs/`.
+`build-renderer` compiles uncommitted edits in the Webots checkout and serves
+changed resources from its working tree. A failed compile leaves the previous
+runtime in place and prints the compiler and linker errors; downloads are
+checked through `.part` files. Build stages run with two jobs and stop at
+4.5 GiB RSS; logs and metrics go to `.cache/build-logs/`.
 First setup needs internet and several GB of disk. OS packages in the image float,
 so builds are source-pinned, not bit-identical.
 
@@ -170,9 +167,8 @@ name holds `fog`. Without a name, the tool writes the branch to
 `native/patches/`. Then `./ironlark build-renderer`, `./ironlark check`,
 `./ironlark check --world forest`, and the patch's row here (the tool names
 patches without one). The builder never
-moves the branch past commits not saved as patches. Tracked uncommitted edits
-must be saved as patches before building so the published manifest describes
-the actual compiled inputs. Keep each patch one feature, clean enough to become an
+moves the branch past commits not saved as patches, and git refuses to overwrite
+uncommitted edits. Keep each patch one feature, clean enough to become an
 upstream pull request.
 
 A newer Webots release: in the checkout, `git fetch --depth 1 origin tag R2025b`
