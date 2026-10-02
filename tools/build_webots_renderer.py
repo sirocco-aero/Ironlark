@@ -198,9 +198,6 @@ def build_renderer():
                 "https://cyberbotics.com/files/repository/dependencies/linux64/release/"
                 + name,
                 archive, expected)
-        with archive.open("rb") as stream:
-            if hashlib.file_digest(stream, "sha256").hexdigest() != expected:
-                raise RuntimeError(f"Unexpected dependency archive contents: {name}")
         with tarfile.open(archive) as tar:
             tar.extractall(
                 source,

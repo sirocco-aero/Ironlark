@@ -171,3 +171,31 @@ class Selection(unittest.TestCase):
         self.assertEqual(served.read_text(), "edited again")
 
 
+class Downloads(unittest.TestCase):
+    def test_corrupt_archive_replaced_and_completed_download_reused(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            remote, archive = root / "remote", root / "archive"
+            remote.write_bytes(b"complete archive")
+            archive.write_bytes(b"incomplete")
+            archive.with_name("archive.part").write_bytes(b"interrupted")
+            expected = hashlib.sha256(remote.read_bytes()).hexdigest()
+            builder.fetch_archive(remote.as_uri(), archive, expected)
+            remote.unlink()
+            builder.fetch_archive(remote.as_uri(), archive, expected)
+            self.assertEqual(archive.read_bytes(), b"complete archive")
+            self.assertFalse(archive.with_name("archive.part").exists())
+
+    def test_bad_download_does_not_replace_existing_archive(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            remote, archive = root / "remote", root / "archive"
+            remote.write_bytes(b"wrong contents")
+            archive.write_bytes(b"previous")
+            with self.assertRaisesRegex(RuntimeError, "Unexpected dependency"):
+                builder.fetch_archive(remote.as_uri(), archive, "wrong digest")
+            self.assertEqual(archive.read_bytes(), b"previous")
+
+
+if __name__ == "__main__":
+    unittest.main()
