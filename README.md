@@ -18,41 +18,22 @@ headless checks, and
 [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a)
 extracted to `./webots/`. Renderer compilation also needs C and C++ compilers,
 make, and development libraries for OpenGL, GLU, OpenAL, FreeType and zlib.
-`doctor` checks these capabilities before any downloads and prints install
-suggestions where it can verify the package names.
+`doctor` lists missing tools and libraries using compile/link probes.
 
 ```sh
-unset WEBOTS_HOME          # use the repository's selected runtime
 ./ironlark setup           # pinned SITL/ROS images, Python env and bridge assets
-./ironlark doctor          # overview; reports all missing renderer capabilities
-./ironlark build-renderer  # preflight first, then resumable patched renderer build
+./ironlark doctor          # list missing runtime and build requirements
+./ironlark build-renderer  # compile the patched renderer
 ./ironlark check           # validate takeoff/hover/land in the empty world
 ./ironlark build-world     # resumable forest export and drone build
 ./ironlark doctor          # verify forest readiness
 ./ironlark run             # watch the forest flight, fullscreen
 ```
 
-`doctor` works before setup and reports all missing runtime and renderer
-requirements together. It uses compile/link probes rather than package names;
-on Debian-derived hosts it only suggests packages with an APT candidate, and on
-other distributions it reports the missing capability without guessing. It
-never installs host packages. Renderer requirements do not gate empty-world
-flights.
-
-The pinned containers use Ubuntu 22.04; Linux x86-64 hosts are checked by
-capability and newer releases are best effort. Custom compiler commands can be
-set with `CC` and `CXX`. Renderer compilation needs no display or GPU, while
-graphical runs need a writable `HOME` and an X11/XWayland `DISPLAY`; headless
-checks use `xvfb-run`.
-
-Allow several GB of downloads and roughly 15–30 GB of free disk for Docker,
-Blender, forest assets and build caches. Initial builds can take tens of minutes
-or longer. Downloads and completed stages are reused after a failure.
-
 | Command | Does |
 | --- | --- |
 | `setup` | Builds ArduPilot Copter 4.7.1 (`dbe7921`) in an Ubuntu 22.04 image, which keeps only the SITL binary, its parameters and pymavlink (0.3 GB; Docker's build cache holds the rest); extracts its Iris model and Webots bridge to `.cache/`; creates `.venv/` (Python 3.12.11, NumPy, Pillow). System Python is untouched. |
-| `doctor` | Reports runtime, renderer build, patched-renderer currentness, forest and empty-world readiness; prints capability-based package suggestions. |
+| `doctor` | Lists missing runtime and renderer build requirements, and forest readiness. |
 | `build-world` | Downloads Blender 4.2.9 and the [Poly Haven Pine Forest](https://polyhaven.com/collections/pine_forest) scene (checksummed), exports it stage by stage, and assembles `worlds/pine_forest/`. Resumable; `--skip-export` only reassembles. |
 | `build-drone` | Models the drone in Blender and writes `protos/IronlarkDrone.proto` (also run by `build-world`, and by `run`/`check` when missing). |
 | `build-renderer` | Builds patched Webots into `.cache/webots-renderer/`. See [Webots patches](#webots-patches). |
@@ -64,18 +45,16 @@ or longer. Downloads and completed stages are reused after a failure.
 | `check` | The same flight on a virtual display, empty world by default. Exits nonzero on failure. |
 
 For empty-world flights, Webots is chosen in order: `WEBOTS_HOME`, a current
-patched build, `./webots/`. Forest flights require a current patched runtime:
-stock Webots cannot read its patched fields, DDS textures or HDR sky. An override
-pointing to stock Webots is refused before a run directory is created. Use
-`unset WEBOTS_HOME` to select the repository build. The renderer manifest binds
-the runtime to this Webots release, patch series, native sources, binaries and
-resource overlay; change any input and `build-renderer` must run again.
+patched build, `./webots/`. The forest needs a current `build-renderer`: stock
+Webots cannot read its patched fields, DDS textures or HDR sky. Existing builds
+need one rebuild for the new manifest; changes to the patch series, native
+sources or Webots checkout edits require another. To ignore a `WEBOTS_HOME`
+override in sh or fish, use `env -u WEBOTS_HOME ./ironlark run`.
 
-Renderer builds are locked against concurrent writers and publish completed
-generations atomically, so interruption preserves the previous runtime.
-Downloads use checksum-verified temporary files and completed stages remain
-reusable. Logs and metrics go to `.cache/build-logs/`; failures print the
-relevant compiler or linker diagnostics while retaining the complete log.
+Builds compile uncommitted Webots edits and serve changed resources from its
+working tree. Failed compiles leave the previous runtime in place; downloads
+use checksum-verified `.part` files. Compiler/linker errors print on failure;
+full logs and metrics stay in `.cache/build-logs/`.
 First setup needs internet and several GB of disk. OS packages in the image float,
 so builds are source-pinned, not bit-identical.
 
