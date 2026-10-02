@@ -1,80 +1,30 @@
-# Operating-system and editor files
+# Python caches, local configuration and atlas dependencies.
+__pycache__/
+*.py[cod]
 .DS_Store
-Thumbs.db
-*~
-*.swp
-*.swo
-.idea/
-.vscode/
-
-# Local configuration and secrets
 .env
 .env.*
 !.env.example
-
-# Python environments, caches, test output, and packages
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-.pytest_cache/
-.mypy_cache/
-.pyright/
-.ruff_cache/
-.tox/
-.nox/
-.coverage
-.coverage.*
-coverage.xml
-htmlcov/
-build/
-dist/
-*.egg-info/
-
-# JavaScript package and framework output
 node_modules/
-.next/
-.npm/
-.pnpm-store/
-*.tsbuildinfo
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
 
-# Native build products
-*.a
-*.d
-*.o
-*.obj
-*.so
-*.so.*
-CMakeCache.txt
-CMakeFiles/
-cmake-build-*/
-compile_commands.json
-
-# Logs and temporary files
-*.log
-*.tmp
-*.temp
-
-# Local research material and generated atlas previews
+# Local research sources and generated atlas previews.
 /research/evidence/
 /research/DESIGN.md
+/research/*.py
+!/research/build_html.py
 /research/browser-checks.json
 /research/drone-autonomy-atlas.html
 /research/preview-*.png
 
-# Ironlark downloads, caches, generated worlds, runs, and vehicle assets
+# Downloaded tools, assets, build products and diagnostics.
 /.cache/
+/.venv/
 /webots/
 /runs/
 /worlds/pine_forest/
 /protos/
-
-# Root-level downloaded archives
 /*.tar
 /*.tar.*
 /*.tgz
 /*.zip
+*.log
