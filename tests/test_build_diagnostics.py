@@ -1,5 +1,6 @@
 """Compiler diagnostics and failed stages on real processes and log files."""
 
+import hashlib
 import importlib.util
 import json
 from importlib.machinery import SourceFileLoader
@@ -81,6 +82,39 @@ class Lockstep(unittest.TestCase):
         source = (ROOT / "controllers/flight_bridge/lockstep.c").read_text().replace("int motor_count,", "int motor_count")
         with self.assertRaisesRegex(RuntimeError, "(?s)does not compile.*error"):
             self.build(source)
+
+
+class Drone(unittest.TestCase):
+    """The launcher rebuilds the drone unless its receipt matches every input and output."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        (self.root / "protos/drone").mkdir(parents=True)
+        self.addCleanup(setattr, launcher, "ROOT", launcher.ROOT)
+        launcher.ROOT = self.root
+        files = {"config/sensors.json": "{}", "protos/IronlarkDrone.proto": "PROTO", "protos/drone/body.obj": "v 0 0 0"}
+        for name, text in files.items():
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(text)
+        digests = {name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()}
+        (self.root / "protos/drone/receipt.json").write_text(json.dumps({
+            "inputs": {"config/sensors.json": digests["config/sensors.json"]},
+            "outputs": {name: digests[name] for name in files if name.startswith("protos/")}}))
+
+    def test_a_complete_build_is_current(self):
+        self.assertIsNone(launcher.drone_stale())
+
+    def test_a_changed_input_or_output_or_a_missing_one_is_stale(self):
+        (self.root / "config/sensors.json").write_text('{"camera": {}}')
+        self.assertEqual(launcher.drone_stale(), "config/sensors.json changed")
+        (self.root / "config/sensors.json").write_text("{}")
+        (self.root / "protos/drone/body.obj").unlink()
+        self.assertEqual(launcher.drone_stale(), "protos/drone/body.obj changed")
+        (self.root / "protos/drone/receipt.json").unlink()
+        self.assertEqual(launcher.drone_stale(), "no completed build")
+
 
 if __name__ == "__main__":
     unittest.main()

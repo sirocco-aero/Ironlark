@@ -354,6 +354,20 @@ def build_drone():
     run_tool("build_drone.py")
 
 
+def drone_stale():
+    """Why protos/ does not hold the drone today's sources build, or None: its receipt (tools/build_drone.py) lists
+    each input and output with its sha256."""
+    receipt = ROOT / "protos/drone/receipt.json"
+    if not receipt.is_file():
+        return "no completed build"
+    recorded = json.loads(receipt.read_text())
+    for name, digest in {**recorded["inputs"], **recorded["outputs"]}.items():
+        path = ROOT / name
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            return f"{name} changed"
+    return None
+
+
 def check_replay(run):
     """A recorded flight replayed: same messages, stamps and transforms (tools/check_replay.py)."""
     run = Path(run).resolve()
@@ -376,8 +390,6 @@ def flight(headless, editor=False, world="forest", record=False):
                            "Enable XWayland or use ./ironlark check for headless.")
     if headless and not shutil.which("xvfb-run"):
         raise RuntimeError("Headless checks require xvfb-run.")
-    if not (ROOT / "protos/IronlarkDrone.proto").is_file():
-        build_drone()
     CACHE.mkdir(exist_ok=True)
     with (CACHE / "flight.lock").open("w") as lock:
         try:
@@ -385,6 +397,9 @@ def flight(headless, editor=False, world="forest", record=False):
         except BlockingIOError as exc:
             raise RuntimeError("Another Ironlark flight is running.") from exc
         check_ports()
+        if stale := drone_stale():
+            print(f"Building the drone ({stale}).", flush=True)
+            build_drone()
         lockstep = build_lockstep(home)
         run = ROOT / "runs" / (time.strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}")
         run.mkdir(parents=True)
