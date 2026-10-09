@@ -1,14 +1,21 @@
 """Compiler diagnostics and failed stages on real processes and log files."""
 
+import importlib.util
 import json
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import shutil
 import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
 import forest_process
+
+loader = SourceFileLoader("launcher", str(ROOT / "ironlark"))  # the launcher script, as a module
+launcher = importlib.util.module_from_spec(importlib.util.spec_from_loader("launcher", loader))
+loader.exec_module(launcher)
 
 
 class Diagnostics(unittest.TestCase):
@@ -47,6 +54,33 @@ class Diagnostics(unittest.TestCase):
             self.assertIsNone(metrics["exit_code"])
             self.assertIn("No such file", metrics["error"])
 
+
+
+@unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "C compiler required")
+class Lockstep(unittest.TestCase):
+    """The launcher compiles the flight bridge's C loop for each run against the pinned Webots, or stops the flight."""
+
+    def build(self, source):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        (root / "controllers/flight_bridge").mkdir(parents=True)
+        (root / "controllers/flight_bridge/lockstep.c").write_text(source)
+        self.addCleanup(setattr, launcher, "ROOT", launcher.ROOT)
+        launcher.ROOT = root
+        return launcher.build_lockstep(ROOT / "webots")
+
+    def test_the_library_is_built_from_the_source_at_hand(self):
+        source = (ROOT / "controllers/flight_bridge/lockstep.c").read_text()
+        resend = source.replace("readable(sock, 1.0)", "readable(sock, 2.0)")
+        self.assertNotEqual(resend, source)
+        self.assertTrue(self.build(source).startswith(b"\x7fELF"))
+        self.assertNotEqual(self.build(resend), self.build(source))
+
+    def test_a_source_that_does_not_compile_stops_the_flight(self):
+        source = (ROOT / "controllers/flight_bridge/lockstep.c").read_text().replace("int motor_count,", "int motor_count")
+        with self.assertRaisesRegex(RuntimeError, "(?s)does not compile.*error"):
+            self.build(source)
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,6 +11,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 import fcntl
@@ -39,26 +40,25 @@ def webots_home(world="empty"):
     return select_webots(ROOT, world, os.environ.get("WEBOTS_HOME"))
 
 
-def build_lockstep(home=None):
-    """The flight bridge's per-step loop in C (controllers/flight_bridge/lockstep.c), compiled when its source
-    changed. Without a C compiler the bridge runs the same loop in Python."""
-    source = ROOT / "controllers/flight_bridge/lockstep.c"
-    library = CACHE / "flight_lockstep.so"
-    if library.exists() and library.stat().st_mtime >= source.stat().st_mtime:
-        return library
+def build_lockstep(home):
+    """The flight bridge's per-step loop in C (controllers/flight_bridge/lockstep.c), compiled for each run (73 ms),
+    so the run holds the loop it flew. Without a C compiler the bridge runs the same loop in Python; a source that
+    does not compile stops the flight."""
     compiler = shutil.which("cc") or shutil.which("gcc")
     if compiler is None:
         return None
-    home = home or webots_home()
-    built = subprocess.run(
-        [compiler, "-O2", "-shared", "-fPIC", str(source), "-I", str(home / "include/controller/c"),
-         "-L", str(home / "lib/controller"), "-lController", "-o", str(library)],
-        capture_output=True, text=True,
-    )
-    if built.returncode:
-        print(f"Flight bridge in Python: the C loop did not compile:\n{built.stderr}", flush=True)
-        return None
-    return library
+    with tempfile.TemporaryDirectory() as scratch:
+        library = Path(scratch, "flight_lockstep.so")
+        built = subprocess.run(
+            [compiler, "-O2", "-shared", "-fPIC", str(ROOT / "controllers/flight_bridge/lockstep.c"),
+             "-I", str(home / "include/controller/c"), "-L", str(home / "lib/controller"), "-lController",
+             "-o", str(library)],
+            capture_output=True, text=True,
+        )
+        if built.returncode:
+            raise RuntimeError(f"The flight bridge's C loop does not compile. Fix controllers/flight_bridge/lockstep.c:\n"
+                               f"{built.stderr}")
+        return library.read_bytes()
 
 
 def setup():
@@ -382,8 +382,11 @@ def flight(headless, editor=False, world="forest", record=False):
         except BlockingIOError as exc:
             raise RuntimeError("Another Ironlark flight is running.") from exc
         check_ports()
+        lockstep = build_lockstep(home)
         run = ROOT / "runs" / (time.strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}")
         run.mkdir(parents=True)
+        if lockstep:
+            (run / "flight_lockstep.so").write_bytes(lockstep)
         (run / "manifest.json").write_text(
             json.dumps(
                 {
@@ -403,6 +406,12 @@ def flight(headless, editor=False, world="forest", record=False):
                         (ROOT / "docker/webots-clock.patch").read_bytes()
                     ).hexdigest(),
                     "position_source": "simulated GPS",
+                    # The flight bridge's per-step loop: lockstep.c (flight_lockstep.so here), or its Python twin
+                    # without a C compiler.
+                    "flight_loop": {
+                        "language": "C" if lockstep else "Python",
+                        "library_sha256": hashlib.sha256(lockstep).hexdigest() if lockstep else None,
+                    },
                     "mission": "takeoff-hover-land",
                     "headless": headless,
                     "world": world,
@@ -419,9 +428,9 @@ def flight(headless, editor=False, world="forest", record=False):
         # Patched Webots keeps parsed meshes here (patch 0048): later loads skip parsing the OBJ text.
         env.setdefault("WEBOTS_MESH_CACHE", str(CACHE / "mesh-cache"))
         env["IRONLARK_RUN_DIR"] = str(run)
-        lockstep = build_lockstep(home)
+        env.pop("IRONLARK_LOCKSTEP", None)  # the Python loop flies unless this run built the C one
         if lockstep:
-            env["IRONLARK_LOCKSTEP"] = str(lockstep)
+            env["IRONLARK_LOCKSTEP"] = str(run / "flight_lockstep.so")
         if record:
             env["IRONLARK_SENSING"] = "1"
         else:
