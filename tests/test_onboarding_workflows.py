@@ -20,7 +20,8 @@ class Workflows(unittest.TestCase):
         make_project(self.root)
         shutil.copyfile(ROOT / "ironlark", self.root / "ironlark")
         (self.root / "tools").mkdir()
-        shutil.copyfile(ROOT / "tools/renderer_support.py", self.root / "tools/renderer_support.py")
+        for tool in ("renderer_support.py", "run_resources.py"):  # what the launcher imports
+            shutil.copyfile(ROOT / "tools" / tool, self.root / "tools" / tool)
 
     def refused(self, expected):
         env = os.environ.copy()

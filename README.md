@@ -115,7 +115,7 @@ every message, and a run whose stream dropped, failed or left a message unsent f
 (`sensing.json` in the run folder). A ROS 2 Humble container ([`ros/`](ros)) publishes `/clock`,
 `/imu/data`, `/lidar/points` (x, y, z, ring, time), `/camera/image_raw` (bgra8),
 `/camera/camera_info` and `/tf_static`, ground truth only on `/ground_truth/pose` and
-`/ground_truth/velocity`, and records all of it with rosbag2 (reliable, deep queues: `ros/record_qos.yaml`; each message compressed with zstd, losslessly: a forest flight's minute is 1.2 GB, the empty world's 0.16 GB). A recorded check adds sensing's cost to `result.json` (real-time factor, messages sent). Frames are REP-103: Webots' world is
+`/ground_truth/velocity`, and records all of it with rosbag2 (reliable, deep queues: `ros/record_qos.yaml`; each message compressed with zstd, losslessly: a forest flight's minute is 1.2 GB, the empty world's 0.16 GB). A recorded check adds sensing's cost to `result.json` (real-time factor, messages sent); every flight adds what it cost the machine: peak RAM and CPU time of Webots with its controllers, SITL and ROS, and GPU memory, Webots' own and the card's, each named when it could not be measured. Frames are REP-103: Webots' world is
 ENU and bodies FLU; [`sensing/frames.py`](sensing/frames.py) is the one place for ENU/FLU ↔ NED/FRD.
 
 ## Webots patches
@@ -185,7 +185,7 @@ source's own suns, world, fog and Filmic view (4.6 GB; the full source needs mor
 than ~26 GB); `tools/compare_views.py runs/lighting-reference runs/preview` scores
 `tools/render_forest.py` views against it. `render_forest.py --repeatable` renders a frame after every physics step, so two captures of one build are bit-identical (temporal anti-aliasing otherwise follows wall time); `compare_views.py MAIN BRANCH --tiles` lists the 60 px tiles where two such captures differ.
 `tools/profile_forest.py --out runs/<name>` reports load time, real-time factor,
-frame rate, GPU and CPU time per render pass and peak RAM/GPU for the forest as a
+frame rate, GPU and CPU time per render pass, and peak RAM, CPU time and GPU memory (Webots' own and the card's; `tools/run_resources.py`) for the forest as a
 viewer sees it (headless: under `xvfb-run -a -s "-screen 0 1920x1080x24"`, which
 renders on the NVIDIA GPU; its swap waits for a readback, so frames come slower than
 on a display). Any run can log frames: `IRONLARK_FRAME_LOG=/tmp/f.log ./ironlark run`,

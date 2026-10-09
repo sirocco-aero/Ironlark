@@ -15,6 +15,8 @@ import signal
 import subprocess
 import time
 
+from run_resources import Sampler
+
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER = """import json,os,sys,time
 from pathlib import Path
@@ -22,7 +24,7 @@ from controller import Supervisor
 sys.path.insert(0, os.environ['IRONLARK_OBSERVER'])
 from minimap import look_at
 r = Supervisor()
-report = {'first_step_wall': time.time()}
+report = {'first_step_wall': time.time(), 'step_ms': int(r.getBasicTimeStep())}
 view = r.getFromDef('IRONLARK_VIEW')
 view.getField('follow').setSFString('')
 scene = json.loads(Path(os.environ['IRONLARK_SCENE']).read_text())
@@ -68,17 +70,26 @@ r.simulationQuit(0)
 """
 
 
-def sample(pid):
-    rss = 0
-    for row in subprocess.check_output(["ps", "-eo", "rss,comm"], text=True).splitlines()[1:]:
-        if "webots-bin" in row:
-            rss += int(row.split()[0])
-    gpu = subprocess.run(
-        ["nvidia-smi", "--query-gpu=memory.used,utilization.gpu", "--format=csv,noheader,nounits"],
-        capture_output=True, text=True,
-    )
-    used, util = (int(v) for v in gpu.stdout.split(",")) if gpu.returncode == 0 else (0, 0)
-    return rss // 1024, used, util
+def incomplete(report, views, seconds):
+    """What a profile lacks: the load time, a view, its whole duration, a frame log covering it (every physics step,
+    frames, and the main view's render passes for each frame), or a measure of the resources it used."""
+    missing = [] if "load_seconds" in report else ["no load time"]
+    measured = {view["view"]: view for view in report.get("views", [])}
+    for name in views:
+        view = measured.get(name)
+        if view is None:
+            missing.append(f"{name} not measured")
+        elif view["sim_seconds"] + 0.001 < seconds:
+            missing.append(f"{name} ran {view['sim_seconds']} of {seconds} simulated seconds")
+        elif not (view.get("frames") and view.get("main_passes_ms")):
+            missing.append(f"{name} has no frames or render passes in the frame log")
+        elif view["steps"] != (steps := round((view["sim_seconds"] - 1) * 1000 / report["step_ms"])):
+            # Webots logs every physics step, however slowly it renders: a log cut short misses some.
+            missing.append(f"the frame log holds {view['steps']} of {name}'s {steps} physics steps")
+        elif view["main_gpu_ms"]["n"] < view["frames"]["count"] - 1:  # a frame at either edge may render outside
+            missing.append(f"{name} has render passes for {view['main_gpu_ms']['n']} of its "
+                           f"{view['frames']['count']} frames")
+    return missing + [f"no measure of {what}" for what in report.get("resources", {}).get("missing", ["resources"])]
 
 
 def without_shapes(world, text):
@@ -96,7 +107,7 @@ def without_shapes(world, text):
     return "".join(kept) + world[start:]
 
 
-def main():
+def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--webots-home", type=Path, default=None)
@@ -106,7 +117,9 @@ def main():
                    help="Webots preference for this run only")
     p.add_argument("--without", action="append", default=[], metavar="TEXT",
                    help="drop every Shape whose text contains TEXT, to attribute its cost (repeatable)")
-    args = p.parse_args()
+    args = p.parse_args(argv)
+    if args.seconds <= 1:
+        p.error("--seconds must exceed 1: each view's first simulated second is left out")
     home = (args.webots_home or Path(os.environ.get("WEBOTS_HOME", ROOT / ".cache/webots-renderer"))).resolve()
     out = args.out.resolve()
     (out / "worlds").mkdir(parents=True, exist_ok=True)
@@ -137,22 +150,25 @@ def main():
         "IRONLARK_SECONDS": str(args.seconds),
         "IRONLARK_FRAME_LOG": str(out / "frames.log"),
     }
-    (out / "frames.log").unlink(missing_ok=True)
+    for name in ("frames.log", "controller.json"):  # an earlier profile's evidence never counts for this one
+        (out / name).unlink(missing_ok=True)
     cmd = [str(home / "webots"), "--batch", "--mode=realtime", "--fullscreen",
            "--log-performance=" + str(out / "performance.log"), "--stdout", "--stderr", str(target)]
     started = time.time()
-    samples = []
     with (out / "webots.log").open("w") as log:
         proc = subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        resources = Sampler(sessions={"webots": proc.pid}, interval=0.5)
+        resources.start()
         try:
             while proc.poll() is None:
                 if time.time() - started > args.timeout:
                     raise RuntimeError("Profile timed out")
-                rss, gpu, util = sample(proc.pid)
-                samples.append({"t": round(time.time() - started, 1), "rss_mib": rss, "gpu_mib": gpu, "gpu_util": util})
-                if rss > 5000:
-                    raise RuntimeError("Stopped at 5 GiB Webots RSS")
-                time.sleep(0.5)
+                if resources.peak_total > 5000 * 2**20:
+                    raise RuntimeError("Stopped at 5 GiB of RAM")
+                try:
+                    proc.wait(timeout=0.5)  # Webots' exit, or the next look at the clock and RAM
+                except subprocess.TimeoutExpired:
+                    pass
         finally:
             if proc.poll() is None:
                 os.killpg(proc.pid, signal.SIGTERM)
@@ -161,10 +177,11 @@ def main():
                 except subprocess.TimeoutExpired:
                     os.killpg(proc.pid, signal.SIGKILL)
             report = json.loads((out / "controller.json").read_text()) if (out / "controller.json").exists() else {}
-            report["load_seconds"] = round(report.pop("first_step_wall", started) - started, 1)
+            if "first_step_wall" in report:
+                report["load_seconds"] = round(report.pop("first_step_wall") - started, 1)
+            resources.stop()
             report["webots_home"] = str(home)
-            report["peak_rss_mib"] = max((s["rss_mib"] for s in samples), default=0)
-            report["peak_gpu_mib"] = max((s["gpu_mib"] for s in samples), default=0)
+            report["resources"] = resources.result()  # Webots, Xvfb and the controller: RAM, CPU, GPU memory
             if (out / "frames.log").exists():
                 # Each view's frames and render passes (tools/frame_log.py), its first simulated second left out.
                 from frame_log import parse, summarize
@@ -174,11 +191,17 @@ def main():
                     summary = summarize(*log, start, start + view["sim_seconds"] - 1.0)
                     main = summary["views"].get("main", {})
                     view["frames"] = summary.get("frames")
+                    view["steps"] = summary.get("steps", {}).get("count", 0)
                     view["main_gpu_ms"], view["main_cpu_ms"] = main.get("gpu_ms"), main.get("cpu_ms")
                     view["main_passes_ms"] = main.get("passes_ms")
-            (out / "samples.json").write_text(json.dumps(samples))
+            (out / "samples.json").write_text(json.dumps(resources.history))
             (out / "profile.json").write_text(json.dumps(report, indent=2))
             print(json.dumps(report, indent=2))
+    if proc.returncode:
+        raise RuntimeError(f"Webots exited with {proc.returncode} before the profile ended. Inspect {out / 'webots.log'}.")
+    views = [*json.loads((source / "scene.json").read_text())["cameras"], "moving"]
+    if missing := incomplete(report, views, args.seconds):
+        raise RuntimeError(f"Incomplete profile: {'; '.join(missing)}. Inspect {out / 'webots.log'}.")
 
 
 if __name__ == "__main__":

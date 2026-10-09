@@ -30,7 +30,9 @@ def stats(values):
 
 def parse(path):
     frames, steps, views = [], [], []
-    for line in open(path, errors="replace"):
+    with open(path, errors="replace") as log:
+        lines = log.read().splitlines()
+    for line in lines:
         p = line.split()
         if p[:1] == ["F"] and len(p) >= 5:
             frames.append((int(p[1]), int(p[2]), int(p[3]), float(p[4]) / 1000))
@@ -63,10 +65,9 @@ def summarize(frames, steps, views, start=-1e9, end=1e9):
             "sim_advance_ms": stats([(b[3] - a[3]) * 1000 for a, b in zip(frames, frames[1:])]),
             "real_time_factor": round((frames[-1][3] - frames[0][3]) / wall, 3),
         }
-    # Views rendered within the selected span of frames and steps.
+    # Views rendered within the selected span of frames and steps: none when it holds neither.
     bounds = [t for f in frames for t in (f[0], f[2])] + [t for s in steps for t in (s[0], s[1])]
-    if bounds:
-        views = [v for v in views if min(bounds) - 1 <= v["begin"] <= max(bounds) + 1]
+    views = [v for v in views if bounds and min(bounds) - 1 <= v["begin"] <= max(bounds) + 1]
     if len(steps) >= 2:
         wall = (steps[-1][1] - steps[0][0]) / 1e9
         out["steps"] = {"count": len(steps), "real_time_factor": round((steps[-1][2] - steps[0][2]) / wall, 3),
