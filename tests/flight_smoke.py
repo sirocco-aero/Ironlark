@@ -10,6 +10,47 @@ import time
 from pymavlink import mavutil
 
 
+def judge(truth, autopilot_seconds):
+    """The flight as Webots measured it (flight_observer's ground truth, every 100 ms of simulated time), never as the
+    autopilot reported it: the trajectory covers the flight without a gap, and shows a takeoff, a continuous 5-second
+    hover at 2.5-3.5 m, a landing back on the ground (z = 0 in both worlds) and no drift."""
+    if not truth:
+        raise RuntimeError("No independent Webots trajectory was recorded")
+    times = [sample["time"] for sample in truth]
+    gaps = [(a, b) for a, b in zip(times, times[1:]) if b - a > 0.1 + 1e-6]
+    if times[0] > 0.2 or gaps:
+        first = f", the first from {gaps[0][0]:.1f} to {gaps[0][1]:.1f} s" if gaps else ""
+        raise RuntimeError(f"The Webots trajectory does not cover the flight: starts at {times[0]:.1f} s, "
+                           f"{len(gaps)} gaps{first}")
+    # The streams are sampled independently at 10 Hz. A one-second allowance
+    # accommodates startup/sampling offsets while catching backend clock jumps.
+    clock_difference = abs(autopilot_seconds - times[-1])
+    if clock_difference > 1:
+        raise RuntimeError(f"Autopilot/Webots clock mismatch: {clock_difference:.2f} s")
+    heights = [sample["position"][2] for sample in truth]
+    peak = max(heights)
+    hover, entered = 0.0, None  # the longest stay in the band, and when the current one began
+    for at, height in zip(times, heights):
+        if not 2.5 <= height <= 3.5:
+            entered = None
+            continue
+        entered = at if entered is None else entered
+        hover = max(hover, at - entered)
+    start_xy = truth[0]["position"][:2]
+    drift = max(math.hypot(sample["position"][0] - start_xy[0],
+                           sample["position"][1] - start_xy[1]) for sample in truth)
+    if not 2.5 <= peak <= 4:
+        raise RuntimeError(f"Physical takeoff height out of bounds: {peak:.2f} m")
+    if hover < 5:
+        raise RuntimeError(f"No physical 5-second hover at 2.5-3.5 m: the longest lasted {hover:.1f} s")
+    if not -0.2 <= heights[-1] <= 0.2:
+        raise RuntimeError(f"Drone did not physically land: final height {heights[-1]:.2f} m")
+    if drift > 1.5:
+        raise RuntimeError(f"Excessive horizontal drift: {drift:.2f} m")
+    return {"peak_height_m": peak, "hover_s": round(hover, 1), "final_height_m": heights[-1],
+            "max_horizontal_drift_m": drift, "clock_difference_s": clock_difference}
+
+
 class Flight:
     def __init__(self, output):
         self.output = output
@@ -122,13 +163,13 @@ class Flight:
         self.command(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 1)
         self.wait("armed", lambda m: m.get_type() == "HEARTBEAT"
                   and m.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-        self.event("TAKING_OFF")
         self.command(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 3)
+        self.event("TAKING_OFF")
         self.wait("3 metre altitude", lambda m: m.get_type() == "GLOBAL_POSITION_INT"
                   and 2700 <= m.relative_alt <= 3400, 45)
         self.event("HOVERING")
+        # The autopilot's altitude decides when to land; judge() measures the hover on Webots' trajectory.
         start = None
-        hover = []
         hovered = False
         sim_start, wall_start = self.sim_time, time.monotonic()
         while not self.expired(sim_start, wall_start, 25):
@@ -138,11 +179,9 @@ class Flight:
             altitude = message.relative_alt / 1000
             if not 2.5 <= altitude <= 3.5:
                 start = None
-                hover = []
                 continue
             if start is None:
                 start = message.time_boot_ms
-            hover.append(altitude)
             if message.time_boot_ms - start >= 5000:
                 hovered = True
                 break
@@ -155,32 +194,12 @@ class Flight:
         self.event("EVALUATING")
         # Ground truth is read only after the mission, never to command the vehicle.
         truth = [json.loads(line) for line in self.output.with_name("ground_truth.jsonl").read_text().splitlines()]
-        if not truth:
-            raise RuntimeError("No independent Webots trajectory was recorded")
         autopilot_time = self.messages.get("SYSTEM_TIME")
         if autopilot_time is None:
             raise RuntimeError("No autopilot clock was recorded")
-        clock_difference = abs(autopilot_time.time_boot_ms / 1000 - truth[-1]["time"])
-        # The streams are sampled independently at 10 Hz. A one-second allowance
-        # accommodates startup/sampling offsets while catching backend clock jumps.
-        if clock_difference > 1:
-            raise RuntimeError(f"Autopilot/Webots clock mismatch: {clock_difference:.2f} s")
-        heights = [sample["position"][2] for sample in truth]
-        peak = max(heights)
-        start_xy = truth[0]["position"][:2]
-        drift = max(math.hypot(sample["position"][0] - start_xy[0],
-                               sample["position"][1] - start_xy[1]) for sample in truth)
-        if not 2.5 <= peak <= 4:
-            raise RuntimeError(f"Physical takeoff height out of bounds: {peak:.2f} m")
-        if heights[-1] > 0.2:
-            raise RuntimeError(f"Drone did not physically land: final height {heights[-1]:.2f} m")
-        if drift > 1.5:
-            raise RuntimeError(f"Excessive horizontal drift: {drift:.2f} m")
+        measurements = judge(truth, autopilot_time.time_boot_ms / 1000)
         self.event("COMPLETED")
-        return {"peak_height_m": peak, "final_height_m": heights[-1], "max_horizontal_drift_m": drift,
-                "clock_difference_s": clock_difference,
-                "hover_min_altitude_m": min(hover), "hover_max_altitude_m": max(hover),
-                "hover_duration_s": (message.time_boot_ms - start) / 1000}
+        return measurements
 
     def close(self):
         self.log.close()

@@ -5,12 +5,18 @@ import sys
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 import check_recording  # noqa: E402
 import check_replay  # noqa: E402
+
+# flight_smoke runs in the SITL container beside pymavlink, which this environment lacks; judge() never uses it.
+sys.modules.setdefault("pymavlink", mock.MagicMock())
+sys.path.insert(0, str(ROOT / "tests"))
+import flight_smoke  # noqa: E402
 
 loader = SourceFileLoader("launcher", str(ROOT / "ironlark"))  # the launcher script, as a module
 launcher = importlib.util.module_from_spec(importlib.util.spec_from_loader("launcher", loader))
@@ -172,6 +178,50 @@ class Stream(unittest.TestCase):
         losses = launcher.sensing_losses(self.account(sent=990, acknowledged=None, failure=failure))
         self.assertEqual(losses, [failure, "10 queued messages never sent"])
 
+
+
+
+class Flight(unittest.TestCase):
+    """flight_smoke judges the flight on Webots' trajectory, never on the autopilot's telemetry."""
+
+    def trajectory(self, hover_s=6.0, final=0.017, gap=None, start=0.1):
+        """Every 100 ms: 10 s on the pad, a 3 s climb to 3 m, the hover, a 4 s descent, 5 s on the pad."""
+        out, steps = [], round((10 + 3 + hover_s + 4 + 5) * 10)
+        for i in range(steps):
+            at = round(start + i / 10, 1)
+            phase = at - 10
+            height = (0.017 if phase < 0 else 0.017 + phase * 1.0 if phase < 3 else 3.0 if phase < 3 + hover_s
+                      else 3.0 - (phase - 3 - hover_s) * 0.75 if phase < 7 + hover_s else final)
+            if gap is None or not gap[0] <= at < gap[1]:
+                out.append({"time": at, "position": [0.01 * phase if phase > 0 else 0.0, 0.0, height]})
+        return out
+
+    def judge(self, truth):
+        return flight_smoke.judge(truth, truth[-1]["time"] + 0.05)
+
+    def test_a_flight_passes(self):
+        result = self.judge(self.trajectory())
+        self.assertGreaterEqual(result["hover_s"], 6.0)
+        self.assertAlmostEqual(result["peak_height_m"], 3.0)
+
+    def test_landing_underground_fails(self):
+        with self.assertRaisesRegex(RuntimeError, "did not physically land: final height -1.00"):
+            self.judge(self.trajectory(final=-1.0))
+
+    def test_a_hover_the_drone_did_not_hold_fails(self):
+        with self.assertRaisesRegex(RuntimeError, "No physical 5-second hover"):
+            self.judge(self.trajectory(hover_s=1.0))
+
+    def test_a_trajectory_with_a_gap_or_a_late_start_fails(self):
+        with self.assertRaisesRegex(RuntimeError, "1 gaps, the first from 13.9 to 15.0 s"):
+            self.judge(self.trajectory(gap=(14.0, 15.0)))
+        with self.assertRaisesRegex(RuntimeError, "starts at 2.0 s"):
+            self.judge(self.trajectory(start=2.0))
+
+    def test_clocks_apart_fail(self):
+        truth = self.trajectory()
+        with self.assertRaisesRegex(RuntimeError, "clock mismatch"):
+            flight_smoke.judge(truth, truth[-1]["time"] + 2.0)
 
 
 if __name__ == "__main__":
