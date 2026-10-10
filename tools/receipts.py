@@ -29,9 +29,10 @@ def packages(root, names=PACKAGES):
     return {name: installed.get(name) for name in names}
 
 
-def pipeline_code(root):
-    """The forest pipeline's code: tools/forest_pipeline.py, the tools scripts it names, and their imports from
-    tools/ or from a repository directory a script names (build_forest_world.py adds controllers/flight_observer)."""
+def code_closure(root, entry, named_scripts=False):
+    """sha256 of every file of a script's code: itself and its imports from tools/ or from a repository directory a
+    script names (build_forest_world.py adds controllers/flight_observer), and with named_scripts the tools scripts
+    it names too (the pipeline's stages)."""
     root = Path(root)
     folders = [root / "tools"]
 
@@ -41,9 +42,11 @@ def pipeline_code(root):
     def constants(tree):
         return [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
 
-    pipeline = ast.parse((root / "tools/forest_pipeline.py").read_text())
-    pending = [root / "tools/forest_pipeline.py"] + [path for value in constants(pipeline) if value.endswith(".py")
-                                                       and (path := module(value[:-3]))]
+    first = root / entry
+    pending = [first]
+    if named_scripts:
+        pending += [path for value in constants(ast.parse(first.read_text())) if value.endswith(".py")
+                    and (path := module(value[:-3]))]
     found = set()
     while pending:
         path = pending.pop()
@@ -58,6 +61,11 @@ def pipeline_code(root):
                 [node.module] if isinstance(node, ast.ImportFrom) and node.module else []
             pending += [found_path for name in names if (found_path := module(name.split(".")[0]))]
     return {str(path.relative_to(root)): digest(path) for path in sorted(found)}
+
+
+def pipeline_code(root):
+    """The forest pipeline's code: tools/forest_pipeline.py, the tools scripts it names, and what they import."""
+    return code_closure(root, "tools/forest_pipeline.py", named_scripts=True)
 
 
 def recipe(root):

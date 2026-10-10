@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import sys
 import tarfile
+import time
 from urllib.request import urlretrieve
 import zipfile
 
@@ -15,6 +16,7 @@ from PIL import Image
 
 from forest_process import run_stage
 from receipts import recipe, write_world
+from stage_cache import Store, descriptor
 
 SIM = Path(__file__).resolve().parents[1]
 CACHE = SIM / ".cache"
@@ -97,6 +99,45 @@ def start_build(build, world, current, skip_export):
     stamp.write_text(json.dumps(current, indent=1) + "\n")
 
 
+def bakes(build, world, source, stages, blender_stage):
+    """The canopy light and the impostor captures, kept in the stage store by the bytes they read
+    (tools/stage_cache.py): an unchanged bake comes back, not rendered again, whatever else changed."""
+    store = Store(stages)
+    toolchain = {"blender": INPUTS["blender/blender.tar.xz"][1]}
+    records = json.loads((world / "visual_instances.json").read_text())
+    named = {r["mesh"] for r in records} | {r["texture"] for r in records if r["texture"]}
+    named |= {"visual_instances.json"} | {f"meshes/terrain_{x}_{y}.obj" for x in range(2) for y in range(2)}
+    inputs = {name: world / name for name in named} | {
+        "source": source / "polyhaven_pine_fir_forest.blend",  # its sky world, belfast_sunset_puresky
+        "sky": source / "textures/evening_road_01_puresky_8k.exr"}
+    args = ["--world", str(world)]
+    light = descriptor(SIM, "canopy-light", "tools/bake_forest_light.py", args, inputs, toolchain)
+    outputs = [f"terrain_{x}_{y}_layers.npy" for x in range(2) for y in range(2)] + ["light_layers.json"]
+    if not store.restore(light, build, outputs):
+        for name in outputs:
+            (build / name).unlink(missing_ok=True)
+        blender_stage("canopy-light", "bake_forest_light.py", *args)
+        store.save(light, build, outputs)
+    # Impostors capture the trees as the world draws them; the world then draws them far away. A variant's parts
+    # (which texture each mesh wears) are among its arguments; their files, its inputs.
+    declared = json.loads((build / "impostor_variants.json").read_text())
+    captures = {variant: descriptor(SIM, "impostor", "tools/bake_impostors.py", [*args, variant, parts], {
+        part[key]: world / part[key] for part in parts for key in ("mesh", "tex", "normal") if part[key]},
+        toolchain) for variant, parts in declared.items()}
+    files = {variant: [f"impostor_{variant}.npz", f"impostor_{variant}.json"] for variant in declared}
+    missed = sorted(variant for variant, recipe in captures.items() if not store.restore(recipe, build, files[variant]))
+    if missed:
+        for variant in missed:
+            for name in files[variant]:
+                (build / name).unlink(missing_ok=True)
+        blender_stage("impostors", "bake_impostors.py", *args, "--variants", *missed)
+        for variant in missed:
+            store.save(captures[variant], build, files[variant])
+    (build / "impostors.json").write_text(json.dumps(
+        {variant: json.loads((build / f"impostor_{variant}.json").read_text()) for variant in sorted(declared)},
+        indent=1))
+
+
 def build_world(skip_export=False):
     build = CACHE / "forest-build"
     source = SOURCE
@@ -110,6 +151,7 @@ def build_world(skip_export=False):
     except BlockingIOError as error:
         raise RuntimeError("Another forest build is running (.cache is shared by every checkout linking it).") \
             from error
+    started = time.time()
     start_build(build, world, recipe(SIM), skip_export)
 
     def blender_stage(name, script, *args):
@@ -237,37 +279,20 @@ def build_world(skip_export=False):
         str(source / "textures"),
         "--out",
         str(world),
+        "--stages",
+        str(CACHE / "forest-stages"),
     ]
     if not skip_export:
         # The bakes read only part of the world (bake-inputs: no valley, fog, light fields, atlases or compression),
         # so it is assembled for them first and in full once, after them.
         print("Forest build: the bakes' inputs", flush=True)
         run_stage([*assemble, "--bake-inputs"], logs / "assemble-bake-inputs.log")
-        signature = json.loads((world / "build_manifest.json").read_text())[
-            "light_signature"
-        ]
-        stamp = build / "light_stamp.json"
-        current = (
-            stamp.exists()
-            and json.loads(stamp.read_text()).get("signature") == signature
-        )
-        if not current or any(
-            missing(f"terrain_{x}_{y}_layers.npy") for x in range(2) for y in range(2)
-        ):
-            blender_stage("canopy-light", "bake_forest_light.py", "--world", str(world))
-            stamp.write_text(json.dumps({"signature": signature}))
-        # Impostors capture the trees as the world draws them; the world then draws them far away.
-        signature = hashlib.sha256(
-            (build / "impostor_variants.json").read_bytes() + (TOOLS / "bake_impostors.py").read_bytes()
-        ).hexdigest()
-        stamp = build / "impostor_stamp.json"
-        if not stamp.exists() or json.loads(stamp.read_text()).get("signature") != signature:
-            (build / "impostors.json").unlink(missing_ok=True)
-            blender_stage("impostors", "bake_impostors.py", "--world", str(world))
-            stamp.write_text(json.dumps({"signature": signature}))
+        bakes(build, world, source, CACHE / "forest-stages", blender_stage)
     print("Forest build: assemble world", flush=True)
     run_stage(assemble, logs / "assemble.log")
     write_world(SIM, world)
+    if not skip_export:  # which bakes it used: --skip-export ran none
+        Store(CACHE / "forest-stages").collect(SIM, started)
     print(f"Forest world ready: {world / 'pine_forest.wbt'}", flush=True)
 
 

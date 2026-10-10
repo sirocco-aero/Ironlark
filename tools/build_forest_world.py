@@ -18,6 +18,7 @@ import hashlib
 import json
 import math
 import multiprocessing
+import platform
 import re
 import shutil
 import sys
@@ -35,6 +36,9 @@ sys.path.insert(
     0, str(Path(__file__).resolve().parents[1] / "controllers/flight_observer")
 )
 from minimap import look_at
+from dds import write_bc7_dds
+from receipts import packages
+from stage_cache import Store, descriptor
 
 COLLIDER_RADIUS = 25.0  # invisible trunk colliders within this range of home
 # ---------------------------------------------------------------- obj helpers
@@ -262,30 +266,6 @@ def copy_resource(source, out, convert_mesh=False):
             shutil.copyfile(source, out / url)
         COPIED_RESOURCES[key] = url
     return COPIED_RESOURCES[key]
-
-
-def light_signature(build, out):
-    """Invalidate canopy lighting when its actual geometry or alpha changes."""
-    digest = hashlib.sha256(json.dumps(VISUAL_INSTANCES, sort_keys=True).encode())
-    # Meshes, and the textures whose alpha masks the light (RGBA PNGs: the bake treats the rest as
-    # opaque, whatever their colour).
-    def masks_light(path):
-        with path.open("rb") as stream:
-            header = stream.read(26)
-        return len(header) == 26 and header[25] == 6
-
-    urls = {record["mesh"] for record in VISUAL_INSTANCES}
-    urls |= {record["texture"] for record in VISUAL_INSTANCES if record["texture"] and masks_light(out / record["texture"])}
-    paths = [out / url for url in sorted(urls)]
-    paths += [
-        build / "terrain.obj",
-        Path(__file__).with_name("bake_forest_light.py"),
-        Path(__file__).with_name("forest_terrain.py"),
-    ]
-    for path in paths:
-        with path.open("rb") as stream:
-            digest.update(hashlib.file_digest(stream, "sha256").digest())
-    return digest.hexdigest()
 
 
 def shape_fields(mesh, tex, normal="", roughness="", shadow=True):
@@ -806,11 +786,34 @@ def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, edge_sh
     (out / "build_manifest.json").write_text(json.dumps(manifest, indent=1))
 
 
+def toolchain():
+    """What the assembly's stored results are computed with, beside their code."""
+    return {"python": platform.python_version(), "packages": packages(Path(__file__).resolve().parents[1])}
+
+
+def valley_shapes(build, out, stages):
+    """The valley's Shapes, its meshes and textures in out/meshes: kept in the stage store (tools/stage_cache.py) by
+    what makes them, its code, the build's height grid and the bounds it mirrors about, and taken back unchanged."""
+    root = Path(__file__).resolve().parents[1]
+    recipe = descriptor(root, "valley", "tools/forest_valley.py", [list(forest_backdrop.BOUNDS)],
+                        {"heights.json": build / "heights.json"}, toolchain())
+    store = Store(stages)
+    stored = store.restore(recipe, out, forest_valley.FILES)
+    if stored:
+        return stored["value"]
+    for name in forest_valley.FILES:
+        (out / name).unlink(missing_ok=True)
+    parts = forest_valley.shapes(build, out)
+    store.save(recipe, out, forest_valley.FILES, parts)
+    return parts
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", required=True)
     parser.add_argument("--source", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--stages", required=True, help="the stage store (tools/stage_cache.py)")
     parser.add_argument("--bake-inputs", action="store_true",
                         help="only what the light and impostor bakes read: no valley, edge ground, fog, light "
                              "occlusion, impostor atlases or compressed textures")
@@ -838,7 +841,7 @@ def main():
     print("mirrored about", [round(b, 3) for b in forest_backdrop.BOUNDS], flush=True)
     # The valley needs only the build folder and these bounds: it computes beside everything else.
     valley_worker = ProcessPoolExecutor(1, mp_context=FORK)
-    valley = None if args.bake_inputs else valley_worker.submit(forest_valley.shapes, build, out)
+    valley = None if args.bake_inputs else valley_worker.submit(valley_shapes, build, out, Path(args.stages))
 
     # -- tree instances as Transforms --
     print("instances", flush=True)
@@ -963,7 +966,6 @@ def main():
     from forest_terrain import build_terrain_tiles
 
     finish_copies()
-    manifest["light_signature"] = light_signature(build, out)
     # Its mirrored-tile shapes are no longer drawn: the edge's own ground replaces them.
     terrain_shapes, _ = build_terrain_tiles(build, out, forest_backdrop.BOUNDS)
     if args.bake_inputs:  # none of these is read by a bake
@@ -998,7 +1000,7 @@ def main():
     if args.bake_inputs:
         print("wrote the bakes' inputs to", out, flush=True)
         return
-    compress_textures(build, out)
+    compress_textures(out, Path(args.stages))
     print("wrote", out / "pine_forest.wbt", flush=True)
 
 
@@ -1081,41 +1083,16 @@ def drop_back_copies(path):
     return dropped
 
 
-def write_bc7_dds(image, path):
-    """DDS (DX10 header, BC7) with a box-filtered mip chain, as Webots would generate."""
-    import struct
-
-    import etcpak
-
-    rgba = image.convert("RGBA")
-    alpha = rgba.getchannel("A").getextrema()[0] < 250
-    levels, level = [], rgba
-    while True:
-        w, h = level.size
-        block = level if w % 4 == 0 and h % 4 == 0 else level.resize((max(4, w), max(4, h)), Image.Resampling.BOX)
-        levels.append(etcpak.compress_bc7(np.ascontiguousarray(np.asarray(block)).tobytes(), *block.size))
-        if w == 1 and h == 1:
-            break
-        level = level.resize((max(1, w // 2), max(1, h // 2)), Image.Resampling.BOX)
-    width, height = rgba.size
-    header = struct.pack("<4s7I44x", b"DDS ", 124, 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | 0x80000, height, width,
-                         len(levels[0]), 0, len(levels))
-    header += struct.pack("<2I4s5I", 32, 0x4 | (0x1 if alpha else 0), b"DX10", 0, 0, 0, 0, 0)
-    header += struct.pack("<5I", 0x1000 | 0x400000 | 0x8, 0, 0, 0, 0)
-    header += struct.pack("<5I", 98, 3, 0, 1, 0)  # BC7_UNORM, 2D texture, one of it
-    path.write_bytes(header + b"".join(levels))
-
-
 # BC7 is visually lossless on these textures (41-47 dB) but not on the terrain's fine
 # noise (22-32 dB with this encoder): the terrain stays uncompressed.
-def compress_textures(build, out):
-    """Webots patch 0024 loads BC7 DDS: a quarter of the RGBA8 memory, no CPU copy kept.
-    Each power-of-two PNG the world uses becomes a DDS beside it (the PNG stays for the
-    Blender tools), cached by content in the build folder."""
+def compress_textures(out, stages):
+    """Webots' compressed-textures patch loads BC7 DDS: a quarter of the RGBA8 memory, no CPU copy kept. Each
+    power-of-two PNG the world uses becomes a DDS beside it (the PNG stays for the Blender tools), kept in the stage
+    store by the PNG's bytes and the encoder's code (tools/dds.py), and taken back while those are unchanged."""
+    root = Path(__file__).resolve().parents[1]
+    store = Store(stages)
     path = out / "pine_forest.wbt"
     world = path.read_text()
-    cache = build / "bc7"
-    cache.mkdir(exist_ok=True)
     saved = 0
     for url in sorted(set(re.findall(r'url "(meshes/[^"]+\.png)"', world))):
         if Path(url).name.startswith("terrain_"):
@@ -1125,14 +1102,14 @@ def compress_textures(build, out):
             w, h = image.size
             if w & (w - 1) or h & (h - 1) or min(w, h) < 64:
                 continue
-            digest = hashlib.sha256(source.read_bytes()).hexdigest()[:24]
-            cached = cache / f"{digest}.dds"
-            if not cached.exists():
-                write_bc7_dds(image, cached)
-        dds = source.with_suffix(".dds")
-        shutil.copyfile(cached, dds)
-        world = world.replace(f'url "{url}"', f'url "{url[:-4]}.dds"')
-        saved += w * h * 4 * 4 // 3 - dds.stat().st_size
+            dds = f"{url[:-4]}.dds"
+            recipe = descriptor(root, "bc7", "tools/dds.py", [dds], {"png": source}, toolchain())
+            if not store.restore(recipe, out, [dds]):
+                (out / dds).unlink(missing_ok=True)
+                write_bc7_dds(image, out / dds)
+                store.save(recipe, out, [dds])
+        world = world.replace(f'url "{url}"', f'url "{dds}"')
+        saved += w * h * 4 * 4 // 3 - (out / dds).stat().st_size
     path.write_text(world)
     print("compressed textures: saves", saved // 2**20, "MB of graphics memory", flush=True)
 

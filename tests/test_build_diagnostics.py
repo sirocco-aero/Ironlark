@@ -16,6 +16,7 @@ import build_forest_world
 import forest_pipeline
 import forest_process
 import receipts
+import stage_cache
 
 loader = SourceFileLoader("launcher", str(ROOT / "ironlark"))  # the launcher script, as a module
 launcher = importlib.util.module_from_spec(importlib.util.spec_from_loader("launcher", loader))
@@ -227,6 +228,218 @@ class Receipts(unittest.TestCase):
         self.assertEqual((target / "scene.blend").read_text(), "first")  # another archive: extracted again
 
 
+class StageStore(unittest.TestCase):
+    """The stage store hands back a result only for the same code, inputs and toolchain, and only intact."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.build, self.store = self.root / "build", stage_cache.Store(self.root / "store")
+        self.build.mkdir()
+        self.input = self.root / "tree.obj"
+        self.input.write_text("v 0 0 0\n")
+        self.outputs = ["impostor_pine_01.npz"]
+
+    def recipe(self):
+        return stage_cache.descriptor(ROOT, "impostor", "tools/bake_impostors.py", ["pine_01"], {"tree": self.input},
+                                      {"blender": "test"})
+
+    def bake(self, text="capture"):
+        (self.build / "impostor_pine_01.npz").write_text(text)
+        self.store.save(self.recipe(), self.build, self.outputs, {"radius": 1})
+
+    def manifest(self):
+        return self.store.place(self.recipe()) / "manifest.json"
+
+    def test_a_result_comes_back_after_the_build_folder_is_emptied(self):
+        self.bake()
+        shutil.rmtree(self.build)
+        self.build.mkdir()
+        self.assertEqual(self.store.restore(self.recipe(), self.build, self.outputs), {"value": {"radius": 1}})
+        restored = self.build / "impostor_pine_01.npz"
+        self.assertEqual(restored.read_text(), "capture")
+        restored.write_text("rewritten")  # a file of its own: an older checkout's stage rewrites it in place
+        self.assertEqual(self.store.restore(self.recipe(), self.build, self.outputs), {"value": {"radius": 1}})
+        self.assertEqual(restored.read_text(), "capture")
+
+    def test_another_input_byte_is_another_result(self):
+        self.bake()
+        self.input.write_text("v 0 0 1\n")
+        self.assertIsNone(self.store.restore(self.recipe(), self.build, self.outputs))
+
+    def test_a_damaged_result_is_discarded(self):
+        self.bake()
+        stored = self.store.place(self.recipe()) / "outputs/impostor_pine_01.npz"
+        stored.chmod(0o644)
+        stored.write_text("captura")  # the same size
+        self.assertIsNone(self.store.restore(self.recipe(), self.build, self.outputs))
+        self.assertFalse(self.store.place(self.recipe()).exists())
+
+    def test_a_result_without_its_manifest_is_never_found(self):
+        self.bake()
+        self.manifest().unlink()
+        self.assertIsNone(self.store.restore(self.recipe(), self.build, self.outputs))
+
+    def test_a_result_missing_an_output_the_stage_names_is_discarded(self):
+        self.bake()  # stored before the stage named its second output
+        self.assertIsNone(self.store.restore(self.recipe(), self.build, [*self.outputs, "impostor_pine_01.json"]))
+        self.assertFalse(self.store.place(self.recipe()).exists())
+
+    def test_after_a_build_the_store_keeps_what_each_checkout_s_latest_build_used(self):
+        import time
+
+        recipes = [stage_cache.descriptor(ROOT, "impostor", "tools/bake_impostors.py", [name], {"tree": self.input},
+                                          {"blender": "test"}) for name in ("old", "main's", "branch's")]
+        (self.build / "impostor_pine_01.npz").write_text("capture")
+        for recipe in recipes:
+            self.store.save(recipe, self.build, self.outputs)
+        (self.store.place(recipes[0]).with_name("abandoned.part")).mkdir()
+        main, branch = self.root / "main checkout", self.root / "worktree"
+        main.mkdir()
+        branch.mkdir()
+        started = time.time()
+        self.assertTrue(self.store.restore(recipes[2], self.build, self.outputs))
+        self.store.collect(branch, started)  # the worktree's build used one; no build of main's has said what it uses
+        started = time.time()
+        self.assertIsNone(self.store.restore(recipes[1], self.build, self.outputs))
+        self.store.save(recipes[1], self.build, self.outputs)  # main's build misses, and stores it again
+        self.store.collect(main, started)  # from now on the worktree's stays as well
+        self.assertEqual([self.store.place(recipe).exists() for recipe in recipes], [False, True, True])
+        self.assertEqual(list(self.store.folder.glob("*/*.part")), [])
+        shutil.rmtree(branch)  # a removed worktree keeps nothing
+        self.store.collect(main, time.time())  # main's next build used none: nothing is left
+        self.assertEqual([self.store.place(recipe).exists() for recipe in recipes], [False, False, False])
+
+    def test_a_manifest_of_another_recipe_or_cut_short_is_discarded(self):
+        for damage in (lambda text: text.replace('"pine_01"', '"pine_02"', 1), lambda text: text[: len(text) // 2]):
+            self.bake()
+            self.manifest().write_text(damage(self.manifest().read_text()))
+            self.assertIsNone(self.store.restore(self.recipe(), self.build, self.outputs))
+            self.assertFalse(self.store.place(self.recipe()).exists())
+
+
+class Bakes(unittest.TestCase):
+    """forest_pipeline.bakes reruns a bake exactly when a byte it reads changed (the stage itself, Blender, stands in
+    as a function writing its outputs: these tests are about which bakes run)."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.build, self.world, self.source, self.stages = (self.root / name for name in ("build", "world", "source",
+                                                                                         "stages"))
+        (self.world / "meshes").mkdir(parents=True)
+        (self.source / "textures").mkdir(parents=True)
+        self.build.mkdir()
+        for name in ("pine.obj", "fir.obj", "bark.png", "twigs.png", "bark_normal.png", "twigs_normal.png",
+                     *(f"terrain_{x}_{y}.obj" for x in range(2) for y in range(2))):
+            (self.world / "meshes" / name).write_text(name)
+        (self.source / "polyhaven_pine_fir_forest.blend").write_text("scene")
+        (self.source / "textures/evening_road_01_puresky_8k.exr").write_text("sky")
+        self.place([0.0, 0.0, 0.0])
+        self.declare("meshes/bark.png", "meshes/twigs.png")
+
+    def place(self, translation):
+        (self.world / "visual_instances.json").write_text(json.dumps(
+            [{"mesh": "meshes/pine.obj", "texture": "meshes/twigs.png", "translation": translation}]))
+
+    def declare(self, first, second):
+        """Two variants; the second's two meshes wear first and second."""
+        (self.build / "impostor_variants.json").write_text(json.dumps({
+            "fir_01": [{"mesh": "meshes/fir.obj", "tex": "meshes/twigs.png", "normal": ""}],
+            "pine_01": [{"mesh": "meshes/pine.obj", "tex": first, "normal": "meshes/bark_normal.png"},
+                        {"mesh": "meshes/terrain_0_0.obj", "tex": second, "normal": "meshes/twigs_normal.png"}]}))
+
+    def bake(self, world=None):
+        ran = []
+
+        def blender_stage(name, script, *args):
+            run = len(ran) + 1
+            if name == "canopy-light":
+                ran.append(name)
+                for output in [f"terrain_{x}_{y}_layers.npy" for x in range(2) for y in range(2)] + ["light_layers.json"]:
+                    (self.build / output).write_text(f"light {run}")
+            else:
+                variants = args[args.index("--variants") + 1:]
+                ran.append((name, *variants))
+                for variant in variants:
+                    (self.build / f"impostor_{variant}.npz").write_text(f"{variant} {run}")
+                    (self.build / f"impostor_{variant}.json").write_text(json.dumps({"run": run}))
+
+        forest_pipeline.bakes(self.build, world or self.world, self.source, self.stages, blender_stage)
+        return ran
+
+    def test_unchanged_bakes_come_back_without_running(self):
+        self.assertEqual(self.bake(), ["canopy-light", ("impostors", "fir_01", "pine_01")])
+        for path in self.build.glob("*_layers.npy"):
+            path.unlink()
+        self.assertEqual(self.bake(), [])
+        self.assertEqual((self.build / "terrain_0_0_layers.npy").read_text(), "light 1")
+        self.assertEqual(json.loads((self.build / "impostors.json").read_text()), {"fir_01": {"run": 2},
+                                                                                   "pine_01": {"run": 2}})
+
+    def test_another_checkout_with_the_same_world_bakes_nothing(self):
+        self.bake()
+        shutil.copytree(self.world, self.root / "other checkout/world")
+        self.assertEqual(self.bake(self.root / "other checkout/world"), [])
+
+    def test_a_moved_tree_bakes_the_light_again(self):
+        self.bake()
+        self.place([0.0, 1.0, 0.0])
+        self.assertEqual(self.bake(), ["canopy-light"])
+
+    def test_a_texture_on_another_mesh_captures_only_that_impostor_again(self):
+        self.bake()
+        self.declare("meshes/twigs.png", "meshes/bark.png")  # the same files, worn by the other mesh
+        self.assertEqual(self.bake(), [("impostors", "pine_01")])
+        self.assertEqual((self.build / "impostor_fir_01.npz").read_text(), "fir_01 2")  # the first run's, linked back
+        self.assertEqual((self.build / "impostor_pine_01.npz").read_text(), "pine_01 1")
+        self.assertEqual(json.loads((self.build / "impostors.json").read_text()), {"fir_01": {"run": 2},
+                                                                                   "pine_01": {"run": 1}})
+
+
+class Valley(unittest.TestCase):
+    """The assembly takes an unchanged valley from the stage store (forest_valley.shapes, 80 s, stands in as a
+    function writing its files)."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        self.build, self.out, self.stages = root / "build", root / "world", root / "stages"
+        self.build.mkdir()
+        (self.out / "meshes").mkdir(parents=True)
+        (self.build / "heights.json").write_text("[[0, 1], [1, 2]]")
+        self.runs = 0
+        shapes, bounds = build_forest_world.forest_valley.shapes, build_forest_world.forest_backdrop.BOUNDS
+        self.addCleanup(setattr, build_forest_world.forest_valley, "shapes", shapes)
+        self.addCleanup(setattr, build_forest_world.forest_backdrop, "BOUNDS", bounds)
+        build_forest_world.forest_valley.shapes = self.shapes
+        build_forest_world.forest_backdrop.BOUNDS = (-137.1, 62.70469, -17.65625, 177.27589)
+
+    def shapes(self, build, out):
+        self.runs += 1
+        for name in build_forest_world.forest_valley.FILES:
+            (out / name).write_text(f"{name} {self.runs}")
+        return [f"Shape {self.runs}"]
+
+    def test_an_unchanged_valley_is_linked_back(self):
+        self.assertEqual(build_forest_world.valley_shapes(self.build, self.out, self.stages), ["Shape 1"])
+        shutil.rmtree(self.out / "meshes")
+        self.assertEqual(build_forest_world.valley_shapes(self.build, self.out, self.stages), ["Shape 1"])
+        self.assertEqual(self.runs, 1)
+        self.assertEqual((self.out / "meshes/valley_near.obj").read_text(), "meshes/valley_near.obj 1")
+
+    def test_another_height_grid_or_mirror_computes_it_again(self):
+        build_forest_world.valley_shapes(self.build, self.out, self.stages)
+        (self.build / "heights.json").write_text("[[0, 1], [1, 3]]")
+        self.assertEqual(build_forest_world.valley_shapes(self.build, self.out, self.stages), ["Shape 2"])
+        build_forest_world.forest_backdrop.BOUNDS = (-137.1, 62.70469, -17.65625, 177.3)
+        self.assertEqual(build_forest_world.valley_shapes(self.build, self.out, self.stages), ["Shape 3"])
+        self.assertEqual((self.out / "meshes/valley_roofs.obj").read_text(), "meshes/valley_roofs.obj 3")
+
+
 class MissingBakes(unittest.TestCase):
     """The full assembly fails, naming what to run, when a bake it draws is missing, instead of leaving it out."""
 
@@ -243,6 +456,28 @@ class MissingBakes(unittest.TestCase):
             self.assertEqual(build_forest_world.impostor_shapes(build, out, trees, [], declare_only=True), [])
             with self.assertRaisesRegex(RuntimeError, "lacks the canopy light bake's terrain_0_0_layers.npy.*build-world"):
                 forest_fog.light_occlusion_fields(build, out, (0, 0, 0), (-1, 1, -1, 1))
+
+
+class Textures(unittest.TestCase):
+    """The assembly's BC7 textures come from the stage store while the PNG and the encoder are unchanged."""
+
+    def test_an_unchanged_texture_is_linked_back_and_an_edited_one_encoded(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            out, stages = Path(directory) / "world", Path(directory) / "stages"
+            (out / "meshes").mkdir(parents=True)
+            png = out / "meshes/bark.png"
+            Image.new("RGBA", (64, 64), (90, 60, 40, 255)).save(png)
+            stored = []
+            for colour in ((90, 60, 40, 255), (90, 60, 40, 255), (40, 60, 90, 255)):
+                Image.new("RGBA", (64, 64), colour).save(png)
+                (out / "pine_forest.wbt").write_text('url "meshes/bark.png"\n')
+                build_forest_world.compress_textures(out, stages)
+                self.assertEqual((out / "pine_forest.wbt").read_text(), 'url "meshes/bark.dds"\n')
+                stored.append(sorted(path.read_bytes() for path in stages.glob("bc7/*/outputs/meshes/bark.dds")))
+                self.assertIn((out / "meshes/bark.dds").read_bytes(), stored[-1])
+            self.assertEqual([len(results) for results in stored], [1, 1, 2])  # encoded, taken back, encoded
 
 
 if __name__ == "__main__":

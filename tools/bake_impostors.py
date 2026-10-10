@@ -10,7 +10,7 @@ emits the colour, its alpha is the coverage, and AOVs carry the normal and depth
     blender --background --python bake_impostors.py -- --build <forest-build> --world <world>
         ->  <build>/impostor_<variant>.npz  (albedo: linear RGB, alpha, normal: capture space,
                                             depth: towards the view, 0..1 over the sphere)
-            <build>/impostors.json          (capture sphere per variant, in the tree's frame)
+            <build>/impostor_<variant>.json (its capture sphere, in the tree's frame)
 """
 import argparse
 import json
@@ -188,8 +188,6 @@ scene.collection.objects.link(camera)
 scene.camera = camera
 
 variants = json.loads((args.build / "impostor_variants.json").read_text())
-report_path = OUT / "impostors.json"
-report = json.loads(report_path.read_text()) if report_path.exists() else {}
 for name, parts in sorted(variants.items()):
     if args.variants and name not in args.variants:
         continue
@@ -233,8 +231,7 @@ for name, parts in sorted(variants.items()):
 
     np.savez_compressed(OUT / f"impostor_{name}.npz", albedo=albedo[..., :3], normal=aovs["normal"][..., :3],
                         depth=aovs["depth"][..., 0], alpha=np.clip(albedo[..., 3], 0, 1))
-    report[name] = {"center": center.tolist(), "radius": radius}
-    report_path.write_text(json.dumps(report, indent=1))
+    (OUT / f"impostor_{name}.json").write_text(json.dumps({"center": center.tolist(), "radius": radius}, indent=1))
     print("IMPOSTOR", name, "radius", round(radius, 2), flush=True)
 
     for obj in list(copies.objects):

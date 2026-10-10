@@ -12,6 +12,7 @@ import math
 import numpy as np
 from PIL import Image
 
+from dds import write_bc1_dds
 import forest_backdrop
 import forest_edge
 
@@ -833,28 +834,13 @@ def write_flat(path, groups, faces, header):
         out.writelines(f"f {i}//{i} {i + 1}//{i + 1} {i + 2}//{i + 2}\n" for i in range(1, 3 * len(tri) + 1, 3))
 
 
-def write_bc1_dds(image_path, dds_path):
-    """A BC1 (opaque) DDS with a DX10 header and its mip levels, as Webots patch 0070 reads it."""
-    import etcpak
-
-    image = Image.open(image_path).convert("RGBA")
-    levels = []
-    while min(image.size) >= 4:  # BC1 blocks are 4 x 4: the chain stops there
-        levels.append(etcpak.compress_bc1(np.ascontiguousarray(np.asarray(image)).tobytes(), *image.size))
-        image = image.resize((image.size[0] // 2, image.size[1] // 2), Image.Resampling.BOX)
-    w, h = Image.open(image_path).size
-    header = bytearray(148)
-    header[0:4] = b"DDS "
-    fields = {4: 124, 8: 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000, 12: h, 16: w, 20: len(levels[0]), 28: len(levels),
-              76: 32, 80: 0x4, 108: 0x1000 | 0x400000 | 0x8, 128: 71, 132: 3, 140: 1}
-    for offset, value in fields.items():
-        header[offset:offset + 4] = int(value).to_bytes(4, "little")
-    header[84:88] = b"DX10"
-    dds_path.write_bytes(bytes(header) + b"".join(levels))
+# What shapes writes, under out.
+FILES = [f"meshes/valley_{name}" for name in ("near.obj", "near.dds", "far.obj", "far.dds", "lake.obj", "river.obj",
+                                               "walls.obj", "roofs.obj")]
 
 
 def shapes(build, out):
-    """Write the valley's meshes and textures to out/meshes; return its Shapes."""
+    """Write the valley's meshes and textures to out/meshes (FILES); return its Shapes."""
     meshes = out / "meshes"
     parts = []
     cx, cy = center()
