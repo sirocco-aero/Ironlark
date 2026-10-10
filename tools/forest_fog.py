@@ -61,7 +61,7 @@ def ground_heights(build, home, size):
 def fill_holes(layer):
     """Texels no terrain triangle covers stay black in a bake: give them their neighbours'
     values, so no surface reads as fully shadowed there."""
-    from build_forest_world import dilate
+    from forest_textures import dilate
 
     hole = ~(layer > 0).any(axis=2)
     return dilate(layer, (~hole).astype(np.float32), steps=24) if hole.any() else layer

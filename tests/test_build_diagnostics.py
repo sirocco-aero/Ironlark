@@ -464,6 +464,33 @@ class Valley(unittest.TestCase):
         self.assertEqual((self.out / "meshes/valley_roofs.obj").read_text(), "meshes/valley_roofs.obj 3")
 
 
+class TerrainTiles(unittest.TestCase):
+    def test_the_tiles_come_back_from_the_store_as_they_were_written(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            build, out, stages = (Path(directory) / name for name in ("build", "world", "stages"))
+            build.mkdir()
+            (out / "meshes").mkdir(parents=True)
+            # One square of ground, 0..20 m in x and -20..0 m in legacy z, its UVs over the four tiles.
+            (build / "terrain.obj").write_text("v 0 0 0\nv 20 0 0\nv 20 0 -20\nv 0 0 -20\n"
+                                               "vt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 1 0\n"
+                                               "f 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/1\n")
+            for x in range(2):
+                for y in range(2):
+                    for kind in ("floor", "normal"):
+                        Image.new("RGB", (8, 8), (x * 100, y * 100, 50)).save(build / f"terrain_{x}_{y}_{kind}.png")
+            bounds = build_forest_world.forest_backdrop.BOUNDS
+            self.addCleanup(setattr, build_forest_world.forest_backdrop, "BOUNDS", bounds)
+            build_forest_world.forest_backdrop.BOUNDS = (-1.0, 21.0, -1.0, 21.0)
+            computed = build_forest_world.terrain_tiles(build, out, stages)
+            written = {str(path.relative_to(out)): path.read_bytes() for path in out.rglob("*") if path.is_file()}
+            self.assertEqual(sorted(written), sorted(__import__("forest_terrain").TILE_FILES))
+            shutil.rmtree(out / "meshes")
+            self.assertEqual(build_forest_world.terrain_tiles(build, out, stages), computed)
+            self.assertEqual({name: (out / name).read_bytes() for name in written}, written)
+
+
 class MissingBakes(unittest.TestCase):
     """The full assembly fails, naming what to run, when a bake it draws is missing, instead of leaving it out."""
 
@@ -476,8 +503,8 @@ class MissingBakes(unittest.TestCase):
             (out / "meshes").mkdir(parents=True)
             trees = {"pine_01": [{"mesh_url": "meshes/pine.obj", "tex": "meshes/bark.png"}]}
             with self.assertRaisesRegex(RuntimeError, "No impostor capture of pine_01.*build-world"):
-                build_forest_world.impostor_shapes(build, out, trees, [])
-            self.assertEqual(build_forest_world.impostor_shapes(build, out, trees, [], declare_only=True), [])
+                build_forest_world.impostor_shapes(build, out, None, trees, [])
+            self.assertEqual(build_forest_world.impostor_shapes(build, out, None, trees, [], declare_only=True), [])
             with self.assertRaisesRegex(RuntimeError, "lacks the canopy light bake's terrain_0_0_layers.npy.*build-world"):
                 forest_fog.light_occlusion_fields(build, out, (0, 0, 0), (-1, 1, -1, 1))
 

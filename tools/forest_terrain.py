@@ -94,6 +94,11 @@ def decimate_obj(src, dst, cell, keep=None):
     return len(tri)
 
 
+# What build_terrain_tiles writes, under out.
+TILE_FILES=[f'meshes/terrain_{x}_{y}{kind}' for x in range(2) for y in range(2)
+            for kind in ('.obj','_far.obj','_diff.png','_normal.png')]
+
+
 def build_terrain_tiles(build,out,rect):
     verts=[];uvs=[];norms=[];triangles=[]
     for line in (build/'terrain.obj').read_text().splitlines():
@@ -127,10 +132,8 @@ def build_terrain_tiles(build,out,rect):
     for (x,y),faces in tiles.items():
         prefix=f'terrain_{x}_{y}'
         write_tile(out/'meshes'/f'{prefix}.obj',faces)
-        albedo=build/f'{prefix}_floor.png'
-        if not albedo.exists():albedo=build/f'{prefix}_diff.png'
-        # Unlit albedo: the sun's shadow map shades the ground at runtime.
-        shutil.copyfile(albedo,out/'meshes'/f'{prefix}_diff.png')
+        # Unlit albedo, the source's plants composited on it: the sun's shadow map shades the ground at runtime.
+        shutil.copyfile(build/f'{prefix}_floor.png',out/'meshes'/f'{prefix}_diff.png')
         shutil.copyfile(build/f'{prefix}_normal.png',out/'meshes'/f'{prefix}_normal.png')
         appearance=f'''appearance PBRAppearance {{
               baseColorMap ImageTexture {{ url "meshes/{prefix}_diff.png" repeatS FALSE repeatT FALSE }}

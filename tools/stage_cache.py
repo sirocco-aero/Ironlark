@@ -38,11 +38,15 @@ def clone(source, target):
             shutil.copyfileobj(original, copy)
 
 
+CODE = {}  # (root, script): its code_closure, read once per process: code does not change during a build
+
+
 def descriptor(root, stage, script, args, inputs, toolchain):
     """What a stage's result is made of: inputs maps logical names to the files it reads; args are its arguments,
     without the paths among them (their files are inputs, by content, wherever the checkout is)."""
+    code = CODE.get((str(root), script)) or CODE.setdefault((str(root), script), code_closure(root, script))
     return {"stage": stage, "args": [arg for arg in args if not (isinstance(arg, str) and Path(arg).is_absolute())],
-            "code": code_closure(root, script), "inputs": {name: digest(path) for name, path in sorted(inputs.items())},
+            "code": code, "inputs": {name: digest(path) for name, path in sorted(inputs.items())},
             "toolchain": toolchain}
 
 
