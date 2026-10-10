@@ -51,6 +51,7 @@ class Noise:
         rng = np.random.default_rng(seed)
         angles = rng.uniform(0, 2 * math.pi, 1024)
         self.g = np.stack([np.cos(angles), np.sin(angles)], -1)
+        self.gx, self.gy = self.g[:, 0].copy(), self.g[:, 1].copy()
         self.p = rng.permutation(1024)
 
     def __call__(self, x, y):
@@ -59,10 +60,11 @@ class Noise:
         fx, fy = x - xi, y - yi
         u, v = fx * fx * fx * (fx * (fx * 6 - 15) + 10), fy * fy * fy * (fy * (fy * 6 - 15) + 10)
 
+        columns = (self.p[xi & 1023], self.p[(xi + 1) & 1023])  # each hashed once for its two corners
+
         def corner(i, j):
-            h = self.p[(self.p[(xi + i) & 1023] + yi + j) & 1023]
-            g = self.g[h]
-            return g[..., 0] * (fx - i) + g[..., 1] * (fy - j)
+            h = self.p[(columns[i] + yi + j) & 1023]
+            return self.gx[h] * (fx - i) + self.gy[h] * (fy - j)
 
         a, b, c, d = corner(0, 0), corner(1, 0), corner(0, 1), corner(1, 1)
         return a + u * (b - a) + v * (c - a) + u * v * (a - b - c + d)
@@ -211,39 +213,62 @@ def hillside(rows, build, seed=SEED):
 
 
 def line_frame(x, y, line, reach=60.0):
-    """Distance from points to a polyline where it is under reach (farther points get 1e9 or less),
-    the arc length of the nearest point along it, and the side points lie on (1 left, -1 right)."""
+    """Distance from points to a polyline, the arc length of the nearest point along it, and the side points lie on
+    (1 left, -1 right); 1e9, 0 and 1 for points farther than reach."""
     x, y = np.asarray(x, np.float64), np.asarray(y, np.float64)
     dist, station, side = np.full(x.shape, 1e9), np.zeros(x.shape), np.ones(x.shape)
     along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))])
     lo = np.array([np.min(x), np.min(y)]) - reach
     hi = np.array([np.max(x), np.max(y)]) + reach
     near = np.all((np.minimum(line[:-1], line[1:]) <= hi) & (np.maximum(line[:-1], line[1:]) >= lo), axis=1)
-    for k in np.nonzero(near)[0]:
-        a, ab = line[k], line[k + 1] - line[k]
-        length2 = max(ab @ ab, 1e-9)
-        t = np.clip(((x - a[0]) * ab[0] + (y - a[1]) * ab[1]) / length2, 0, 1)
-        d = np.hypot(x - (a[0] + t * ab[0]), y - (a[1] + t * ab[1]))
-        closer = d < dist
-        dist[closer] = d[closer]
-        station[closer] = along[k] + t[closer] * math.sqrt(length2)
-        side[closer] = np.where(ab[0] * (y[closer] - a[1]) - ab[1] * (x[closer] - a[0]) >= 0.0, 1.0, -1.0)
+    k = np.nonzero(near)[0]
+    if not len(k):
+        return dist, station, side
+    a, ab = line[k], line[k + 1] - line[k]
+    length2 = np.maximum(ab[:, 0] * ab[:, 0] + ab[:, 1] * ab[:, 1], 1e-9)
+    seg_lo, seg_hi = np.minimum(line[k], line[k + 1]), np.maximum(line[k], line[k + 1])
+    flat_x, flat_y = x.reshape(-1), y.reshape(-1)
+    out = [values.reshape(-1) for values in (dist, station, side)]
+
+    def to_segments(px, py, keep):
+        """Each point's distance to the kept segments, and where along each its nearest point lies."""
+        t = np.clip(((px[:, None] - a[keep, 0]) * ab[keep, 0] + (py[:, None] - a[keep, 1]) * ab[keep, 1])
+                    / length2[keep], 0, 1)
+        return np.hypot(px[:, None] - (a[keep, 0] + t * ab[keep, 0]), py[:, None] - (a[keep, 1] + t * ab[keep, 1])), t
+
+    # Points in 64 m tiles, each against only the segments that can hold the nearest of a point under reach: those
+    # whose box lies no farther from the tile's box than reach, or than the nearest any of the tile's corners can be.
+    # The same arithmetic per point and segment as before, and the first nearest segment still wins a tie.
+    tile = np.floor(flat_x / 64.0).astype(np.int64) * 1_000_003 + np.floor(flat_y / 64.0).astype(np.int64)
+    order = np.argsort(tile, kind="stable")
+    bounds = np.flatnonzero(np.diff(tile[order])) + 1
+    for group in np.split(order, bounds):
+        px, py = flat_x[group], flat_y[group]
+        box_lo, box_hi = np.array([px.min(), py.min()]), np.array([px.max(), py.max()])
+        gap = np.maximum(np.maximum(seg_lo - box_hi, box_lo - seg_hi), 0.0)
+        lower = np.hypot(gap[:, 0], gap[:, 1])
+        corners_x = np.array([box_lo[0], box_hi[0], box_lo[0], box_hi[0]])
+        corners_y = np.array([box_lo[1], box_lo[1], box_hi[1], box_hi[1]])
+        upper = to_segments(corners_x, corners_y, slice(None))[0].max(axis=0).min()
+        keep = np.flatnonzero(lower <= min(upper, reach) + 1e-6)
+        if not len(keep):
+            continue
+        d, t = to_segments(px, py, keep)
+        best = np.argmin(d, axis=1)
+        rows = np.arange(len(group))
+        nearest = d[rows, best]
+        closer = nearest <= reach
+        chosen = keep[best]
+        out[0][group] = np.where(closer, nearest, 1e9)
+        out[1][group] = np.where(closer, along[k][chosen] + t[rows, best] * np.sqrt(length2[chosen]), 0.0)
+        cross = ab[chosen, 0] * (py - a[chosen, 1]) - ab[chosen, 1] * (px - a[chosen, 0])
+        out[2][group] = np.where(closer, np.where(cross >= 0.0, 1.0, -1.0), 1.0)
     return dist, station, side
 
 
 def distance_to_line(x, y, line, reach=60.0):
-    """Distance from points to a polyline where it is under reach (only the segments near the
-    points are measured); farther points get 1e9 or less."""
-    out = np.full(np.shape(x), 1e9)
-    lo = np.array([np.min(x), np.min(y)]) - reach
-    hi = np.array([np.max(x), np.max(y)]) + reach
-    near = np.all((np.minimum(line[:-1], line[1:]) <= hi) & (np.maximum(line[:-1], line[1:]) >= lo), axis=1)
-    for a, b in zip(line[:-1][near], line[1:][near]):
-        ab = b - a
-        t = np.clip(((x - a[0]) * ab[0] + (y - a[1]) * ab[1]) / max(ab @ ab, 1e-9), 0, 1)
-        d = np.hypot(x - (a[0] + t * ab[0]), y - (a[1] + t * ab[1]))
-        np.minimum(out, d, out=out)
-    return out
+    """Distance from points to a polyline where it is under reach; farther points get 1e9."""
+    return line_frame(x, y, line, reach)[0]
 
 
 def lake_distance(x, y):
