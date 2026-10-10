@@ -98,6 +98,33 @@ def cover_placement(mat_blender):
     return s, mat_to_axis_angle(w / s)
 
 
+def cover_placements(mats):
+    """cover_placement of many bases at once, equal to it bit for bit: one call factors every matrix (the same
+    LAPACK routine on each), and the rest is its arithmetic, elementwise; a rotation near 180 degrees, which needs
+    its own branch, goes through mat_to_axis_angle."""
+    w = np.array([C_FWD @ np.array(m, dtype=np.float64).reshape(3, 3) @ C_FWD.T for m in mats])
+    scale = np.linalg.norm(w, axis=1).mean(1)
+    rotation = w / scale[:, None, None]
+    u, _, vt = np.linalg.svd(rotation)
+    r = u @ vt
+    flip = np.linalg.det(r) < 0
+    u[flip, :, -1] = -u[flip, :, -1]
+    r[flip] = u[flip] @ vt[flip]
+    trace = (np.trace(r, axis1=1, axis2=2) - 1.0) / 2.0
+    angle = np.array([math.acos(max(-1.0, min(1.0, t))) for t in trace.tolist()])
+    sine = 2.0 * np.array([math.sin(a) for a in angle.tolist()])
+    axis = np.stack([r[:, 2, 1] - r[:, 1, 2], r[:, 0, 2] - r[:, 2, 0], r[:, 1, 0] - r[:, 0, 1]], 1) / sine[:, None]
+    placements = []
+    for k, (s, a) in enumerate(zip(scale.tolist(), angle.tolist())):
+        if a < 1e-9:
+            placements.append((s, (0.0, 1.0, 0.0, 0.0)))
+        elif a > math.pi - 1e-6:
+            placements.append((s, mat_to_axis_angle(rotation[k])))
+        else:
+            placements.append((s, (*axis[k].tolist(), a)))
+    return placements
+
+
 def tree_placement(matrix, base_z, home):
     """Retain an authored instance transform after rebasing its mesh at Z=0."""
     matrix = np.asarray(matrix, dtype=np.float64)
@@ -706,12 +733,11 @@ def instance_cover(source, build, out, cover_index):
     for asset, placements in sorted(groups.items()):
         first = placements[0]
         rows = []
-        for r in placements:
+        for r, (s, (ax, ay, az, ang)) in zip(placements, cover_placements([r["mat"] for r in placements])):
             # The instance basis is the source's world matrix (the mesh keeps source axes).
             basis = np.array(r["mat"], dtype=np.float64).reshape(3, 3)
             origin = enu(r["pos"])
             rows.append(np.hstack([basis, np.array(origin)[:, None]]))
-            s, (ax, ay, az, ang) = cover_placement(r["mat"])
             # The canopy bake shades the ground through every lod0 placement.
             VISUAL_INSTANCES.append(
                 {

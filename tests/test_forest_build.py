@@ -13,7 +13,7 @@ SIM = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM / "controllers/flight_observer"))
 sys.path.insert(0, str(SIM / "tools"))
 from minimap import look_at, WorldView
-from build_forest_world import enu, copy_mesh, cover_placement, tree_placement
+from build_forest_world import enu, copy_mesh, cover_placement, cover_placements, tree_placement
 from forest_terrain import clip_polygon
 import forest_backdrop
 import forest_edge
@@ -129,6 +129,16 @@ class Coordinates(unittest.TestCase):
         np.testing.assert_allclose(
             rotate(world_rotation, np.array(point) * s), m @ point, atol=1e-9
         )
+
+    def test_cover_placements_at_once_equal_one_at_a_time_bit_for_bit(self):
+        rng = np.random.default_rng(3)
+        q, _ = np.linalg.qr(rng.normal(size=(500, 3, 3)))
+        bases = list(q * rng.uniform(0.2, 3.0, (500, 1, 1)))
+        bases += [np.eye(3), np.diag([-1.0, -1.0, 1.0]) * 2.0, np.diag([1.0, 1.0, -1.0]), np.diag([-1.0, 1.0, -1.0])]
+        mats = [m.ravel().tolist() for m in bases]
+        for (s, aa), (s1, aa1) in zip(cover_placements(mats), [cover_placement(m) for m in mats]):
+            self.assertEqual(np.float64(s).tobytes(), np.float64(s1).tobytes())
+            self.assertEqual(np.array(aa, np.float64).tobytes(), np.array(aa1, np.float64).tobytes())
 
     def test_tile_clipping_preserves_the_surface(self):
         # Position and UV both describe an inclined plane; clipping must not
