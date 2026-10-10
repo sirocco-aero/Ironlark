@@ -53,7 +53,7 @@ checkout, which is live. To ignore a `WEBOTS_HOME` override in sh or fish, use
 changed resources from its working tree. A failed compile leaves the previous
 runtime in place and prints the compiler and linker errors; downloads are
 checked through `.part` files. Build stages run with two jobs and stop at
-4.5 GiB RSS; logs and metrics go to `.cache/build-logs/`.
+4.5 GiB of memory (PSS: pages a stage's processes share count once); logs and metrics go to `.cache/build-logs/`.
 First setup needs internet and several GB of disk. OS packages in the image float,
 so builds are source-pinned, not bit-identical.
 

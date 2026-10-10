@@ -72,13 +72,14 @@ def light_occlusion_fields(build, out, home, bounds):
     R sky, G second sun, B main sun, A sky overhead, then one more layer holding the ground
     height in R; stacked top to bottom, each with its top row at the maximum y. Cropped to bounds (xmin, xmax, ymin, ymax), the
     rectangle the land past it mirrors, and mirrored as it is; the outer layers follow that land as it
-    falls away. Empty before the bake."""
-    if not all((build / f"terrain_{x}_{y}_layers.npy").exists() for x in range(2) for y in range(2)):
-        return ""
+    falls away."""
+    missing = [name for name in [f"terrain_{x}_{y}_layers.npy" for x in range(2) for y in range(2)] + ["light_layers.json"]
+               if not (build / name).is_file()]
+    if missing:
+        raise RuntimeError(f"{build} lacks the canopy light bake's {', '.join(missing)}. "
+                           "Run ./ironlark build-world without --skip-export.")
     meta = json.loads((build / "light_layers.json").read_text())
     tiles = {(x, y): np.load(build / f"terrain_{x}_{y}_layers.npy") for x in range(2) for y in range(2)}
-    if any(tile.shape[-1] != 4 for tile in tiles.values()):
-        return ""  # an older bake without the overhead channel: rebaked after this assembly
     layers = [fill_holes(stitch({k: v[i] for k, v in tiles.items()})) for i in range(len(meta["heights"]))]
     size = layers[0].shape[0]
     world_min, world_max, ground = ground_heights(build, home, size)
@@ -118,17 +119,13 @@ def fog_node(build, out, home):
     ambient = json.loads((build / "sky_light_mean.json").read_text())
     # The canopy's light occlusion layers (light_occlusion_fields) light the medium.
     # Far haze meets the visible sky at the horizon (exported with the sky).
-    horizon_path = build / "sky_horizon.json"
-    horizon = ""
-    if horizon_path.exists():
-        from sky_faces import CAMERA_SKY
+    from sky_faces import CAMERA_SKY
 
-        values = ", ".join(" ".join(f"{c * CAMERA_SKY:.4f}" for c in v) for v in json.loads(horizon_path.read_text()))
-        horizon = f"\n  horizonRadiance [ {values} ]"
-    phase_path = build / "sky_phase_radiance.json"
-    if phase_path.exists():
-        values = ", ".join(" ".join(f"{c:.5f}" for c in v) for v in json.loads(phase_path.read_text()))
-        horizon += f"\n  ambientRadiance [ {values} ]"
+    values = ", ".join(" ".join(f"{c * CAMERA_SKY:.4f}" for c in v)
+                       for v in json.loads((build / "sky_horizon.json").read_text()))
+    horizon = f"\n  horizonRadiance [ {values} ]"
+    values = ", ".join(" ".join(f"{c:.5f}" for c in v) for v in json.loads((build / "sky_phase_radiance.json").read_text()))
+    horizon += f"\n  ambientRadiance [ {values} ]"
     center = (FOG_CENTER[0] - home[0], FOG_CENTER[1] - home[1], FOG_CENTER[2])
     color = srgb(FOG_COLOR)
     # Haze over the valley past the box (Webots patch 0070).

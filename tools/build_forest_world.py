@@ -13,9 +13,11 @@ vicinity arrives with the navigation phase (no autonomy reads it yet).
 """
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 import hashlib
 import json
 import math
+import multiprocessing
 import re
 import shutil
 import sys
@@ -26,7 +28,6 @@ from PIL import Image, ImageOps
 
 import forest_backdrop
 import forest_edge
-import forest_valley
 import forest_valley
 from forest_view import CAMERAS, ORIGIN, REGION, VIEW_CEILING, VIEW_MARGIN
 
@@ -229,6 +230,26 @@ VISUAL_INSTANCES = []
 COPIED_RESOURCES = {}
 
 
+# Mesh conversions in flight (destination: future): the assembly reads no copied mesh before finish_copies().
+COPIES, COPY_POOL = {}, None
+
+
+def copy_mesh_later(src, dst):
+    """copy_mesh in a worker. A second copy to the same path waits for the first: the last still wins."""
+    global COPY_POOL
+    if COPY_POOL is None:
+        COPY_POOL = ProcessPoolExecutor(WORKERS, mp_context=FORK)
+    if dst in COPIES:
+        COPIES.pop(dst).result()
+    COPIES[dst] = COPY_POOL.submit(copy_mesh, src, dst)
+
+
+def finish_copies():
+    for done in COPIES.values():
+        done.result()
+    COPIES.clear()
+
+
 def copy_resource(source, out, convert_mesh=False):
     """Byte-identical assets get one URL, including across tree variants."""
     with source.open("rb") as stream:
@@ -236,7 +257,7 @@ def copy_resource(source, out, convert_mesh=False):
     if key not in COPIED_RESOURCES:
         url = "meshes/" + source.name
         if convert_mesh:
-            copy_mesh(source, out / url)
+            copy_mesh_later(source, out / url)
         else:
             shutil.copyfile(source, out / url)
         COPIED_RESOURCES[key] = url
@@ -372,8 +393,7 @@ def prepare_visual_trees(source, build, out):
         img.save(out / f"meshes/twigs_{species}.png")
         normals.save(out / f"meshes/twigs_{species}_normal.png")
     for variant, parts in meta["variants"].items():
-        baked_path = build / f"baked_{variant}.json"
-        baked = json.loads(baked_path.read_text()) if baked_path.exists() else {}
+        baked = json.loads((build / f"baked_{variant}.json").read_text())
         for part in parts:
             part["mesh_url"] = copy_resource(
                 build / part["file"], out, convert_mesh=True
@@ -596,26 +616,33 @@ def impostor_atlases(build, out, variant, radius):
         (size[0] // 2, size[1] // 2), Image.Resampling.LANCZOS).save(out / f"meshes/impostor_{variant}_normal.png")
 
 
-def impostor_shapes(build, out, visual_trees, groups):
+# Independent parts of the assembly run in forked workers: the same computations. Two are as fast as four (172 s against
+# 171 s on a 4-core laptop) at 1.1 GB of memory against 1.8 GB; the assembly alone needs 0.6 GB.
+WORKERS, FORK = 2, multiprocessing.get_context("fork")
+
+
+def impostor_shapes(build, out, visual_trees, groups, declare_only=False):
     """Declare the variants for tools/bake_impostors.py; once baked, one instanced impostor Shape
     per variant and group. groups: (rows, variants, near, far, suffix), each drawn from near to far
-    metres from the viewer (0: no end). Returns the Shapes (empty before the bake)."""
+    metres from the viewer (0: no end). Returns the Shapes (none with declare_only)."""
     declared = {v: [{"mesh": p["mesh_url"], "tex": p["tex"], "normal": p.get("normal", "")} for p in parts]
                 for v, parts in visual_trees.items()}
     (build / "impostor_variants.json").write_text(json.dumps(declared, indent=1, sort_keys=True))
-    baked_path = build / "impostors.json"
-    baked = json.loads(baked_path.read_text()) if baked_path.exists() else {}
-    if not declared.keys() <= baked.keys():
+    if declare_only:
         return []
-    for variant in declared:  # a bake from an older capture lacks passes: rebake first
-        with np.load(build / f"impostor_{variant}.npz") as data:
-            if not {"albedo", "normal", "depth", "alpha"} <= set(data.files):
-                return []
+    baked_path = build / "impostors.json"
+    baked = json.loads(baked_path.read_text()) if baked_path.is_file() else {}
+    if not declared.keys() <= baked.keys():
+        raise RuntimeError(f"No impostor capture of {', '.join(sorted(declared.keys() - baked.keys()))} in {build}. "
+                           "Run ./ironlark build-world without --skip-export.")
     (out / "meshes/impostor_quad.obj").write_text(IMPOSTOR_QUAD)
     nodes = []
+    with ProcessPoolExecutor(WORKERS, mp_context=FORK) as pool:  # each variant's atlases on their own
+        atlases = [pool.submit(impostor_atlases, build, out, variant, baked[variant]["radius"]) for variant in declared]
+        for done in atlases:
+            done.result()
     for variant in sorted(declared):
         sphere = baked[variant]
-        impostor_atlases(build, out, variant, sphere["radius"])
         for rows, variants, near, far, suffix in groups:
             # Instance space = capture space: the tree's frame, moved to the sphere's centre, scaled by its radius.
             placed = rows[np.array([v == variant for v in variants], bool)]
@@ -677,7 +704,7 @@ def instance_cover(source, build, out, cover_index):
         if name not in cover_index:
             continue
         mesh_urls[name] = "meshes/" + meta["file"]
-        copy_mesh(build / meta["file"], out / mesh_urls[name])
+        copy_mesh_later(build / meta["file"], out / mesh_urls[name])
     # The source's normal and roughness maps, at the albedo's size.
     normal_maps, roughness_maps = {}, {}
     for name in mesh_urls:
@@ -691,6 +718,7 @@ def instance_cover(source, build, out, cover_index):
                 Image.open(src).convert(mode).resize((1024, 1024), Image.Resampling.LANCZOS).save(out / url)
             maps[name] = url
 
+    finish_copies()  # the placements below read the copied meshes' bounds
     groups = {}
     for r in records:
         groups.setdefault(r["asset"], []).append(r)
@@ -783,6 +811,9 @@ def main():
     parser.add_argument("--build", required=True)
     parser.add_argument("--source", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--bake-inputs", action="store_true",
+                        help="only what the light and impostor bakes read: no valley, edge ground, fog, light "
+                             "occlusion, impostor atlases or compressed textures")
     args = parser.parse_args()
     build = Path(args.build)
     source = Path(args.source)
@@ -805,6 +836,9 @@ def main():
 
     forest_backdrop.BOUNDS = inner_rect(build)
     print("mirrored about", [round(b, 3) for b in forest_backdrop.BOUNDS], flush=True)
+    # The valley needs only the build folder and these bounds: it computes beside everything else.
+    valley_worker = ProcessPoolExecutor(1, mp_context=FORK)
+    valley = None if args.bake_inputs else valley_worker.submit(forest_valley.shapes, build, out)
 
     # -- tree instances as Transforms --
     print("instances", flush=True)
@@ -873,7 +907,7 @@ def main():
     impostors = impostor_shapes(build, out, visual_trees, [
         (np.concatenate([tree_rows, edge, hill]),
          tree_variants + [tree_variants[s] for s in sources] + [tree_variants[s] for s in copied[on_hill]],
-         IMPOSTOR_DISTANCE - 1, 0.0, "")])
+         IMPOSTOR_DISTANCE - 1, 0.0, "")], declare_only=args.bake_inputs)
     solids.extend(instanced_tree_shapes(tree_parts, out, IMPOSTOR_DISTANCE if impostors else None))
     solids.extend(impostors)
     print(
@@ -887,8 +921,8 @@ def main():
     tri_total += cover_tris
     print("cover tris", cover_tris, flush=True)
 
-    copy_mesh(build / "terrain.obj", out / "meshes/terrain.obj")
-    copy_mesh(build / "river.obj", out / "meshes/river.obj")
+    copy_mesh_later(build / "terrain.obj", out / "meshes/terrain.obj")
+    copy_mesh_later(build / "river.obj", out / "meshes/river.obj")
 
     # -- minimap scene --
     heights_grid = json.loads((build / "heights.json").read_text())
@@ -928,17 +962,22 @@ def main():
     from forest_fog import fog_node
     from forest_terrain import build_terrain_tiles
 
+    finish_copies()
     manifest["light_signature"] = light_signature(build, out)
     # Its mirrored-tile shapes are no longer drawn: the edge's own ground replaces them.
     terrain_shapes, _ = build_terrain_tiles(build, out, forest_backdrop.BOUNDS)
-    edge_shapes = forest_edge.ground_shapes(out) + forest_valley.shapes(build, out)
-    fog = fog_node(build, out, manifest["home_blender"])
-    from forest_fog import light_occlusion_fields
+    if args.bake_inputs:  # none of these is read by a bake
+        edge_shapes, fog, light_occlusion = [], "", ""
+    else:
+        edge_shapes = forest_edge.ground_shapes(out) + valley.result()
+        fog = fog_node(build, out, manifest["home_blender"])
+        from forest_fog import light_occlusion_fields
 
-    light_occlusion = light_occlusion_fields(build, out, manifest["home_blender"], forest_backdrop.BOUNDS)
-    from forest_terrain import terrain_detail_fields
+        light_occlusion = light_occlusion_fields(build, out, manifest["home_blender"], forest_backdrop.BOUNDS)
+        from forest_terrain import terrain_detail_fields
 
-    light_occlusion += terrain_detail_fields(build, out, manifest["home_blender"], source, light_occlusion)
+        light_occlusion += terrain_detail_fields(build, out, manifest["home_blender"], source, light_occlusion)
+    valley_worker.shutdown()
     write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, "\n    ".join(edge_shapes), fog,
                 light_occlusion)
     two_sided_materials(out)
@@ -956,6 +995,9 @@ def main():
     limit_textures(out / "meshes")
     bleed_alpha(out / "meshes")
     bleed_normals(out)
+    if args.bake_inputs:
+        print("wrote the bakes' inputs to", out, flush=True)
+        return
     compress_textures(build, out)
     print("wrote", out / "pine_forest.wbt", flush=True)
 
@@ -1007,10 +1049,10 @@ def two_sided_materials(out):
 
     world = re.sub(r"Shape \{.*?geometry Mesh \{ url \"[^\"]+\" \}", material, world, flags=re.S)
     path.write_text(world)
-    dropped = 0
-    for mesh, masked in users.items():
-        if all(masked) and "impostor_" not in mesh:
-            dropped += drop_back_copies(out / mesh)
+    with ProcessPoolExecutor(WORKERS, mp_context=FORK) as pool:  # each mesh its own file
+        drops = [pool.submit(drop_back_copies, out / mesh) for mesh, masked in users.items()
+                 if all(masked) and "impostor_" not in mesh]
+        dropped = sum(done.result() for done in drops)
     print("two-sided: dropped", dropped, "back copies", flush=True)
 
 

@@ -12,6 +12,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+import build_forest_world
 import forest_pipeline
 import forest_process
 import receipts
@@ -45,6 +46,23 @@ class Diagnostics(unittest.TestCase):
             metrics = json.loads(log.with_suffix(".metrics.json").read_text())
             self.assertNotEqual(metrics["exit_code"], 0)
             self.assertIn("exited", metrics["error"])
+
+    def test_forked_workers_count_their_shared_pages_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "stage.log"
+            # 200 MiB written by the parent, then shared by two forked children: 600 MiB resident, 200 MiB of it.
+            forest_process.run_stage([sys.executable, "-c", (
+                "import os, time\n"
+                "data = bytearray(200 << 20)\n"
+                "for i in range(0, len(data), 4096): data[i] = 1\n"
+                "for _ in range(2):\n"
+                "    if os.fork() == 0:\n"
+                "        time.sleep(1.5)\n"
+                "        os._exit(0)\n"
+                "time.sleep(1.5)\n")], log)
+            peak = json.loads(log.with_suffix(".metrics.json").read_text())["peak_pss_mib"]
+            self.assertGreater(peak, 200)
+            self.assertLess(peak, 400)
 
     def test_spawn_failure_writes_log_and_metrics(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -207,6 +225,24 @@ class Receipts(unittest.TestCase):
         self.assertEqual((target / "scene.blend").read_text(), "edited")  # extracted once
         forest_pipeline.unpack(archive, target, tarfile.open, "sha-2", member="packed")
         self.assertEqual((target / "scene.blend").read_text(), "first")  # another archive: extracted again
+
+
+class MissingBakes(unittest.TestCase):
+    """The full assembly fails, naming what to run, when a bake it draws is missing, instead of leaving it out."""
+
+    def test_a_missing_impostor_capture_or_light_layer_fails_the_assembly(self):
+        import forest_fog
+
+        with tempfile.TemporaryDirectory() as directory:
+            build, out = Path(directory) / "build", Path(directory) / "world"
+            build.mkdir()
+            (out / "meshes").mkdir(parents=True)
+            trees = {"pine_01": [{"mesh_url": "meshes/pine.obj", "tex": "meshes/bark.png"}]}
+            with self.assertRaisesRegex(RuntimeError, "No impostor capture of pine_01.*build-world"):
+                build_forest_world.impostor_shapes(build, out, trees, [])
+            self.assertEqual(build_forest_world.impostor_shapes(build, out, trees, [], declare_only=True), [])
+            with self.assertRaisesRegex(RuntimeError, "lacks the canopy light bake's terrain_0_0_layers.npy.*build-world"):
+                forest_fog.light_occlusion_fields(build, out, (0, 0, 0), (-1, 1, -1, 1))
 
 
 if __name__ == "__main__":

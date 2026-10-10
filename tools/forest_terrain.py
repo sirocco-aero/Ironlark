@@ -169,7 +169,7 @@ DETAIL_SIZE = 2048
 def terrain_detail_fields(build, out, home, source, occlusion):
     """Background fields for the terrain detail layers (Webots patch 0039): each kind of map as
     three stacked layers, and the blend mask over the light occlusion rectangle (read from its
-    fields, which the mask must match). Empty before the mask bake."""
+    fields, which the mask must match)."""
     import re
 
     from forest_fog import ground_heights, stitch
@@ -177,8 +177,6 @@ def terrain_detail_fields(build, out, home, source, occlusion):
     rect = re.search(r"lightOcclusionMin ([-\d.]+) ([-\d.]+)\s+lightOcclusionMax ([-\d.]+) ([-\d.]+)", occlusion)
     tiles = {(x, y): build / f"terrain_{x}_{y}_mask.png" for x in range(2) for y in range(2)}
     generated = build / "terrain_generated.json"
-    if not rect or not generated.exists() or not all(path.exists() for path in tiles.values()):
-        return ""
     for kind, suffix in (("color", "diff"), ("normal", "nor_gl"), ("roughness", "rough")):
         target = out / f"meshes/terrain_detail_{kind}.png"
         if not target.exists():

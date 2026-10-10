@@ -238,9 +238,11 @@ def build_world(skip_export=False):
         "--out",
         str(world),
     ]
-    print("Forest build: assemble world", flush=True)
-    run_stage(assemble, logs / "assemble.log")
     if not skip_export:
+        # The bakes read only part of the world (bake-inputs: no valley, fog, light fields, atlases or compression),
+        # so it is assembled for them first and in full once, after them.
+        print("Forest build: the bakes' inputs", flush=True)
+        run_stage([*assemble, "--bake-inputs"], logs / "assemble-bake-inputs.log")
         signature = json.loads((world / "build_manifest.json").read_text())[
             "light_signature"
         ]
@@ -254,7 +256,6 @@ def build_world(skip_export=False):
         ):
             blender_stage("canopy-light", "bake_forest_light.py", "--world", str(world))
             stamp.write_text(json.dumps({"signature": signature}))
-            run_stage(assemble, logs / "assemble-lit.log")
         # Impostors capture the trees as the world draws them; the world then draws them far away.
         signature = hashlib.sha256(
             (build / "impostor_variants.json").read_bytes() + (TOOLS / "bake_impostors.py").read_bytes()
@@ -264,7 +265,8 @@ def build_world(skip_export=False):
             (build / "impostors.json").unlink(missing_ok=True)
             blender_stage("impostors", "bake_impostors.py", "--world", str(world))
             stamp.write_text(json.dumps({"signature": signature}))
-            run_stage(assemble, logs / "assemble-impostors.log")
+    print("Forest build: assemble world", flush=True)
+    run_stage(assemble, logs / "assemble.log")
     write_world(SIM, world)
     print(f"Forest world ready: {world / 'pine_forest.wbt'}", flush=True)
 
