@@ -535,19 +535,39 @@ f 1/1/1 3/3/1 4/4/1
 
 
 def dilate(color, alpha, steps=16):
-    """Spread colours into empty texels so filtering never pulls in black."""
+    """Spread colours into empty texels so filtering never pulls in black: each step, a texel next to a filled one
+    takes the mean of its filled 3 x 3 neighbours (the image's edge repeated beyond it)."""
     valid = (alpha > 1e-3).astype(np.float32)
     color = color * valid[..., None]
+    height, width = valid.shape
+    offsets = [(dy, dx) for dy in (-1, 0, 1) for dx in (-1, 0, 1)]
+
+    def around(rows, cols):
+        """Each texel's 3 x 3 neighbours, the edge repeated: (rows, columns) per offset."""
+        return [(np.clip(rows + dy, 0, height - 1), np.clip(cols + dx, 0, width - 1)) for dy, dx in offsets]
+
+    filled = valid > 0
+    pad = np.pad(filled, 1, mode="edge")
+    reached = np.zeros_like(filled)
+    for dy, dx in offsets:
+        reached |= pad[1 + dy:1 + dy + height, 1 + dx:1 + dx + width]
+    rows, cols = np.nonzero(reached & ~filled)  # the texels that fill first; only these are ever summed
     for _ in range(steps):
-        pad_c = np.pad(color, ((1, 1), (1, 1), (0, 0)), mode="edge")
-        pad_v = np.pad(valid, 1, mode="edge")
-        acc = sum(pad_c[1 + dy:pad_c.shape[0] - 1 + dy, 1 + dx:pad_c.shape[1] - 1 + dx]
-                  for dy in (-1, 0, 1) for dx in (-1, 0, 1))
-        weight = sum(pad_v[1 + dy:pad_v.shape[0] - 1 + dy, 1 + dx:pad_v.shape[1] - 1 + dx]
-                     for dy in (-1, 0, 1) for dx in (-1, 0, 1))
-        grow = (valid == 0) & (weight > 0)
-        color[grow] = acc[grow] / weight[grow][:, None]
-        valid = np.maximum(valid, grow.astype(np.float32))
+        if not len(rows):
+            break
+        acc, weight = 0, 0
+        neighbours = around(rows, cols)
+        for r, c in neighbours:  # the order the whole-image sums added in: equal floats, empty texels being 0
+            acc = acc + color[r, c]
+            weight = weight + valid[r, c]
+        color[rows, cols] = acc / weight[:, None]
+        valid[rows, cols] = 1.0
+        filled[rows, cols] = True
+        # Next, the empty neighbours of the texels just filled: no other texel gained a filled neighbour.
+        reached = np.zeros_like(filled)
+        for r, c in neighbours:
+            reached[r, c] = True
+        rows, cols = np.nonzero(reached & ~filled)
     fill = color[valid > 0].mean(0) if valid.any() else np.zeros(color.shape[-1])
     color[valid == 0] = fill
     return color
