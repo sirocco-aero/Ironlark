@@ -58,9 +58,10 @@ class Store:
         key = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()
         return self.folder / recipe["stage"] / key
 
-    def restore(self, recipe, build, outputs):
-        """Clone the stored result's outputs into build and return its value as {"value": ...}; None, and the result
-        discarded, unless it is this recipe's, with exactly these outputs, each intact."""
+    def restore(self, recipe, build, outputs=None):
+        """Clone the stored result's outputs into build and return {"value": ..., "outputs": {name: [size, sha256]}};
+        None, and the result discarded, unless it is this recipe's, with exactly these outputs (or, for a stage whose
+        outputs are what it wrote, those it stored), each intact."""
         place = self.place(recipe)
         manifest = place / "manifest.json"
         if not manifest.is_file():
@@ -69,6 +70,8 @@ class Store:
             stored = json.loads(manifest.read_text())
         except json.JSONDecodeError:
             stored = None
+        if stored is not None and outputs is None:
+            outputs = list(stored["outputs"])
         intact = stored is not None and stored["recipe"] == recipe and set(stored["outputs"]) == set(outputs) and all(
             (path := place / "outputs" / name).is_file() and path.stat().st_size == size and digest(path) == sha256
             for name, (size, sha256) in stored["outputs"].items())
@@ -81,7 +84,7 @@ class Store:
             target.unlink(missing_ok=True)
             clone(place / "outputs" / name, target)
         os.utime(manifest)  # used by this build (collect)
-        return {"value": stored["value"]}
+        return {"value": stored["value"], "outputs": stored["outputs"]}
 
     def save(self, recipe, build, outputs, value=None):
         """Keep clones of the named files of build, read-only, and a JSON value as this recipe's result."""
@@ -99,6 +102,7 @@ class Store:
         (partial / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
         shutil.rmtree(place, ignore_errors=True)
         partial.rename(place)
+        return {"value": value, "outputs": files}
 
     def collect(self, checkout, since):
         """After a build of checkout, begun at since (time.time()): record the results it used (restored or stored

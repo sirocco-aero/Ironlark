@@ -308,11 +308,13 @@ class StageStore(unittest.TestCase):
         self.bake()
         shutil.rmtree(self.build)
         self.build.mkdir()
-        self.assertEqual(self.store.restore(self.recipe(), self.build, self.outputs), {"value": {"radius": 1}})
+        kept = self.store.restore(self.recipe(), self.build, self.outputs)
+        self.assertEqual(kept["value"], {"radius": 1})
+        self.assertEqual(kept["outputs"]["impostor_pine_01.npz"][1], hashlib.sha256(b"capture").hexdigest())
         restored = self.build / "impostor_pine_01.npz"
         self.assertEqual(restored.read_text(), "capture")
         restored.write_text("rewritten")  # a file of its own: an older checkout's stage rewrites it in place
-        self.assertEqual(self.store.restore(self.recipe(), self.build, self.outputs), {"value": {"radius": 1}})
+        self.assertEqual(self.store.restore(self.recipe(), self.build, self.outputs)["value"], {"radius": 1})
         self.assertEqual(restored.read_text(), "capture")
 
     def test_another_input_byte_is_another_result(self):
@@ -451,6 +453,114 @@ class Bakes(unittest.TestCase):
                                                                                    "pine_01": {"run": 1}})
 
 
+class Exports(unittest.TestCase):
+    """forest_pipeline.exports runs a stage only when a byte it reads changed, each in a room holding only what it
+    declares (Blender stands in as a function writing what each script would)."""
+
+    def setUp(self):
+        from PIL import Image
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.source, self.build, self.stages = self.root / "pine-forest/source", self.root / "forest-build", self.root / "forest-stages"
+        (self.source / "textures").mkdir(parents=True)
+        for name, colour in (("bark_diff.png", (90, 60, 40)), ("moss_diff.png", (40, 90, 40))):
+            Image.new("RGB", (8, 8), colour).save(self.source / "textures" / name)
+        self.build.mkdir()
+
+    def stage(self, name, script, *args, out):
+        self.ran.append(name)
+        present = sorted(str(path.relative_to(out)) for path in out.rglob("*") if path.is_file())
+        expected = self.declared(name)
+        self.assertEqual([p for p in present if not p.startswith("texture-source-2k/")], expected, name)
+        # The exporters find the source through their folder's parent.
+        self.assertTrue((out.resolve().parent / "pine-forest/source/textures/bark_diff.png").is_file(), name)
+        files = {"export_forest.py": {"terrain.obj": "v 0 0 0", "terrain_meta.json": "{}", "heights.json": "{}",
+                                      "manifest.json": "{}"},
+                 "export_tree_layout.py": {"authored_trees.json": json.dumps([{"variant": "pine_01"}, {"variant": "fir_01"}])},
+                 "export_cover_layout.py": {"cover.json": getattr(self, "cover", "[]")},
+                 "export_forest_water.py": {"river.obj": "v 0 0 0", "river_meta.json": "{}"},
+                 "export_floor_cover.py": {"floor_cover.jsonl.gz": "x", "floor_moss.png": "moss",
+                                           "floor_cover_assets.json": json.dumps({"moss": {"image": "floor_moss.png"}})},
+                 "compose_forest_floor.py": {f"terrain_{x}_{y}_floor.png": "floor" for x in range(2) for y in range(2)},
+                 "export_forest_sky.py": {"sky_top.hdr": "sky"}}.get(script, {})
+        if script == "export_forest_visuals.py" and "--prepare-only" in args:
+            files = {"twig_atlas.json": json.dumps({"pine": [{"file": "twig_pine_0_top.png", "cell": 0}]}),
+                     "twig_pine_0_top.png": "card", "material_images.json": json.dumps({"twig": ["card"]})}
+        elif script == "export_forest_visuals.py":
+            v = args[1]
+            files = {f"visual_{v}.obj": v, f"material_{v}.blend": v, "twig_atlas.json": (out / "twig_atlas.json").read_text(),
+                     "visual_trees.json": json.dumps({"version": 1, "variants": {v: [{"file": f"visual_{v}.obj"}]}}),
+                     "tree_properties.json": json.dumps({v: {"base_z": 0}}),
+                     "material_images.json": json.dumps({f"{v}_bark": ["bark"], "twig": ["card"]})}
+        elif script == "export_forest_cover.py":
+            files = {"cover_assets.json": (out / "cover.json").read_text()}
+        elif script == "bake_tree_materials.py":
+            files = {f"baked_{args[1]}.json": "{}"}
+        elif script == "export_terrain_detail.py":
+            files = {f"terrain_{args[1]}_{args[2]}_{kind}.png": kind for kind in ("diff", "normal", "mask")}
+            files["terrain_generated.json"] = "{}"
+        for name, text in files.items():
+            (out / name).write_text(text)
+
+    def declared(self, name):
+        """What the room of a stage must hold, from what the stages before it wrote."""
+        if name.startswith("tree-") and name != "tree-layout":
+            return ["twig_atlas.json", "twig_pine_0_top.png"]
+        if name.startswith("material-"):
+            return [f"material_{name[len('material-'):]}.blend"]
+        return {"cover": ["cover.json"], "floor-composite": sorted(
+            ["floor_cover.jsonl.gz", "floor_cover_assets.json", "floor_moss.png", "terrain_meta.json",
+             *(f"terrain_{x}_{y}_diff.png" for x in range(2) for y in range(2))])}.get(
+            name, ["manifest.json", "terrain_meta.json"] if name.startswith("terrain-material-") else [])
+
+    def export(self):
+        self.ran = []
+        forest_pipeline.exports(self.build, self.source, self.stages, self.stage, self.stage)
+        return self.ran
+
+    def contents(self):
+        return {str(p.relative_to(self.build)): p.read_bytes() for p in sorted(self.build.rglob("*")) if p.is_file()}
+
+    def test_an_unchanged_export_runs_no_stage_and_gives_the_same_files(self):
+        first = self.export()
+        # The terrain, tree layout, twigs, two trees and their materials, cover layout and cover, river, four tiles,
+        # floor cover, its composite and the sky.
+        self.assertEqual(len(first), 17)
+        built = self.contents()
+        self.assertEqual(list(json.loads(built["visual_trees.json"])["variants"]), ["fir_01", "pine_01"])
+        self.assertEqual(json.loads(built["material_images.json"]), {"fir_01_bark": ["bark"], "twig": ["card"],
+                                                                     "pine_01_bark": ["bark"]})
+        shutil.rmtree(self.build)
+        self.build.mkdir()
+        self.assertEqual(self.export(), [])
+        self.assertEqual(self.contents(), built)
+
+    def test_a_stage_whose_output_changed_runs_the_stages_that_read_it_and_no_other(self):
+        self.export()
+        for manifest in self.stages.glob("cover-layout/*/manifest.json"):
+            shutil.rmtree(manifest.parent)  # its result gone (as collect would remove it); this time it differs
+        self.cover = '[{"asset": "rock"}]'
+        self.assertEqual(self.export(), ["cover-layout", "cover"])
+        self.assertEqual((self.build / "cover.json").read_text(), self.cover)
+        self.assertEqual((self.build / "cover_assets.json").read_text(), self.cover)
+
+    def test_a_room_finds_the_source_once_the_checkout_that_linked_it_is_gone(self):
+        # A worktree links its .cache to the main checkout's, so the rooms (in the shared .cache) outlive it.
+        cache, gate = self.root / "main/.cache", self.root / "gate"
+        cache.mkdir(parents=True)
+        shutil.move(self.source.parent, cache / "pine-forest")
+        gate.mkdir()
+        (gate / ".cache").symlink_to(cache)
+        self.source, self.stages = gate / ".cache/pine-forest/source", gate / ".cache/forest-stages"
+        self.export()
+        shutil.rmtree(gate)
+        self.source, self.stages = cache / "pine-forest/source", cache / "forest-stages"
+        shutil.rmtree(self.stages)  # every stage runs again, from the main checkout
+        self.assertEqual(len(self.export()), 17)
+
+
 class Valley(unittest.TestCase):
     """The assembly takes an unchanged valley from the stage store (forest_valley.shapes, 80 s, stands in as a
     function writing its files)."""
@@ -517,6 +627,31 @@ class TerrainTiles(unittest.TestCase):
             shutil.rmtree(out / "meshes")
             self.assertEqual(build_forest_world.terrain_tiles(build, out, stages), computed)
             self.assertEqual({name: (out / name).read_bytes() for name in written}, written)
+
+
+class SourcePin(unittest.TestCase):
+    def test_a_source_photograph_is_named_by_its_archive_not_read_again(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, out, stages = root / "source/textures", root / "world", root / "stages"
+            source.mkdir(parents=True)
+            (out / "meshes").mkdir(parents=True)
+            Image.new("RGB", (8, 8), (90, 60, 40)).save(source / "bark_diff.png")
+            for name, value in (("SOURCE", source.resolve()), ("SOURCE_ARCHIVE", "sha-1")):
+                self.addCleanup(setattr, build_forest_world, name, getattr(build_forest_world, name))
+                setattr(build_forest_world, name, value)
+            url = "meshes/material_bark_diff_png.png"
+            build_forest_world.stored_photograph(stages, out, url, source / "bark_diff.png")
+            made = (out / url).read_bytes()
+            (out / url).unlink()
+            (source / "bark_diff.png").unlink()  # hashing it now would fail: the archive names it
+            build_forest_world.stored_photograph(stages, out, url, source / "bark_diff.png")
+            self.assertEqual((out / url).read_bytes(), made)
+            build_forest_world.SOURCE_ARCHIVE = "sha-2"  # another archive: made again, from the file
+            with self.assertRaises(FileNotFoundError):
+                build_forest_world.stored_photograph(stages, out, url, source / "bark_diff.png")
 
 
 class MissingBakes(unittest.TestCase):

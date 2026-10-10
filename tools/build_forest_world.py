@@ -252,6 +252,9 @@ COPIED_RESOURCES = {}
 # Mesh conversions in flight (destination: future): the assembly reads no copied mesh before finish_copies().
 COPIES, COPY_POOL = {}, None
 STAGES = None  # the stage store (main's --stages), for the workers too
+# The source's textures (main's --source) and the archive they were extracted from, whose extraction the pipeline
+# checks before assembling: a stored step names a source file by it, not by hashing the file.
+SOURCE, SOURCE_ARCHIVE = None, None
 
 
 def stored_mesh(src, dst):
@@ -721,9 +724,13 @@ def toolchain():
 
 def stored(stages, out, stage, script, args, inputs, files, compute, in_place=False):
     """compute()'s value and the files it writes under out, kept in the stage store (tools/stage_cache.py) by script's
-    code, args and the input files, and taken back unchanged: computed only when one of them changed. in_place: compute
-    rewrites files it reads, so they stay until it runs."""
-    recipe = descriptor(Path(__file__).resolve().parents[1], stage, script, args, inputs, toolchain())
+    code, args and the input files (a source file by its name and the source's archive), and taken back unchanged:
+    computed only when one of them changed. in_place: compute rewrites files it reads, so they stay until it runs."""
+    pinned = {name: str(Path(path).resolve().relative_to(SOURCE)) for name, path in inputs.items()
+              if SOURCE and Path(path).resolve().is_relative_to(SOURCE)}
+    recipe = descriptor(Path(__file__).resolve().parents[1], stage, script, [*args, pinned] if pinned else args,
+                        {name: path for name, path in inputs.items() if name not in pinned},
+                        toolchain() | ({"source": SOURCE_ARCHIVE} if pinned else {}))
     store = Store(stages)
     kept = store.restore(recipe, out, files)
     if kept:
@@ -783,12 +790,13 @@ def main():
     parser.add_argument("--source", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--stages", required=True, help="the stage store (tools/stage_cache.py)")
+    parser.add_argument("--source-archive", required=True, help="the sha256 of the archive --source was extracted from")
     parser.add_argument("--bake-inputs", action="store_true",
                         help="only what the light and impostor bakes read: no valley, edge ground, fog, light "
                              "occlusion, impostor atlases or compressed textures")
     args = parser.parse_args()
-    global STAGES
-    STAGES = Path(args.stages)
+    global STAGES, SOURCE, SOURCE_ARCHIVE
+    STAGES, SOURCE, SOURCE_ARCHIVE = Path(args.stages), Path(args.source).resolve(), args.source_archive
     build = Path(args.build)
     source = Path(args.source)
     out = Path(args.out)

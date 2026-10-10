@@ -140,3 +140,11 @@ def twig_atlas(build, cards, color, normal):
                           corner)
     img.save(color)
     normals.save(normal)
+
+
+def thumbnail(src, dst):
+    """A source texture at most 2048 texels on a side (Lanczos), as the export's Blender stages read it: they are
+    pointed at these before loading pixels, so the 4K originals never all enter memory."""
+    with Image.open(src) as original:
+        original.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+        original.save(dst)

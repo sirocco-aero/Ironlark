@@ -349,6 +349,21 @@ def export_heights(out, dg):
     log("wrote heights.json")
 
 
+def render_still(scene, path):
+    """Render scene into the PNG at path without the text Blender and Cycles stamp into it (the date, the render
+    times), so the same scene writes the same bytes."""
+    scene.render.filepath = str(path)
+    bpy.ops.render.render(write_still=True)
+    data = Path(path).read_bytes()
+    kept, at = [data[:8]], 8
+    while at < len(data):  # chunks: length, type, data, CRC
+        end = at + 12 + int.from_bytes(data[at : at + 4], "big")
+        if data[at + 4 : at + 8] not in (b"tEXt", b"zTXt", b"iTXt"):
+            kept.append(data[at:end])
+        at = end
+    Path(path).write_bytes(b"".join(kept))
+
+
 def sha256_of(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import stat
 import sys
@@ -14,11 +15,10 @@ import time
 from urllib.request import urlretrieve
 import zipfile
 
-from PIL import Image
-
 from forest_process import run_stage
-from receipts import code_closure, packages, recipe, write_world
-from stage_cache import Store, descriptor
+from forest_textures import thumbnail
+from receipts import code_closure, digest, packages, recipe, write_world
+from stage_cache import Store, clone, descriptor
 
 SIM = Path(__file__).resolve().parents[1]
 CACHE = SIM / ".cache"
@@ -151,17 +151,121 @@ def start_build(build, world, current, skip_export):
     stamp.write_text(json.dumps(current["export"], indent=1) + "\n")
 
 
+TEXTURES_2K = "texture-source-2k"
+
+
+def exports(build, source, stages, blender_stage, python_stage=None):
+    """The export's stages, each kept in the stage store (tools/stage_cache.py) by its code, arguments, the source (its
+    pinned archive, whose extraction source_blend checks) and the build files it reads: an unchanged one is cloned
+    back into the build folder, not run. A stage that runs does so in a room of its own (.cache/forest-export/<stage>)
+    holding only what it declares, beside a link to the source it finds through its folder's parent, so a file it reads
+    undeclared fails it; every file it writes there is its result."""
+    store = Store(stages)
+    toolchain = {"blender": INPUTS["blender/blender.tar.xz"][1], "source": INPUTS["pine-forest/source.zip"][1]}
+    rooms = stages.parent / "forest-export"
+    rooms.mkdir(exist_ok=True)
+    # To the source itself: a worktree reaches it through its link to the main checkout's .cache, which the rooms
+    # outlive.
+    link = rooms / "pine-forest"
+    if not link.is_symlink() or link.readlink() != source.parent.resolve():
+        link.unlink(missing_ok=True)
+        link.symlink_to(source.parent.resolve())
+    # The source's textures at 2048, which the Blender stages read in place of the 4K originals.
+    (build / TEXTURES_2K).mkdir(exist_ok=True)
+    thumbnails = {}
+    for path in sorted((source / "textures").glob("*.png")):
+        name = f"{TEXTURES_2K}/{path.name}"
+        recipe = descriptor(SIM, "thumbnail", "tools/forest_textures.py", [path.name], {},
+                            toolchain | {"packages": packages(SIM)})
+        kept = store.restore(recipe, build, [name])
+        if not kept:
+            thumbnail(path, build / name)
+            kept = store.save(recipe, build, [name])
+        thumbnails[name] = kept["outputs"][name][1]
+    textures = hashlib.sha256(json.dumps(thumbnails, sort_keys=True).encode()).hexdigest()
+
+    def stage(name, script, args=(), inputs=(), reads_textures=False, values=(), run=None):
+        """The stage's outputs in the build folder and the JSON files named in values, read (not cloned)."""
+        recipe = descriptor(SIM, name, f"tools/{script}", list(args), {n: build / n for n in inputs},
+                            toolchain | ({"textures": textures} if reads_textures else {}) | (
+                                {"python": platform.python_version(), "packages": packages(SIM)} if run else {}))
+        kept = store.restore(recipe, build)
+        if kept:
+            return kept["value"]
+        room = rooms / name
+        shutil.rmtree(room, ignore_errors=True)
+        room.mkdir()
+        for n in inputs:
+            (room / n).parent.mkdir(parents=True, exist_ok=True)
+            clone(build / n, room / n)
+        if reads_textures:
+            (room / TEXTURES_2K).symlink_to(build / TEXTURES_2K)
+        before = {n: digest(room / n) for n in inputs}
+        (run or blender_stage)(name, script, *args, out=room)
+        written = sorted(str((Path(folder) / file).relative_to(room)) for folder, _, files in os.walk(room)
+                         for file in files if not (Path(folder) / file).is_symlink())
+        value = {n: json.loads((room / n).read_text()) for n in values}
+        outputs = [n for n in written if n not in values and (n not in before or digest(room / n) != before[n])]
+        store.save(recipe, room, outputs, value)
+        for n in outputs:
+            target = build / n
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.unlink(missing_ok=True)
+            clone(room / n, target)
+        shutil.rmtree(room)
+        return value
+
+    def run_python(name, script, *args, out):
+        print(f"Forest build: {name}", flush=True)
+        run_stage([sys.executable, str(TOOLS / script), "--build", str(out), *args], CACHE / "build-logs" / f"{name}.log")
+
+    stage("terrain", "export_forest.py")
+    stage("tree-layout", "export_tree_layout.py")
+    # The twig cards every procedural tree is built from, then each tree on its own; their records are merged here,
+    # in name order, as the trees' stages once merged them one after another.
+    stage("twigs", "export_forest_visuals.py", ["--prepare-only"], reads_textures=True, values=["material_images.json"])
+    atlas = json.loads((build / "twig_atlas.json").read_text())
+    twigs = ["twig_atlas.json"] + sorted({card[key] for cards in atlas.values() for card in cards
+                                         for key in ("file", "normal") if key in card})
+    visual, properties, images = {}, {}, {}
+    for variant in sorted({r["variant"] for r in json.loads((build / "authored_trees.json").read_text())}):
+        made = stage(f"tree-{variant}", "export_forest_visuals.py", ["--variant", variant], twigs, True,
+                     ["visual_trees.json", "tree_properties.json", "material_images.json"])
+        visual |= made["visual_trees.json"]["variants"]
+        properties |= made["tree_properties.json"]
+        images.update(made["material_images.json"])
+        stage(f"material-{variant}", "bake_tree_materials.py", ["--variant", variant], [f"material_{variant}.blend"],
+              True)
+    (build / "visual_trees.json").write_text(json.dumps({"version": 1, "variants": visual}, indent=1))
+    (build / "tree_properties.json").write_text(json.dumps(properties, indent=2))
+    (build / "material_images.json").write_text(json.dumps(images, indent=1))
+    stage("cover-layout", "export_cover_layout.py")
+    stage("cover", "export_forest_cover.py", inputs=["cover.json"])
+    stage("river", "export_forest_water.py")
+    for x in range(2):
+        for y in range(2):
+            stage(f"terrain-material-{x}-{y}", "export_terrain_detail.py", ["--tile", str(x), str(y)],
+                  ["terrain_meta.json", "manifest.json"], True)
+    stage("floor-cover", "export_floor_cover.py", reads_textures=True)
+    photos = json.loads((build / "floor_cover_assets.json").read_text())
+    stage("floor-composite", "compose_forest_floor.py",
+          inputs=["floor_cover_assets.json", "floor_cover.jsonl.gz", "terrain_meta.json",
+                  *(f"terrain_{x}_{y}_diff.png" for x in range(2) for y in range(2)),
+                  *sorted({meta["image"] for meta in photos.values()})], run=python_stage or run_python)
+    stage("sky", "export_forest_sky.py")
+
+
 def bakes(build, world, source, stages, blender_stage):
     """The canopy light and the impostor captures, kept in the stage store by the bytes they read
     (tools/stage_cache.py): an unchanged bake comes back, not rendered again, whatever else changed."""
     store = Store(stages)
-    toolchain = {"blender": INPUTS["blender/blender.tar.xz"][1]}
+    # The source scene (its sky world, belfast_sunset_puresky, and that world's 8k sky) by its pinned archive, whose
+    # extraction source_blend checks.
+    toolchain = {"blender": INPUTS["blender/blender.tar.xz"][1], "source": INPUTS["pine-forest/source.zip"][1]}
     records = json.loads((world / "visual_instances.json").read_text())
     named = {r["mesh"] for r in records} | {r["texture"] for r in records if r["texture"]}
     named |= {"visual_instances.json"} | {f"meshes/terrain_{x}_{y}.obj" for x in range(2) for y in range(2)}
-    inputs = {name: world / name for name in named} | {
-        "source": source / "polyhaven_pine_fir_forest.blend",  # its sky world, belfast_sunset_puresky
-        "sky": source / "textures/evening_road_01_puresky_8k.exr"}
+    inputs = {name: world / name for name in named}
     args = ["--world", str(world)]
     light = descriptor(SIM, "canopy-light", "tools/bake_forest_light.py", args, inputs, toolchain)
     outputs = [f"terrain_{x}_{y}_layers.npy" for x in range(2) for y in range(2)] + ["light_layers.json"]
@@ -206,7 +310,7 @@ def build_world(skip_export=False):
     started, current = time.time(), recipes(SIM)
     start_build(build, world, current, skip_export)
 
-    def blender_stage(name, script, *args):
+    def blender_stage(name, script, *args, out=build):
         print(f"Forest build: {name}", flush=True)
         run_stage(
             [
@@ -221,108 +325,18 @@ def build_world(skip_export=False):
                 str(TOOLS / script),
                 "--",
                 "--out",
-                str(build),
+                str(out),
                 *args,
             ],
             logs / f"{name}.log",
         )
-
-    def missing(*names):
-        return any(not (build / name).is_file() for name in names)
 
     scene = source_blend()  # the assembly reads the source's photographs too, so --skip-export checks it as well
     if not skip_export:
         for path in (blender_executable(), scene):
             if not path.is_file():
                 raise RuntimeError(f"Missing build input: {path}")
-        # Decode and resize one texture at a time. Blender is pointed at these
-        # files before loading pixels, so the 4K originals never all enter RAM.
-        textures = build / "texture-source-2k"
-        textures.mkdir(exist_ok=True)
-        for path in sorted((source / "textures").glob("*.png")):
-            target = textures / path.name
-            if target.is_file():
-                continue
-            with Image.open(path) as original:
-                original.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
-                original.save(target)
-        if missing("terrain.obj", "terrain_meta.json", "heights.json", "manifest.json"):
-            blender_stage("terrain", "export_forest.py")
-        if missing("authored_trees.json"):
-            blender_stage("tree-layout", "export_tree_layout.py")
-        desired = {
-            r["variant"]
-            for r in json.loads((build / "authored_trees.json").read_text())
-        }
-        visual_path = build / "visual_trees.json"
-        visual = (
-            json.loads(visual_path.read_text())["variants"]
-            if visual_path.exists()
-            else {}
-        )
-        for variant in sorted(desired):
-            if variant not in visual or any(
-                missing(part["file"]) for part in visual[variant]
-            ):
-                blender_stage(
-                    f"tree-{variant}", "export_forest_visuals.py", "--variant", variant
-                )
-            baked = build / f"baked_{variant}.json"
-            if not baked.exists() or any(
-                missing(filename)
-                for material in json.loads(baked.read_text()).values()
-                for filename in material.values()
-            ):
-                blender_stage(
-                    f"material-{variant}",
-                    "bake_tree_materials.py",
-                    "--variant",
-                    variant,
-                )
-        if missing("cover.json"):
-            blender_stage("cover-layout", "export_cover_layout.py")
-        assets_path = build / "cover_assets.json"
-        assets = json.loads(assets_path.read_text()) if assets_path.exists() else {}
-        names = {
-            r[key] for r in json.loads((build / "cover.json").read_text()) for key in ("asset", "lod1")
-        }
-        if names - assets.keys() or any(
-            missing(asset["file"]) for asset in assets.values()
-        ):
-            blender_stage("cover", "export_forest_cover.py")
-        if missing("river.obj", "river_meta.json"):
-            blender_stage("river", "export_forest_water.py")
-        for x in range(2):
-            for y in range(2):
-                if missing(f"terrain_{x}_{y}_diff.png", f"terrain_{x}_{y}_normal.png", f"terrain_{x}_{y}_mask.png",
-                           "terrain_generated.json"):
-                    blender_stage(
-                        f"terrain-material-{x}-{y}",
-                        "export_terrain_detail.py",
-                        "--tile",
-                        str(x),
-                        str(y),
-                    )
-        if missing("floor_cover.jsonl.gz", "floor_cover_assets.json"):
-            blender_stage("floor-cover", "export_floor_cover.py")
-        if any(
-            missing(f"terrain_{x}_{y}_floor.png") for x in range(2) for y in range(2)
-        ):
-            run_stage(
-                [
-                    sys.executable,
-                    str(TOOLS / "compose_forest_floor.py"),
-                    "--build",
-                    str(build),
-                ],
-                logs / "floor-composite.log",
-            )
-        if any(
-            missing(f"{prefix}_{face}.hdr")
-            for face in ("back", "bottom", "front", "left", "right", "top")
-            for prefix in ("sky", "sky_light")
-        ) or missing("sky_light_mean.json", "sky_horizon.json", "sky_phase_radiance.json"):
-            blender_stage("sky", "export_forest_sky.py")
+        exports(build, source, CACHE / "forest-stages", blender_stage)
     assemble = [
         sys.executable,
         str(TOOLS / "build_forest_world.py"),
@@ -334,6 +348,8 @@ def build_world(skip_export=False):
         str(world),
         "--stages",
         str(CACHE / "forest-stages"),
+        "--source-archive",
+        INPUTS["pine-forest/source.zip"][1],
     ]
     if not skip_export:
         # The bakes read only part of the world (bake-inputs: no valley, fog, light fields, atlases or compression),
