@@ -2,6 +2,7 @@
 """Launch Ironlark's first simulated-flight integration check (Linux)."""
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ import fcntl
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "tools"))
 from renderer_support import select_webots, renderer_problem, renderer_preflight, preflight_report
+from receipts import packages, world_problems
 from run_resources import Sampler
 CACHE = ROOT / ".cache"
 IMAGE = "ironlark-sitl:copter-4.7.1"
@@ -155,7 +157,8 @@ def doctor(overview=True, home=None, record=False):
         except RuntimeError as error:
             forest_renderer = False
             print(str(error))
-        forest_world = (ROOT / "worlds/pine_forest/pine_forest.wbt").is_file()
+        forest_world = (ROOT / "worlds/pine_forest/pine_forest.wbt").is_file() and not world_problems(
+            ROOT, ROOT / "worlds/pine_forest")
         print(f"{'OK     ' if runtime_ready and forest_renderer and forest_world else 'MISSING'} "
               "Forest readiness (setup, build-renderer, build-world)")
         print(f"{'OK     ' if runtime_ready else 'MISSING'} Empty-world readiness (stock Webots supported)")
@@ -224,12 +227,6 @@ def stage_world(run, world):
             target.parent / ".flight_foundation.wbproj",
         )
         return target, None
-    source = ROOT / "worlds/pine_forest/pine_forest.wbt"
-    if not source.is_file():
-        raise RuntimeError(
-            "Forest world is not built. Run ./ironlark build-world first "
-            "(or copy .cache/forest-build from another machine)."
-        )
     # Flat layout: Webots resolves controllers from <project>/controllers,
     # where <project> is the parent of worlds/. A nested worlds/pine_forest/
     # dir breaks that lookup and robots silently fall back to `generic`.
@@ -366,6 +363,10 @@ def drone_stale():
         path = ROOT / name
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             return f"{name} changed"
+    if "packages" not in recorded:
+        return "its receipt lists no packages"
+    if (current := packages(ROOT, tuple(recorded["packages"]))) != recorded["packages"]:
+        return f"its packages were {recorded['packages']}, now {current}"
     return None
 
 
@@ -383,20 +384,36 @@ def check_recording(run):
     call(*ros_container(f"ironlark-check-{os.getpid()}", run, "python3 /project/tools/check_recording.py /run/ironlark"))
 
 
+@contextlib.contextmanager
+def exclusive():
+    """One flight or build at a time, across the checkouts sharing .cache: a build replaces what a flight loaded."""
+    CACHE.mkdir(exist_ok=True)
+    with (CACHE / "flight.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("Another Ironlark flight or build is running. Wait for it to end.") from exc
+        yield
+
+
 def flight(headless, editor=False, world="forest", record=False):
     home = webots_home(world)  # Refuse an incompatible forest before creating any run artifacts.
+    if world == "forest":
+        built = ROOT / "worlds/pine_forest"
+        if not (built / "pine_forest.wbt").is_file():
+            raise RuntimeError("Forest world is not built. Run ./ironlark build-world first "
+                               "(or copy .cache/forest-build from another machine).")
+        if problems := world_problems(ROOT, built):
+            more = f" and {len(problems) - 3} more" if len(problems) > 3 else ""
+            raise RuntimeError(f"The forest world is not what today's code builds: {'; '.join(problems[:3])}{more}. "
+                               "Rebuild it: ./ironlark build-world (about 78 min).")
     doctor(overview=False, home=home, record=record)
     if not headless and not os.environ.get("DISPLAY"):
         raise RuntimeError("Webots R2025a needs an X11/XWayland DISPLAY; Wayland-only is unsupported. "
                            "Enable XWayland or use ./ironlark check for headless.")
     if headless and not shutil.which("xvfb-run"):
         raise RuntimeError("Headless checks require xvfb-run.")
-    CACHE.mkdir(exist_ok=True)
-    with (CACHE / "flight.lock").open("w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError("Another Ironlark flight is running.") from exc
+    with exclusive():
         check_ports()
         if stale := drone_stale():
             print(f"Building the drone ({stale}).", flush=True)
@@ -708,10 +725,12 @@ def main():
     elif args.command == "render-reference":
         run_tool("render_reference.py")
     elif args.command == "build-world":
-        build_world(skip_export=args.skip_export)
-        build_drone()
+        with exclusive():
+            build_world(skip_export=args.skip_export)
+            build_drone()
     elif args.command == "build-drone":
-        build_drone()
+        with exclusive():
+            build_drone()
     else:
         world = args.world or ("empty" if args.command == "check" else "forest")
         flight(headless=args.command == "check", editor=args.editor, world=world, record=args.record)

@@ -1,6 +1,7 @@
 """Resume the source-based forest build, one bounded Blender process at a time."""
 
 import argparse
+import fcntl
 import hashlib
 import json
 from pathlib import Path
@@ -13,6 +14,7 @@ import zipfile
 from PIL import Image
 
 from forest_process import run_stage
+from receipts import recipe, write_world
 
 SIM = Path(__file__).resolve().parents[1]
 CACHE = SIM / ".cache"
@@ -48,16 +50,20 @@ def fetch(name):
     return path
 
 
-def unpack(archive, target, opener, member=None):
-    """Extract once; a partial extraction never looks complete."""
-    if target.exists():
+def unpack(archive, target, opener, identity, member=None):
+    """Extract once per archive (identity: its sha256); a partial extraction, or one of another archive, never
+    looks complete."""
+    marker = target / ".archive-sha256"
+    if marker.is_file() and marker.read_text() == identity:
         return
+    shutil.rmtree(target, ignore_errors=True)
     partial = target.with_name(target.name + ".part")
     shutil.rmtree(partial, ignore_errors=True)
     with opener(archive) as source:
         source.extractall(partial)
     (partial / member if member else partial).rename(target)
     shutil.rmtree(partial, ignore_errors=True)
+    marker.write_text(identity)
 
 
 BLENDER = CACHE / "blender/blender-4.2.9-linux-x64/blender"
@@ -65,13 +71,30 @@ SOURCE = CACHE / "pine-forest/source"
 
 
 def blender_executable():
-    unpack(fetch("blender/blender.tar.xz"), BLENDER.parent, tarfile.open, member=BLENDER.parent.name)
+    name = "blender/blender.tar.xz"
+    unpack(fetch(name), BLENDER.parent, tarfile.open, INPUTS[name][1], member=BLENDER.parent.name)
     return BLENDER
 
 
 def source_blend():
-    unpack(fetch("pine-forest/source.zip"), SOURCE, zipfile.ZipFile)
+    name = "pine-forest/source.zip"
+    unpack(fetch(name), SOURCE, zipfile.ZipFile, INPUTS[name][1])
     return SOURCE / "polyhaven_pine_fir_forest.blend"
+
+
+def start_build(build, world, current, skip_export):
+    """Stages resume a build of the same recipe (tools/receipts.py); outputs of other code, and the caches stages
+    keep inside the build folder, never feed this one. The world has no receipt until the build completes."""
+    stamp = build / "recipe.json"
+    made_by = json.loads(stamp.read_text()) if stamp.is_file() else None
+    if skip_export and made_by != current:
+        raise RuntimeError("The Blender export was made by other code. "
+                           "Run ./ironlark build-world without --skip-export.")
+    if made_by != current:
+        shutil.rmtree(build, ignore_errors=True)
+    (world / "receipt.json").unlink(missing_ok=True)
+    build.mkdir(exist_ok=True)
+    stamp.write_text(json.dumps(current, indent=1) + "\n")
 
 
 def build_world(skip_export=False):
@@ -80,7 +103,14 @@ def build_world(skip_export=False):
     world = SIM / "worlds/pine_forest"
     blender = BLENDER
     logs = CACHE / "build-logs"
-    build.mkdir(parents=True, exist_ok=True)
+    build.parent.mkdir(parents=True, exist_ok=True)
+    lock = (CACHE / "forest-build.lock").open("w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        raise RuntimeError("Another forest build is running (.cache is shared by every checkout linking it).") \
+            from error
+    start_build(build, world, recipe(SIM), skip_export)
 
     def blender_stage(name, script, *args):
         print(f"Forest build: {name}", flush=True)
@@ -235,6 +265,7 @@ def build_world(skip_export=False):
             blender_stage("impostors", "bake_impostors.py", "--world", str(world))
             stamp.write_text(json.dumps({"signature": signature}))
             run_stage(assemble, logs / "assemble-impostors.log")
+    write_world(SIM, world)
     print(f"Forest world ready: {world / 'pine_forest.wbt'}", flush=True)
 
 

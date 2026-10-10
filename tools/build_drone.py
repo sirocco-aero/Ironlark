@@ -4,7 +4,6 @@ rig of config/sensors.json.
 
     .venv/bin/python tools/build_drone.py
 """
-import hashlib
 import json
 import shutil
 import subprocess
@@ -18,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "protos"
 PARTS = OUT / "drone"
 sys.path.insert(0, str(ROOT / "tools"))
+from receipts import digest, packages  # noqa: E402
 
 # PBR materials, Webots colors (sRGB).
 MATERIALS = {
@@ -202,11 +202,6 @@ INPUTS = ("tools/build_drone.py", "tools/drone_meshes.py", "config/sensors.json"
 RECEIPT = PARTS / "receipt.json"
 
 
-def digest(path):
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
 def main():
     from forest_pipeline import blender_executable
 
@@ -226,6 +221,7 @@ def main():
     temporary = RECEIPT.with_suffix(".tmp")
     temporary.write_text(json.dumps({
         "inputs": inputs,
+        "packages": packages(ROOT, ("numpy", "pillow")),  # the carbon weave's
         "outputs": {str(path.relative_to(ROOT)): digest(path) for path in outputs},
     }, indent=1) + "\n")
     temporary.rename(RECEIPT)

@@ -12,7 +12,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+import forest_pipeline
 import forest_process
+import receipts
 
 loader = SourceFileLoader("launcher", str(ROOT / "ironlark"))  # the launcher script, as a module
 launcher = importlib.util.module_from_spec(importlib.util.spec_from_loader("launcher", loader))
@@ -99,8 +101,11 @@ class Drone(unittest.TestCase):
             (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             (self.root / name).write_text(text)
         digests = {name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()}
+        for package in ("numpy-2.2.6", "pillow-12.3.0"):
+            (self.root / f".venv/lib/python3.12/site-packages/{package}.dist-info").mkdir(parents=True)
         (self.root / "protos/drone/receipt.json").write_text(json.dumps({
             "inputs": {"config/sensors.json": digests["config/sensors.json"]},
+            "packages": {"numpy": "2.2.6", "pillow": "12.3.0"},
             "outputs": {name: digests[name] for name in files if name.startswith("protos/")}}))
 
     def test_a_complete_build_is_current(self):
@@ -112,8 +117,96 @@ class Drone(unittest.TestCase):
         (self.root / "config/sensors.json").write_text("{}")
         (self.root / "protos/drone/body.obj").unlink()
         self.assertEqual(launcher.drone_stale(), "protos/drone/body.obj changed")
+        (self.root / "protos/drone/body.obj").write_text("v 0 0 0")
+        site = self.root / ".venv/lib/python3.12/site-packages"
+        (site / "pillow-12.3.0.dist-info").rename(site / "pillow-12.4.0.dist-info")
+        self.assertIn("now {'numpy': '2.2.6', 'pillow': '12.4.0'}", launcher.drone_stale())
         (self.root / "protos/drone/receipt.json").unlink()
         self.assertEqual(launcher.drone_stale(), "no completed build")
+
+
+
+class Receipts(unittest.TestCase):
+    """A forest world carries what it was built from; the pipeline resumes only a build of the same recipe."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        shutil.copytree(ROOT / "tools", self.root / "tools", ignore=shutil.ignore_patterns("__pycache__"))
+        (self.root / "controllers/flight_observer").mkdir(parents=True)
+        shutil.copyfile(ROOT / "controllers/flight_observer/minimap.py", self.root / "controllers/flight_observer/minimap.py")
+        for package in ("numpy-2.2.6", "pillow-12.3.0", "etcpak-0.9.15"):
+            (self.root / f".venv/lib/python3.12/site-packages/{package}.dist-info").mkdir(parents=True)
+        self.world = self.root / "worlds/pine_forest"
+        (self.world / "meshes").mkdir(parents=True)
+        (self.world / "pine_forest.wbt").write_text("#VRML_SIM R2025a utf8\n")
+        (self.world / "meshes/tree.obj").write_text("v 0 0 0\n")
+
+    def test_the_recipe_covers_every_script_the_pipeline_runs_and_what_they_import(self):
+        code = receipts.pipeline_code(ROOT)
+        for name in ("forest_pipeline", "export_forest", "forest_mesh", "bake_impostors", "build_forest_world",
+                     "forest_edge", "forest_process"):
+            self.assertIn(f"tools/{name}.py", code)
+        self.assertIn("controllers/flight_observer/minimap.py", code)  # the world's view, through look_at
+        self.assertNotIn("tools/render_forest.py", code)
+
+    def test_a_world_is_current_until_its_code_packages_or_files_change(self):
+        receipts.write_world(self.root, self.world)
+        self.assertEqual(receipts.world_problems(self.root, self.world), [])
+        with (self.root / "tools/forest_mesh.py").open("a") as script:
+            script.write("# changed\n")
+        self.assertEqual(receipts.world_problems(self.root, self.world), ["tools/forest_mesh.py changed"])
+        shutil.copyfile(ROOT / "tools/forest_mesh.py", self.root / "tools/forest_mesh.py")
+        with (self.root / "controllers/flight_observer/minimap.py").open("a") as script:
+            script.write("# changed\n")
+        self.assertEqual(receipts.world_problems(self.root, self.world), ["controllers/flight_observer/minimap.py changed"])
+        shutil.copyfile(ROOT / "controllers/flight_observer/minimap.py", self.root / "controllers/flight_observer/minimap.py")
+        (self.root / ".venv/lib/python3.12/site-packages/numpy-2.2.6.dist-info").rename(
+            self.root / ".venv/lib/python3.12/site-packages/numpy-2.3.0.dist-info")
+        self.assertEqual(receipts.world_problems(self.root, self.world), ["numpy 2.2.6 is now 2.3.0"])
+
+    def test_a_changed_or_missing_output_is_named(self):
+        receipts.write_world(self.root, self.world)
+        (self.world / "meshes/tree.obj").write_text("v 0 0 1\n")  # the same size: only its contents tell
+        self.assertEqual(receipts.world_problems(self.root, self.world), [])
+        self.assertEqual(receipts.world_problems(self.root, self.world, contents=True),
+                         ["meshes/tree.obj is not the file the build wrote"])
+        (self.world / "pine_forest.wbt").unlink()
+        self.assertIn("pine_forest.wbt is not the file the build wrote", receipts.world_problems(self.root, self.world))
+        (self.world / "receipt.json").unlink()
+        self.assertEqual(receipts.world_problems(self.root, self.world),
+                         ["it has no receipt: built before receipts, or not finished"])
+
+    def test_a_build_resumes_only_under_the_same_recipe(self):
+        build = self.root / "forest-build"
+        receipts.write_world(self.root, self.world)
+        forest_pipeline.start_build(build, self.world, {"code": "today"}, skip_export=False)
+        self.assertFalse((self.world / "receipt.json").exists())  # until the build completes
+        (build / "terrain.obj").write_text("stage output")
+        forest_pipeline.start_build(build, self.world, {"code": "today"}, skip_export=True)
+        self.assertTrue((build / "terrain.obj").exists())
+        with self.assertRaisesRegex(RuntimeError, "made by other code"):
+            forest_pipeline.start_build(build, self.world, {"code": "tomorrow"}, skip_export=True)
+        forest_pipeline.start_build(build, self.world, {"code": "tomorrow"}, skip_export=False)
+        self.assertFalse((build / "terrain.obj").exists())
+        self.assertEqual(json.loads((build / "recipe.json").read_text()), {"code": "tomorrow"})
+
+    def test_an_extraction_belongs_to_its_archive(self):
+        import tarfile
+
+        archive = self.root / "source.tar"
+        (self.root / "packed").mkdir()
+        (self.root / "packed/scene.blend").write_text("first")
+        with tarfile.open(archive, "w") as tar:
+            tar.add(self.root / "packed", arcname="packed")
+        target = self.root / "source"
+        forest_pipeline.unpack(archive, target, tarfile.open, "sha-1", member="packed")
+        (target / "scene.blend").write_text("edited")
+        forest_pipeline.unpack(archive, target, tarfile.open, "sha-1", member="packed")
+        self.assertEqual((target / "scene.blend").read_text(), "edited")  # extracted once
+        forest_pipeline.unpack(archive, target, tarfile.open, "sha-2", member="packed")
+        self.assertEqual((target / "scene.blend").read_text(), "first")  # another archive: extracted again
 
 
 if __name__ == "__main__":
