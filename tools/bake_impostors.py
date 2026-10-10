@@ -20,6 +20,9 @@ import bpy
 import numpy as np
 from mathutils import Matrix, Vector
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cycles_gpu import use_gpu  # noqa: E402
+
 FRAMES = 8  # must match pbr_impostor.vert and pbr.frag
 
 p = argparse.ArgumentParser()
@@ -48,22 +51,7 @@ scene.render.resolution_x = scene.render.resolution_y = FRAMES * SIZE
 world = bpy.data.worlds.new("black")
 world.color = (0, 0, 0)
 scene.world = world
-try:  # a GPU when Blender finds one
-    prefs = bpy.context.preferences.addons["cycles"].preferences
-    for backend in ("OPTIX", "CUDA", "HIP"):
-        try:
-            prefs.compute_device_type = backend
-        except TypeError:
-            continue
-        prefs.get_devices()
-        if any(d.type == backend for d in prefs.devices):
-            for d in prefs.devices:
-                d.use = d.type == backend
-            scene.cycles.device = "GPU"
-            break
-except Exception:
-    pass
-print("IMPOSTOR device", scene.cycles.device, flush=True)
+use_gpu(scene, "IMPOSTOR")
 
 
 def grid_to_direction(u, v):

@@ -9,11 +9,13 @@ from pathlib import Path
 import bpy
 import numpy as np
 from mathutils import Matrix,Quaternion,Vector
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from cycles_gpu import use_gpu
 
 p=argparse.ArgumentParser();p.add_argument('--world',required=True);p.add_argument('--out',required=True)
 a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);world=Path(a.world).resolve();out=Path(a.out).resolve()
 bpy.ops.wm.read_factory_settings(use_empty=True)
-scene=bpy.context.scene;scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.device='CPU'
+scene=bpy.context.scene;scene.render.engine='CYCLES';scene.cycles.samples=8;use_gpu(scene,'LIGHT')
 scene.cycles.transparent_max_bounces=16;scene.cycles.diffuse_bounces=0;scene.cycles.use_denoising=False
 scene.world=bpy.data.worlds.new('ambient');scene.world.use_nodes=True;scene.world.node_tree.nodes['Background'].inputs[1].default_value=0
 sun=bpy.data.objects.new('source sun',bpy.data.lights.new('source sun','SUN'));scene.collection.objects.link(sun);sun.data.energy=3.5;sun.data.angle=.0092  # the source's sun_main
@@ -67,11 +69,13 @@ groups={}
 for r in records:groups.setdefault((r['mesh'],r['texture']),[]).append(r)
 tree=instancer();prototype_socket=tree.interface.items_tree['Prototype'].identifier
 # The layers below are what every surface reads its light from, at its own position: cover lower
-# than this (rocks, ferns, logs, branches) would shade itself there. It shades the ground in the
-# terrain bake; in the world, near the viewer, the shadow maps and GTAO shade what it covers.
-LAYER_OCCLUDER_HEIGHT=3.0;low_cover=[]
+# than this (rocks, ferns, logs, branches) would shade itself there, so it is left out; in the
+# world, near the viewer, the shadow maps and GTAO shade what it covers.
+LAYER_OCCLUDER_HEIGHT=3.0;low_cover=0
 for (url,texture),placed in groups.items():
  prototype=bpy.data.objects.new('prototype',mesh(url,texture))  # referenced, never linked to the scene
+ zs=[v.co.z for v in prototype.data.vertices]
+ if (max(zs)-min(zs))*max(max(r['scale']) for r in placed)<LAYER_OCCLUDER_HEIGHT:low_cover+=1;continue
  points=bpy.data.meshes.new('placements');points.vertices.add(len(placed))
  points.vertices.foreach_set('co',[c for r in placed for c in r['translation']])
  quats=[Quaternion(r['rotation'][:3],r['rotation'][3]) for r in placed]
@@ -79,25 +83,13 @@ for (url,texture),placed in groups.items():
  points.attributes.new('scl','FLOAT_VECTOR','POINT').data.foreach_set('vector',[c for r in placed for c in r['scale']])
  ob=bpy.data.objects.new('instances',points);scene.collection.objects.link(ob)
  modifier=ob.modifiers.new('instancer','NODES');modifier.node_group=tree;modifier[prototype_socket]=prototype
- zs=[v.co.z for v in prototype.data.vertices]
- if (max(zs)-min(zs))*max(max(r['scale']) for r in placed)<LAYER_OCCLUDER_HEIGHT:low_cover.append(ob)
-print('LIGHT_INSTANCES',len(records),'in',len(groups),'instancers',len(low_cover),'of them low cover',flush=True)
+print('LIGHT_INSTANCES',len(records),'in',len(groups),'instancers',low_cover,'of them low cover, left out',flush=True)
 terrain=[]
 for x in range(2):
  for y in range(2):
   ob=bpy.data.objects.new(f'terrain_{x}_{y}',mesh(f'meshes/terrain_{x}_{y}.obj',''));scene.collection.objects.link(ob);terrain.append((x,y,ob))
-# Allocate the target once and reuse it. Every other mesh is linked/shared.
-img=bpy.data.images.new('canopy visibility',width=1024,height=1024,float_buffer=True);img.colorspace_settings.name='Non-Color'
-mat=materials[''];target=mat.node_tree.nodes.new('ShaderNodeTexImage');target.image=img;mat.node_tree.nodes.active=target
+mat=materials[''];target=mat.node_tree.nodes.new('ShaderNodeTexImage');mat.node_tree.nodes.active=target
 scene.render.bake.margin=8;scene.render.bake.use_clear=True
-for x,y,ob in terrain:
- for selected in bpy.context.selected_objects:selected.select_set(False)
- ob.select_set(True);bpy.context.view_layer.objects.active=ob
- bpy.ops.object.bake(type='DIFFUSE',pass_filter={'DIRECT'})
- pixels=np.empty(1024*1024*4,dtype=np.float32);img.pixels.foreach_get(pixels)
- pixels=pixels.reshape(1024,1024,4)[::-1,:,:3].copy()
- np.save(out/f'terrain_{x}_{y}_light.npy',pixels)
- print('LIGHT_TILE',x,y,'max',pixels.max(),'mean',pixels.mean(),flush=True)
 
 # Light visibility layers (Webots Background.lightOcclusion*, patch 0026): at heights above the
 # ground, how much of the sky (R), the second sun (G), the main sun (B) and the sky overhead (A:
@@ -107,7 +99,6 @@ for x,y,ob in terrain:
 # hides the bright low sky first, so a uniform sky overstated it. G, B, A: the SHADOW pass of that
 # sun alone (1 lit, 0 shadowed).
 LAYERS=[0.0,3.0,8.0,16.0,28.0];RES=512
-for ob in low_cover:ob.hide_render=True
 second=bpy.data.objects.new('second sun',bpy.data.lights.new('second sun','SUN'));scene.collection.objects.link(second)
 second.data.angle=.0262  # the source's sun_secondary
 second.rotation_euler=Vector((-.148121,-.845642,-.512786)).to_track_quat('-Z','Y').to_euler()
