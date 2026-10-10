@@ -197,19 +197,43 @@ class Receipts(unittest.TestCase):
         self.assertEqual(receipts.world_problems(self.root, self.world),
                          ["it has no receipt: built before receipts, or not finished"])
 
-    def test_a_build_resumes_only_under_the_same_recipe(self):
+    def test_the_export_recipe_leaves_out_the_stages_after_the_export(self):
+        code = forest_pipeline.recipes(ROOT)["export"]["code"]
+        for name in ("forest_pipeline", "export_forest", "export_forest_visuals", "bake_tree_materials",
+                     "compose_forest_floor", "export_forest_sky", "stage_cache"):
+            self.assertIn(f"tools/{name}.py", code)
+        for name in ("build_forest_world", "bake_forest_light", "bake_impostors", "forest_valley", "dds"):
+            self.assertNotIn(f"tools/{name}.py", code)
+
+    def test_a_build_resumes_only_under_the_same_export_code(self):
         build = self.root / "forest-build"
+        today = {"export": "export today", "full": "today"}
         receipts.write_world(self.root, self.world)
-        forest_pipeline.start_build(build, self.world, {"code": "today"}, skip_export=False)
+        forest_pipeline.start_build(build, self.world, today, skip_export=False)
         self.assertFalse((self.world / "receipt.json").exists())  # until the build completes
         (build / "terrain.obj").write_text("stage output")
-        forest_pipeline.start_build(build, self.world, {"code": "today"}, skip_export=True)
-        self.assertTrue((build / "terrain.obj").exists())
-        with self.assertRaisesRegex(RuntimeError, "made by other code"):
-            forest_pipeline.start_build(build, self.world, {"code": "tomorrow"}, skip_export=True)
-        forest_pipeline.start_build(build, self.world, {"code": "tomorrow"}, skip_export=False)
+        assembly_edited = {"export": "export today", "full": "tomorrow"}
+        forest_pipeline.start_build(build, self.world, assembly_edited, skip_export=False)
+        self.assertTrue((build / "terrain.obj").exists())  # the exports stand
+        export_edited = {"export": "export tomorrow", "full": "tomorrow"}
+        forest_pipeline.start_build(build, self.world, export_edited, skip_export=False)
         self.assertFalse((build / "terrain.obj").exists())
-        self.assertEqual(json.loads((build / "recipe.json").read_text()), {"code": "tomorrow"})
+        self.assertEqual(json.loads((build / "recipe.json").read_text()), "export tomorrow")
+
+    def test_skip_export_needs_bakes_today_s_pipeline_finished(self):
+        build = self.root / "forest-build"
+        today = {"export": "export today", "full": "today"}
+        forest_pipeline.start_build(build, self.world, today, skip_export=False)
+        with self.assertRaisesRegex(RuntimeError, "did not finish"):  # its bakes have not run
+            forest_pipeline.start_build(build, self.world, today, skip_export=True)
+        (build / "baked.json").write_text(json.dumps("today"))  # as build_world writes after the bakes
+        forest_pipeline.start_build(build, self.world, today, skip_export=True)
+        bake_edited = {"export": "export today", "full": "tomorrow"}
+        with self.assertRaisesRegex(RuntimeError, "made by other code"):
+            forest_pipeline.start_build(build, self.world, bake_edited, skip_export=True)
+        forest_pipeline.start_build(build, self.world, today, skip_export=False)  # interrupted before its bakes
+        with self.assertRaisesRegex(RuntimeError, "did not finish"):
+            forest_pipeline.start_build(build, self.world, today, skip_export=True)
 
     def test_an_extraction_belongs_to_its_archive(self):
         import tarfile

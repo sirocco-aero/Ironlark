@@ -15,7 +15,7 @@ import zipfile
 from PIL import Image
 
 from forest_process import run_stage
-from receipts import recipe, write_world
+from receipts import code_closure, packages, recipe, write_world
 from stage_cache import Store, descriptor
 
 SIM = Path(__file__).resolve().parents[1]
@@ -84,19 +84,34 @@ def source_blend():
     return SOURCE / "polyhaven_pine_fir_forest.blend"
 
 
+# The stages after the export: the assembly computes the world again every build, and keeps what it would compute
+# unchanged, as the bakes do, in the stage store by its own code (tools/stage_cache.py).
+AFTER_EXPORT = ("build_forest_world.py", "bake_forest_light.py", "bake_impostors.py")
+
+
+def recipes(root):
+    """What the build folder's exports are made from (the pipeline's code but the stages after the export, and the
+    packages), and what the whole build is (receipts.recipe)."""
+    export = code_closure(root, "tools/forest_pipeline.py", named_scripts=True, leave_out=AFTER_EXPORT)
+    return {"export": {"code": export, "packages": packages(root)}, "full": recipe(root)}
+
+
 def start_build(build, world, current, skip_export):
-    """Stages resume a build of the same recipe (tools/receipts.py); outputs of other code, and the caches stages
-    keep inside the build folder, never feed this one. The world has no receipt until the build completes."""
-    stamp = build / "recipe.json"
-    made_by = json.loads(stamp.read_text()) if stamp.is_file() else None
-    if skip_export and made_by != current:
-        raise RuntimeError("The Blender export was made by other code. "
+    """Stages resume a build whose export ran under the same code (recipes); other export code's outputs, and the
+    caches export stages keep inside the build folder, never feed this one. --skip-export reassembles only from bakes
+    today's whole pipeline finished (baked.json, written after them and removed when a build starts). The world has no
+    receipt until the build completes."""
+    stamp, baked = build / "recipe.json", build / "baked.json"
+    if skip_export and (json.loads(baked.read_text()) if baked.is_file() else None) != current["full"]:
+        raise RuntimeError("The bakes were made by other code, or did not finish. "
                            "Run ./ironlark build-world without --skip-export.")
-    if made_by != current:
+    if (json.loads(stamp.read_text()) if stamp.is_file() else None) != current["export"]:
         shutil.rmtree(build, ignore_errors=True)
     (world / "receipt.json").unlink(missing_ok=True)
     build.mkdir(exist_ok=True)
-    stamp.write_text(json.dumps(current, indent=1) + "\n")
+    if not skip_export:
+        baked.unlink(missing_ok=True)
+    stamp.write_text(json.dumps(current["export"], indent=1) + "\n")
 
 
 def bakes(build, world, source, stages, blender_stage):
@@ -151,8 +166,8 @@ def build_world(skip_export=False):
     except BlockingIOError as error:
         raise RuntimeError("Another forest build is running (.cache is shared by every checkout linking it).") \
             from error
-    started = time.time()
-    start_build(build, world, recipe(SIM), skip_export)
+    started, current = time.time(), recipes(SIM)
+    start_build(build, world, current, skip_export)
 
     def blender_stage(name, script, *args):
         print(f"Forest build: {name}", flush=True)
@@ -288,6 +303,7 @@ def build_world(skip_export=False):
         print("Forest build: the bakes' inputs", flush=True)
         run_stage([*assemble, "--bake-inputs"], logs / "assemble-bake-inputs.log")
         bakes(build, world, source, CACHE / "forest-stages", blender_stage)
+        (build / "baked.json").write_text(json.dumps(current["full"], indent=1) + "\n")
     print("Forest build: assemble world", flush=True)
     run_stage(assemble, logs / "assemble.log")
     write_world(SIM, world)

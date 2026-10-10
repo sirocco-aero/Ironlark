@@ -29,10 +29,10 @@ def packages(root, names=PACKAGES):
     return {name: installed.get(name) for name in names}
 
 
-def code_closure(root, entry, named_scripts=False):
+def code_closure(root, entry, named_scripts=False, leave_out=()):
     """sha256 of every file of a script's code: itself and its imports from tools/ or from a repository directory a
     script names (build_forest_world.py adds controllers/flight_observer), and with named_scripts the tools scripts
-    it names too (the pipeline's stages)."""
+    it names too (the pipeline's stages), but those in leave_out."""
     root = Path(root)
     folders = [root / "tools"]
 
@@ -46,7 +46,7 @@ def code_closure(root, entry, named_scripts=False):
     pending = [first]
     if named_scripts:
         pending += [path for value in constants(ast.parse(first.read_text())) if value.endswith(".py")
-                    and (path := module(value[:-3]))]
+                    and value not in leave_out and (path := module(value[:-3]))]
     found = set()
     while pending:
         path = pending.pop()
