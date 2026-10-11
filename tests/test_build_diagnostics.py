@@ -243,13 +243,41 @@ class Receipts(unittest.TestCase):
         (self.root / "packed/scene.blend").write_text("first")
         with tarfile.open(archive, "w") as tar:
             tar.add(self.root / "packed", arcname="packed")
+        program = self.root / "program"
+        forest_pipeline.unpack(archive, program, tarfile.open, "sha-1", member="packed", added_ok=True)
+        (program / "__pycache__").mkdir()
+        (program / "__pycache__/module.pyc").write_text("written by the program, later")
+        forest_pipeline.unpack(archive, program, tarfile.open, "sha-1", member="packed", added_ok=True)
+        self.assertTrue((program / "__pycache__/module.pyc").exists())  # a program's own folder: added files stand
         target = self.root / "source"
         forest_pipeline.unpack(archive, target, tarfile.open, "sha-1", member="packed")
-        (target / "scene.blend").write_text("edited")
+        with self.assertRaises(PermissionError):  # the source is read-only, so a build reads what the archive holds
+            (target / "scene.blend").write_text("saved")
+        with self.assertRaises(PermissionError):
+            (target / "scene.blend@").write_text("Blender's save, renamed over the scene after")
+        extracted = (target / "scene.blend").stat().st_ino
         forest_pipeline.unpack(archive, target, tarfile.open, "sha-1", member="packed")
-        self.assertEqual((target / "scene.blend").read_text(), "edited")  # extracted once
+        self.assertEqual((target / "scene.blend").stat().st_ino, extracted)  # read-only and unchanged: trusted
+        for edit in (lambda: (target / "scene.blend.png").write_text("found before scene.blend by a texture lookup"),
+                     lambda: (target / "scene.blend").write_text("saved"),  # the same size: its mtime tells
+                     lambda: (target / "scene.blend").unlink(),
+                     lambda: None):  # made writable, edits that keep sizes and mtimes could have gone unseen
+            forest_pipeline.freeze(target, False)  # whoever makes it writable again
+            edit()
+            forest_pipeline.unpack(archive, target, tarfile.open, "sha-1", member="packed")
+            self.assertEqual(sorted(p.name for p in target.iterdir()), [".archive-sha256", "scene.blend"])
+            self.assertEqual((target / "scene.blend").read_text(), "first")
+            self.assertNotEqual((target / "scene.blend").stat().st_ino, extracted)  # extracted again
+            extracted = (target / "scene.blend").stat().st_ino
+        forest_pipeline.freeze(target, False)
+        (target / "scene.blend").write_text("edited")
+        (target / ".archive-sha256").write_text("sha-1")  # as the extraction marker was before it listed files
+        forest_pipeline.unpack(archive, target, tarfile.open, "sha-1", member="packed")
+        self.assertEqual((target / "scene.blend").read_text(), "first")
         forest_pipeline.unpack(archive, target, tarfile.open, "sha-2", member="packed")
         self.assertEqual((target / "scene.blend").read_text(), "first")  # another archive: extracted again
+        forest_pipeline.unpack(archive, target, tarfile.open, "sha-1", member="packed")
+        self.addCleanup(forest_pipeline.freeze, target, False)  # so the temporary folder can be removed
 
 
 class StageStore(unittest.TestCase):

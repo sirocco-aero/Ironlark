@@ -4,8 +4,10 @@ import argparse
 import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
+import stat
 import sys
 import tarfile
 import time
@@ -52,12 +54,44 @@ def fetch(name):
     return path
 
 
-def unpack(archive, target, opener, identity, member=None):
-    """Extract once per archive (identity: its sha256); a partial extraction, or one of another archive, never
-    looks complete."""
+def freeze(folder, frozen=True):
+    """Every file and folder in folder read-only (frozen) or writable again. Nothing can edit a frozen folder, nor save
+    a file into it: Blender writes a save beside the file and renames it over."""
+    for path in [folder, *folder.rglob("*")]:
+        if not path.is_symlink():
+            mode = path.stat().st_mode
+            path.chmod(mode & ~0o222 if frozen else mode | stat.S_IWUSR)
+
+
+def unpack(archive, target, opener, identity, member=None, added_ok=False):
+    """Extract once per archive (identity: its sha256), and again when a file it extracted was changed or removed
+    (opening the source scene in Blender and saving it, say), or a file was added: one named like an archived texture
+    would be found in its place (build_forest_world.find_texture). The marker records each file's size and mtime.
+    added_ok lets files added since stand (Blender writes __pycache__ into its own folder); a partial extraction never
+    looks complete. Without added_ok the extraction is left read-only: the stages and the store take the source's files
+    for the archive's, so a save into it during a build would be kept under the archive's checksum. A writable one,
+    made before extractions were, or made writable since, is extracted again: only a read-only one is trusted by its
+    marker."""
     marker = target / ".archive-sha256"
-    if marker.is_file() and marker.read_text() == identity:
-        return
+
+    def state(path):
+        try:
+            found = path.stat()
+        except FileNotFoundError:
+            return None
+        return [found.st_size, found.st_mtime_ns]
+
+    if marker.is_file() and marker.read_text().startswith("{"):  # an older marker, the sha256 alone: extract again
+        recorded = json.loads(marker.read_text())
+        added = not added_ok and any(str(path.relative_to(target)) not in recorded["files"]
+                                     for path in target.rglob("*") if path.is_file() and path != marker)
+        if recorded["archive"] == identity and not added and (added_ok or not os.access(target, os.W_OK)) and all(
+                state(target / name) == kept for name, kept in recorded["files"].items()):
+            if not added_ok:
+                freeze(target)
+            return
+    if target.is_dir():
+        freeze(target, False)
     shutil.rmtree(target, ignore_errors=True)
     partial = target.with_name(target.name + ".part")
     shutil.rmtree(partial, ignore_errors=True)
@@ -65,7 +99,10 @@ def unpack(archive, target, opener, identity, member=None):
         source.extractall(partial)
     (partial / member if member else partial).rename(target)
     shutil.rmtree(partial, ignore_errors=True)
-    marker.write_text(identity)
+    files = {str(path.relative_to(target)): state(path) for path in sorted(target.rglob("*")) if path.is_file()}
+    marker.write_text(json.dumps({"archive": identity, "files": files}) + "\n")
+    if not added_ok:
+        freeze(target)
 
 
 BLENDER = CACHE / "blender/blender-4.2.9-linux-x64/blender"
@@ -74,7 +111,7 @@ SOURCE = CACHE / "pine-forest/source"
 
 def blender_executable():
     name = "blender/blender.tar.xz"
-    unpack(fetch(name), BLENDER.parent, tarfile.open, INPUTS[name][1], member=BLENDER.parent.name)
+    unpack(fetch(name), BLENDER.parent, tarfile.open, INPUTS[name][1], member=BLENDER.parent.name, added_ok=True)
     return BLENDER
 
 
@@ -193,8 +230,9 @@ def build_world(skip_export=False):
     def missing(*names):
         return any(not (build / name).is_file() for name in names)
 
+    scene = source_blend()  # the assembly reads the source's photographs too, so --skip-export checks it as well
     if not skip_export:
-        for path in (blender_executable(), source_blend()):
+        for path in (blender_executable(), scene):
             if not path.is_file():
                 raise RuntimeError(f"Missing build input: {path}")
         # Decode and resize one texture at a time. Blender is pointed at these
