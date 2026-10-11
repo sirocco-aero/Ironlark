@@ -171,7 +171,7 @@ class Receipts(unittest.TestCase):
         self.assertNotIn("tools/render_forest.py", code)
 
     def test_a_world_is_current_until_its_code_packages_or_files_change(self):
-        receipts.write_world(self.root, self.world)
+        receipts.write_world(self.world, receipts.recipe(self.root))
         self.assertEqual(receipts.world_problems(self.root, self.world), [])
         with (self.root / "tools/forest_mesh.py").open("a") as script:
             script.write("# changed\n")
@@ -186,7 +186,7 @@ class Receipts(unittest.TestCase):
         self.assertEqual(receipts.world_problems(self.root, self.world), ["numpy 2.2.6 is now 2.3.0"])
 
     def test_a_changed_or_missing_output_is_named(self):
-        receipts.write_world(self.root, self.world)
+        receipts.write_world(self.world, receipts.recipe(self.root))
         (self.world / "meshes/tree.obj").write_text("v 0 0 1\n")  # the same size: only its contents tell
         self.assertEqual(receipts.world_problems(self.root, self.world), [])
         self.assertEqual(receipts.world_problems(self.root, self.world, contents=True),
@@ -196,6 +196,16 @@ class Receipts(unittest.TestCase):
         (self.world / "receipt.json").unlink()
         self.assertEqual(receipts.world_problems(self.root, self.world),
                          ["it has no receipt: built before receipts, or not finished"])
+
+    def test_a_build_whose_code_changed_while_it_ran_is_not_certified(self):
+        began = forest_pipeline.recipes(self.root)
+        forest_pipeline.check_unchanged(self.root, began)
+        with (self.root / "tools/forest_mesh.py").open("a") as script:
+            script.write("# changed\n")
+        with self.assertRaisesRegex(RuntimeError, r"\(tools/forest_mesh.py changed\)\. Build the world again"):
+            forest_pipeline.check_unchanged(self.root, began)
+        receipts.write_world(self.world, began["full"])  # the receipt names the code the build began with
+        self.assertEqual(receipts.world_problems(self.root, self.world), ["tools/forest_mesh.py changed"])
 
     def test_the_export_recipe_leaves_out_the_stages_after_the_export(self):
         code = forest_pipeline.recipes(ROOT)["export"]["code"]
@@ -208,9 +218,7 @@ class Receipts(unittest.TestCase):
     def test_a_build_resumes_only_under_the_same_export_code(self):
         build = self.root / "forest-build"
         today = {"export": "export today", "full": "today"}
-        receipts.write_world(self.root, self.world)
         forest_pipeline.start_build(build, self.world, today, skip_export=False)
-        self.assertFalse((self.world / "receipt.json").exists())  # until the build completes
         (build / "terrain.obj").write_text("stage output")
         assembly_edited = {"export": "export today", "full": "tomorrow"}
         forest_pipeline.start_build(build, self.world, assembly_edited, skip_export=False)
@@ -219,6 +227,45 @@ class Receipts(unittest.TestCase):
         forest_pipeline.start_build(build, self.world, export_edited, skip_export=False)
         self.assertFalse((build / "terrain.obj").exists())
         self.assertEqual(json.loads((build / "recipe.json").read_text()), "export tomorrow")
+
+    def test_a_build_replaces_the_world_only_once_it_completes_even_through_a_link(self):
+        main_world = self.root / "main checkout/worlds/pine_forest"
+        (main_world / "meshes").mkdir(parents=True)
+        (main_world / "meshes/material_bark_nor_gl.png").write_text("an earlier build's")
+        (main_world / "receipt.json").write_text("an earlier build's")
+        linked = self.root / "worktree/worlds/pine_forest"
+        linked.parent.mkdir(parents=True)
+        linked.symlink_to(main_world)
+        build, recipe = self.root / "forest-build", {"export": "e", "full": receipts.recipe(self.root)}
+        building = forest_pipeline.start_build(build, linked, recipe, skip_export=False)
+        self.assertEqual(building, main_world.with_name(".pine_forest.building"))  # beside the folder, not the link
+        self.assertEqual(list(building.iterdir()), [])
+        (building / "pine_forest.wbt").write_text("this build's")
+        building = forest_pipeline.start_build(build, linked, recipe, skip_export=False)  # the last was interrupted
+        self.assertEqual(list(building.iterdir()), [])  # so nothing of it stands in for this build's files
+        self.assertEqual(sorted(p.name for p in main_world.iterdir()), ["meshes", "receipt.json"])  # the last world
+        (building / "pine_forest.wbt").write_text("this build's")
+        forest_pipeline.finish_build(linked, building, recipe["full"])
+        self.assertTrue(linked.is_symlink())
+        self.assertEqual(sorted(p.name for p in main_world.iterdir()), ["pine_forest.wbt", "receipt.json"])
+        self.assertEqual(receipts.world_problems(self.root, linked), [])
+        self.assertEqual(sorted(p.name for p in main_world.parent.iterdir()), ["pine_forest"])
+        first = self.root / "first checkout/worlds/pine_forest"  # no world yet: the folder moves into place
+        building = forest_pipeline.start_build(build, first, recipe, skip_export=False)
+        (building / "pine_forest.wbt").write_text("the first world")
+        forest_pipeline.finish_build(first, building, recipe["full"])
+        self.assertEqual((first / "pine_forest.wbt").read_text(), "the first world")
+
+    def test_a_build_compiles_the_code_it_hashes(self):
+        import receipts as imported  # compiled into tools/__pycache__ by this test run, if not already
+        cache = Path(imported.__cached__).parent
+        self.assertTrue(cache.is_dir())
+        ran = []
+        run_tool = launcher.run_tool
+        self.addCleanup(setattr, launcher, "run_tool", run_tool)
+        launcher.run_tool = lambda name, *args: ran.append((name, cache.exists()))  # Blender and the hour it takes
+        launcher.build_world(skip_export=True)
+        self.assertEqual(ran, [("forest_pipeline.py", False)])
 
     def test_skip_export_needs_bakes_today_s_pipeline_finished(self):
         build = self.root / "forest-build"
@@ -303,6 +350,17 @@ class StageStore(unittest.TestCase):
 
     def manifest(self):
         return self.store.place(self.recipe()) / "manifest.json"
+
+    def test_no_result_is_kept_for_code_changed_since_the_build_began(self):
+        started = dict(stage_cache.AT_START)
+        self.addCleanup(stage_cache.AT_START.update, started)
+        stage_cache.AT_START["tools/bake_impostors.py"] = "the code the build began with"  # whatever its mtime
+        with self.assertRaisesRegex(RuntimeError, "tools/bake_impostors.py changed while the world was building"):
+            self.bake()
+        self.assertFalse(self.store.place(self.recipe()).exists())
+        stage_cache.AT_START.update(started)
+        self.bake()
+        self.assertTrue(self.manifest().is_file())
 
     def test_a_result_comes_back_after_the_build_folder_is_emptied(self):
         self.bake()

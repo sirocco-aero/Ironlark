@@ -1,6 +1,7 @@
 """Resume the source-based forest build, one bounded Blender process at a time."""
 
 import argparse
+import ctypes
 import fcntl
 import hashlib
 import json
@@ -15,10 +16,10 @@ import time
 from urllib.request import urlretrieve
 import zipfile
 
+from stage_cache import Store, clone, descriptor  # first: it records the code before any is imported
 from forest_process import run_stage
 from forest_textures import thumbnail
-from receipts import code_closure, digest, packages, recipe, write_world
-from stage_cache import Store, clone, descriptor
+from receipts import code_closure, differences, digest, packages, recipe, write_world
 
 SIM = Path(__file__).resolve().parents[1]
 CACHE = SIM / ".cache"
@@ -133,22 +134,60 @@ def recipes(root):
     return {"export": {"code": export, "packages": packages(root)}, "full": recipe(root)}
 
 
+def staging(world):
+    """Where the world is built: beside the folder itself (a worktree's world may be a link to the main checkout's)."""
+    target = Path(world).resolve()
+    return target.with_name(f".{target.name}.building")
+
+
 def start_build(build, world, current, skip_export):
     """Stages resume a build whose export ran under the same code (recipes); other export code's outputs, and the
     caches export stages keep inside the build folder, never feed this one. --skip-export reassembles only from bakes
-    today's whole pipeline finished (baked.json, written after them and removed when a build starts). The world has no
-    receipt until the build completes."""
+    today's whole pipeline finished (baked.json, written after them and removed when a build starts). The world is
+    built in an empty folder beside it (returned), so no file of an earlier build stands in for one this build makes,
+    and the world stays as it was until the build completes (finish_build)."""
     stamp, baked = build / "recipe.json", build / "baked.json"
     if skip_export and (json.loads(baked.read_text()) if baked.is_file() else None) != current["full"]:
         raise RuntimeError("The bakes were made by other code, or did not finish. "
                            "Run ./ironlark build-world without --skip-export.")
     if (json.loads(stamp.read_text()) if stamp.is_file() else None) != current["export"]:
         shutil.rmtree(build, ignore_errors=True)
-    (world / "receipt.json").unlink(missing_ok=True)
+    building = staging(world)
+    shutil.rmtree(building, ignore_errors=True)  # an interrupted build's
+    building.mkdir(parents=True)
     build.mkdir(exist_ok=True)
     if not skip_export:
         baked.unlink(missing_ok=True)
     stamp.write_text(json.dumps(current["export"], indent=1) + "\n")
+    return building
+
+
+def exchange(first, second):
+    """Swap two folders in one step (renameat2's RENAME_EXCHANGE), so neither path is ever missing."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.renameat2(-100, os.fsencode(first), -100, os.fsencode(second), 2):  # AT_FDCWD, RENAME_EXCHANGE
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(first))
+
+
+def finish_build(world, building, built_from):
+    """The built world, with its receipt, in place of the world, in one step: the folder a link names, the link
+    kept. The world it replaced is left in the staging folder until removed, or the next build starts."""
+    write_world(building, built_from)
+    target = Path(world).resolve()
+    if target.exists():
+        exchange(building, target)
+        shutil.rmtree(building)
+    else:
+        building.rename(target)
+
+
+def check_unchanged(root, current):
+    """Stop a build whose code or packages changed while it ran: its files may come from either, so no receipt or
+    baked.json may name one (the store keeps no result from such code: Store.save)."""
+    if changed := differences(current["full"], recipe(root)):
+        raise RuntimeError(f"The pipeline changed while the world was building ({'; '.join(changed)}). "
+                           "Build the world again.")
 
 
 TEXTURES_2K = "texture-source-2k"
@@ -308,7 +347,7 @@ def build_world(skip_export=False):
         raise RuntimeError("Another forest build is running (.cache is shared by every checkout linking it).") \
             from error
     started, current = time.time(), recipes(SIM)
-    start_build(build, world, current, skip_export)
+    building = start_build(build, world, current, skip_export)
 
     def blender_stage(name, script, *args, out=build):
         print(f"Forest build: {name}", flush=True)
@@ -345,7 +384,7 @@ def build_world(skip_export=False):
         "--source",
         str(source / "textures"),
         "--out",
-        str(world),
+        str(building),
         "--stages",
         str(CACHE / "forest-stages"),
         "--source-archive",
@@ -356,11 +395,13 @@ def build_world(skip_export=False):
         # so it is assembled for them first and in full once, after them.
         print("Forest build: the bakes' inputs", flush=True)
         run_stage([*assemble, "--bake-inputs"], logs / "assemble-bake-inputs.log")
-        bakes(build, world, source, CACHE / "forest-stages", blender_stage)
+        bakes(build, building, source, CACHE / "forest-stages", blender_stage)
+        check_unchanged(SIM, current)
         (build / "baked.json").write_text(json.dumps(current["full"], indent=1) + "\n")
     print("Forest build: assemble world", flush=True)
     run_stage(assemble, logs / "assemble.log")
-    write_world(SIM, world)
+    check_unchanged(SIM, current)
+    finish_build(world, building, current["full"])
     if not skip_export:  # which bakes it used: --skip-export ran none
         Store(CACHE / "forest-stages").collect(SIM, started)
     print(f"Forest world ready: {world / 'pine_forest.wbt'}", flush=True)

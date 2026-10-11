@@ -20,7 +20,20 @@ from pathlib import Path
 import shutil
 import stat
 
-from receipts import code_closure, digest
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read_digest(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+# The project's code as this process started, read before any of it is imported (forest_pipeline and
+# build_forest_world import this module first): what it, and the stages it starts, run.
+AT_START = {str(path.relative_to(ROOT)): read_digest(path) for folder in ("tools", "controllers")
+            for path in sorted((ROOT / folder).rglob("*.py")) if "__pycache__" not in path.parts}
+
+from receipts import code_closure, digest  # noqa: E402, after the snapshot
 
 
 FICLONE = 0x40049409  # linux/fs.h: make the target share the source's blocks
@@ -38,7 +51,7 @@ def clone(source, target):
             shutil.copyfileobj(original, copy)
 
 
-CODE = {}  # (root, script): its code_closure, read once per process: code does not change during a build
+CODE = {}  # (root, script): its code_closure, read once per process: code does not change during a build (Store.save)
 
 
 def descriptor(root, stage, script, args, inputs, toolchain):
@@ -87,7 +100,12 @@ class Store:
         return {"value": stored["value"], "outputs": stored["outputs"]}
 
     def save(self, recipe, build, outputs, value=None):
-        """Keep clones of the named files of build, read-only, and a JSON value as this recipe's result."""
+        """Keep clones of the named files of build, read-only, and a JSON value as this recipe's result; none when a
+        file of its code is not, byte for byte, what its recipe names, as this process started and on disk now: the
+        result may be another code's than its key names."""
+        if changed := [name for name, sha256 in recipe["code"].items() if not (
+                sha256 == AT_START.get(name) and (ROOT / name).is_file() and digest(ROOT / name) == sha256)]:
+            raise RuntimeError(f"{', '.join(changed)} changed while the world was building. Build the world again.")
         place = self.place(recipe)
         partial = place.with_name(place.name + ".part")
         shutil.rmtree(partial, ignore_errors=True)

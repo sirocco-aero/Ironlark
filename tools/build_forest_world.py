@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from stage_cache import Store, descriptor  # first: it records the code before any is imported
 import forest_backdrop
 import forest_edge
 import forest_valley
@@ -41,7 +42,6 @@ from dds import write_bc7_dds
 from forest_textures import (TEXTURE_LIMIT, bleed_alpha, bleed_normal, dilate, impostor_atlases, limit_texture,
                              photograph, twig_atlas)
 from receipts import packages
-from stage_cache import Store, descriptor
 
 COLLIDER_RADIUS = 25.0  # invisible trunk colliders within this range of home
 # ---------------------------------------------------------------- obj helpers

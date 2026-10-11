@@ -73,13 +73,22 @@ def recipe(root):
     return {"code": pipeline_code(root), "packages": packages(root)}
 
 
-def write_world(root, world):
-    """The world's receipt, written after its build succeeded: the recipe and every output file."""
+def differences(recorded, current):
+    """How the current recipe differs from a recorded one: each file of code and each package, named."""
+    changed = [f"{name} changed" for name in sorted(set(recorded["code"]) | set(current["code"]))
+               if recorded["code"].get(name) != current["code"].get(name)]
+    return changed + [f"{name} {recorded['packages'].get(name)} is now {version}"
+                      for name, version in current["packages"].items() if recorded["packages"].get(name) != version]
+
+
+def write_world(world, built_from):
+    """The world's receipt, written after its build succeeded: the recipe it was built from (read when the build began)
+    and every output file."""
     world = Path(world)
     outputs = {str(path.relative_to(world)): [path.stat().st_size, digest(path)]
                for path in sorted(world.rglob("*")) if path.is_file() and path.name != "receipt.json"}
     temporary = world / "receipt.json.tmp"
-    temporary.write_text(json.dumps({**recipe(root), "outputs": outputs}, indent=1) + "\n")
+    temporary.write_text(json.dumps({**built_from, "outputs": outputs}, indent=1) + "\n")
     temporary.rename(world / "receipt.json")
 
 
@@ -90,11 +99,8 @@ def world_problems(root, world, contents=False):
     receipt = world / "receipt.json"
     if not receipt.is_file():
         return ["it has no receipt: built before receipts, or not finished"]
-    recorded, current = json.loads(receipt.read_text()), recipe(root)
-    problems = [f"{name} changed" for name in sorted(set(recorded["code"]) | set(current["code"]))
-                if recorded["code"].get(name) != current["code"].get(name)]
-    problems += [f"{name} {recorded['packages'].get(name)} is now {version}"
-                 for name, version in current["packages"].items() if recorded["packages"].get(name) != version]
+    recorded = json.loads(receipt.read_text())
+    problems = differences(recorded, recipe(root))
     for name, (size, sha256) in recorded["outputs"].items():
         path = world / name
         if not path.is_file() or path.stat().st_size != size or (contents and digest(path) != sha256):

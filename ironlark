@@ -248,6 +248,10 @@ def stage_world(run, world):
 
 def build_world(skip_export):
     args = ["--skip-export"] if skip_export else []
+    # The build runs the code its receipt hashes: Python would trust bytecode compiled earlier by the source's mtime,
+    # to the second, and its size, so a same-size edit within that second would run the old code.
+    for cache in [*ROOT.glob("tools/**/__pycache__"), *ROOT.glob("controllers/**/__pycache__")]:
+        shutil.rmtree(cache, ignore_errors=True)
     run_tool("forest_pipeline.py", *args)
 
 
