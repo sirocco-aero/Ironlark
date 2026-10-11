@@ -288,6 +288,8 @@ def bake_terrain(obj, mesh, keep_tris, loop_vert, world, uv_data, kind="DIFFUSE"
         bake_scene.render.engine = "CYCLES"
         bake_scene.cycles.samples = 1
         bake_scene.cycles.device = "CPU"
+        # One tile: the same pixels, without Cycles writing tiles to disk and reading the whole image back.
+        bake_scene.cycles.use_auto_tile = False
         bake_scene.render.bake.use_selected_to_active = False
         bake_scene.render.bake.use_clear = True
         bake_scene.render.bake.margin = 16
