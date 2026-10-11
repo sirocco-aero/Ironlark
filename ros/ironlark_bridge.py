@@ -12,6 +12,7 @@ import socket
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 import rclpy
@@ -165,9 +166,16 @@ def serve(node, address):
                 if received % 5000 == 0:
                     rate = received / (time.monotonic() - started)
                     node.get_logger().info(f"{received} messages, {rate:.0f} per second")
-        except (EOFError, OSError, ValueError) as error:
-            node.get_logger().info(f"controller disconnected ({error or 'closed'})")
-            connection.close()
+        except EOFError:
+            # The controller finished (protocol.finish): every message it sent was read and published.
+            node.get_logger().info(f"controller finished: {received} messages")
+            try:
+                connection.sendall(protocol.ACK.pack(received))
+            except OSError:
+                pass
+        except Exception:  # closing tells the controller, which reports the stream failed
+            node.get_logger().error(f"controller stream failed after {received} messages:\n{traceback.format_exc()}")
+        connection.close()
 
 
 def main():

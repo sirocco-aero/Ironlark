@@ -262,20 +262,55 @@ def sensing_cost(run):
     runs in real time unless rendering falls behind: time past real time is what sensing added."""
     import re
 
-    lines = re.findall(r"sensing: (\d+) sent, (\d+) dropped, \d+ queued at (\d+) s, wall ([\d.]+)",
-                       (run / "webots.log").read_text(errors="replace"))
+    lines = re.findall(r"sensing: .* at (\d+) s, wall ([\d.]+)", (run / "webots.log").read_text(errors="replace"))
     if len(lines) < 2:
-        return None
-    (_, _, sim0, wall0), (sent, dropped, sim1, wall1) = lines[0], lines[-1]
+        return {}
+    (sim0, wall0), (sim1, wall1) = lines[0], lines[-1]
     simulated, wall = int(sim1) - int(sim0), float(wall1) - float(wall0)
     return {
-        "messages_sent": int(sent),
-        "messages_dropped": int(dropped),
         "simulated_s": simulated,
         "wall_s": round(wall, 2),
         "realtime_factor": round(simulated / wall, 3),
         "added_wall_time": round(max(0.0, wall / simulated - 1.0), 3),
     }
+
+
+def sensing_report(run):
+    """The sensor stream's account, written once when it ends (sensor_stream.py), or None."""
+    path = run / "sensing.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def sensing_losses(report):
+    """What a stream's account says it measured and did not deliver; empty when nothing was lost."""
+    losses = [report["failure"]] if report["failure"] else []
+    if report["dropped"]:
+        losses.append(f"{report['dropped']} messages dropped on a full queue")
+    if report["sent"] < report["queued"]:
+        losses.append(f"{report['queued'] - report['sent']} queued messages never sent")
+    if report["acknowledged"] is not None and report["acknowledged"] != report["sent"]:
+        losses.append(f"the ROS bridge read {report['acknowledged']} of {report['sent']} messages")
+    elif report["acknowledged"] is None and not report["failure"]:
+        losses.append("the ROS bridge never acknowledged the stream")
+    return losses
+
+
+def end_sensing(run, processes):
+    """End the stream after the flight: it stops sampling, sends what it queued and has the bridge
+    acknowledge every message. Its account, once nothing was lost."""
+    (run / "sensing-end").touch()
+    deadline = time.monotonic() + 60
+    while (report := sensing_report(run)) is None:
+        if any(process.poll() is not None for process in processes):
+            raise RuntimeError(f"A simulator process exited before sensing ended. Inspect {run}.")
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"Sensing did not end within 60 seconds of the flight. Inspect {run / 'webots.log'} "
+                               f"and {run / 'ros.log'}.")
+        time.sleep(0.1)
+    if losses := sensing_losses(report):
+        raise RuntimeError(f"The recording is incomplete: {'; '.join(losses)}. Inspect {run / 'webots.log'} "
+                           f"and {run / 'ros.log'}.")
+    return report
 
 
 def ros_image_ready():
@@ -540,6 +575,9 @@ def flight(headless, editor=False, world="forest", record=False):
                         raise RuntimeError(
                             f"A simulator process exited during flight. Inspect {run}."
                         )
+                    if record and (stream := sensing_report(run)):
+                        raise RuntimeError(f"Sensing failed during the flight: {'; '.join(sensing_losses(stream))}. "
+                                           f"Inspect {run / 'webots.log'} and {run / 'ros.log'}.")
                     if time.monotonic() > deadline:
                         raise RuntimeError(
                             f"Flight exceeded the 900-second wall-clock backstop. Inspect {run}."
@@ -548,12 +586,14 @@ def flight(headless, editor=False, world="forest", record=False):
                 if mission.returncode:
                     raise RuntimeError(f"Flight check failed. Inspect {run}.")
                 print(f"PASS: takeoff, hover, landing. Report: {run / 'result.json'}")
-                if record and (cost := sensing_cost(run)):
+                if record:
+                    stream = end_sensing(run, (webots, sitl, ros))
                     report = json.loads((run / "result.json").read_text())
-                    report["sensing"] = cost
+                    report["sensing"] = {**stream, **(cost := sensing_cost(run))}
                     (run / "result.json").write_text(json.dumps(report, indent=2) + "\n")
-                    print(f"Sensing: {cost['messages_sent']} messages, {cost['messages_dropped']} dropped; "
-                          f"{cost['realtime_factor']}x real time (+{cost['added_wall_time']:.0%} wall time)")
+                    print(f"Sensing: {stream['sent']} messages, all acknowledged by the ROS bridge"
+                          + (f"; {cost['realtime_factor']}x real time (+{cost['added_wall_time']:.0%} wall time)"
+                             if cost else ""))
                 if not headless:
                     print(
                         "World left open (keys 1–4 switch views). Ctrl+C to exit.",

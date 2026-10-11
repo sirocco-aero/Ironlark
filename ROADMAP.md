@@ -161,12 +161,11 @@ flight model, a new body, the rig of `config/sensors.json`) passes the flight ch
 and carries a Mid-360-class LiDAR, an IMU and a front camera. `./ironlark check --record`:
 
 - records a complete rosbag2 (every message the controller sent, on Webots time, stamps strictly
-  increasing) and adds sensing's cost to `result.json`: real time in the empty world
+  increasing; `check-recording` checks each topic's period over the whole flight) and adds sensing's cost to `result.json`: real time in the empty world
   (with real-time pacing), 0.47× in the forest; Webots time slows, nothing is dropped;
 - `check-recording`: the calibration wall reads at 5.897 m (face at 5.9 m), its normal within 0.6°,
   and 99.9% of its LiDAR returns land on its red in the camera frame of the same instant;
-- `check-replay`: replayed, every topic keeps its messages, stamps and order, and the static
-  transforms are equal.
+- `check-replay`: replayed, every topic keeps its messages, byte for byte, in order.
 
 Found on the way: Webots misplaces a 360° Lidar's returns when `tiltAngle` is set (the multi-camera
 merge ignores it: rays span ±29.5° but are labelled −7°…+52°, shifted ~22° in azimuth), so the rig

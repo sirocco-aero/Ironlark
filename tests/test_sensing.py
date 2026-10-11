@@ -4,6 +4,7 @@ import math
 import socket
 import struct
 import sys
+import threading
 import unittest
 from pathlib import Path
 
@@ -60,6 +61,34 @@ class Protocol(unittest.TestCase):
         with self.assertRaises(EOFError):
             protocol.read_message(b)
         b.close()
+
+    def test_finish_returns_what_the_reader_acknowledges(self):
+        controller, bridge = socket.socketpair()
+        for stamp in range(3):
+            controller.sendall(protocol.pack(protocol.CLOCK, stamp))
+
+        def read_to_the_end():  # the bridge's side (ros/ironlark_bridge.py, serve)
+            received = 0
+            try:
+                while True:
+                    protocol.read_message(bridge)
+                    received += 1
+            except EOFError:
+                bridge.sendall(protocol.ACK.pack(received))
+            bridge.close()
+
+        reader = threading.Thread(target=read_to_the_end)
+        reader.start()
+        self.assertEqual(protocol.finish(controller), 3)
+        reader.join()
+        controller.close()
+
+    def test_finish_fails_when_the_reader_closes_without_answering(self):
+        controller, bridge = socket.socketpair()
+        bridge.close()
+        with self.assertRaises((EOFError, OSError)):
+            protocol.finish(controller)
+        controller.close()
 
 
 if __name__ == "__main__":

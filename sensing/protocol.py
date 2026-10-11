@@ -2,7 +2,10 @@
 
 Each message: a 20-byte header (magic, type, Webots time in nanoseconds, payload length), then the
 payload. Little-endian. Plain Python (struct), so both sides load it without extra packages.
+At the end the controller shuts down its side; the bridge reads to the end of the stream, answers
+with the number of messages it read (uint64) and closes.
 """
+import socket
 import struct
 
 MAGIC = b"IRLK"
@@ -17,6 +20,7 @@ TRUTH = 5  # position, orientation (x, y, z, w), linear velocity, world ENU: 10 
 VECTOR10 = struct.Struct("<10d")
 COUNT = struct.Struct("<I")
 SIZE = struct.Struct("<HH")
+ACK = struct.Struct("<Q")
 LIDAR_POINT_BYTES = 20
 
 
@@ -40,3 +44,9 @@ def read_message(stream):
     if magic != MAGIC:
         raise ValueError("stream out of sync")
     return kind, time_ns, read_exact(stream, length)
+
+
+def finish(stream):
+    """End a stream: the number of messages the bridge acknowledges reading."""
+    stream.shutdown(socket.SHUT_WR)
+    return ACK.unpack(read_exact(stream, ACK.size))[0]

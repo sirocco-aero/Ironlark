@@ -5,10 +5,11 @@ Runs in the ROS 2 container on a run folder holding a bag (./ironlark check --re
     ./ironlark check-replay runs/<run>
 
 Plays the bag (its own /clock carries Webots time: the player publishes no clock of its own) while
-recording what it publishes, then compares the two bags topic by topic: the same messages, with the
-same header stamps in the same order, and the same static transforms. Writes replay_check.json
+recording what it publishes, then compares the two bags topic by topic: the same messages, byte for
+byte, in the same order. A topic missing from either bag is a difference. Writes replay_check.json
 beside the bag; exits nonzero on a difference.
 """
+import hashlib
 import json
 import shutil
 import signal
@@ -17,34 +18,37 @@ import sys
 import time
 from pathlib import Path
 
-import rosbag2_py  # noqa: F401 (StorageFilter)
-from bag_reader import open_bag
-from rclpy.serialization import deserialize_message
-from rosidl_runtime_py.utilities import get_message
-
 TOPICS = ["/clock", "/imu/data", "/lidar/points", "/camera/image_raw", "/camera/camera_info", "/tf_static",
           "/ground_truth/pose", "/ground_truth/velocity"]
 
 
-def stamps(bag):
-    """Per topic: the header stamps (ns) in order; for /tf_static, the transforms."""
+def digests(bag):
+    """Per topic: a digest of each message as stored (serialized), in order. Digests, not the
+    messages: a forest flight's images alone are gigabytes once decompressed."""
+    import rosbag2_py
+    from bag_reader import open_bag
+
     reader = open_bag(bag)
-    types = {t.name: t.type for t in reader.get_all_topics_and_types()}
-    reader.set_filter(rosbag2_py.StorageFilter(topics=[t for t in TOPICS if t in types]))
+    reader.set_filter(rosbag2_py.StorageFilter(topics=TOPICS))
     out = {}
     while reader.has_next():
         topic, data, _ = reader.read_next()
-        msg = deserialize_message(data, get_message(types[topic]))
-        if topic == "/tf_static":
-            for t in msg.transforms:
-                r, p = t.transform.rotation, t.transform.translation
-                out.setdefault(topic, set()).add((t.header.frame_id, t.child_frame_id, round(p.x, 6), round(p.y, 6),
-                                                  round(p.z, 6), round(r.x, 6), round(r.y, 6), round(r.z, 6),
-                                                  round(r.w, 6)))
-            continue
-        stamp = msg.clock if topic == "/clock" else msg.header.stamp
-        out.setdefault(topic, []).append(stamp.sec * 1_000_000_000 + stamp.nanosec)
+        out.setdefault(topic, []).append(hashlib.sha256(data).digest())
     return out
+
+
+def compare(original, replayed):
+    """Per topic, whether the replay holds the original's messages in order; a topic either bag
+    lacks fails."""
+    report = {"topics": {}}
+    for topic in TOPICS:
+        a, b = original.get(topic, []), replayed.get(topic, [])
+        entry = {"recorded": len(a), "replayed": len(b), "equal": bool(a) and a == b}
+        if a != b:
+            entry["first_difference"] = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+        report["topics"][topic] = entry
+    report["passed"] = all(entry["equal"] for entry in report["topics"].values())
+    return report
 
 
 def main():
@@ -64,19 +68,7 @@ def main():
     recorder.send_signal(signal.SIGINT)
     recorder.wait(timeout=30)
 
-    original, replayed = stamps(run / "bag"), stamps(replay)
-    report = {"topics": {}}
-    for topic in TOPICS:
-        a, b = original.get(topic), replayed.get(topic)
-        if topic == "/tf_static":
-            report["topics"][topic] = {"transforms": len(a or ()), "equal": a == b}
-        else:
-            entry = {"recorded": len(a or ()), "replayed": len(b or ()), "equal": a == b}
-            if a and b and a != b:
-                first = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
-                entry["first_difference"] = first
-            report["topics"][topic] = entry
-    report["passed"] = all(entry["equal"] for entry in report["topics"].values())
+    report = compare(digests(run / "bag"), digests(replay))
     (run / "replay_check.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
     sys.exit(0 if report["passed"] else 1)

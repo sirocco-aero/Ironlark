@@ -35,10 +35,10 @@ compiles and links against each to list what's missing.
 | `build-drone` | Models the drone in Blender and writes `protos/IronlarkDrone.proto` (also run by `build-world`, and by `run`/`check` when missing). |
 | `build-renderer` | Builds patched Webots into `.cache/webots-renderer/`. See [Webots patches](#webots-patches). |
 | `render-reference` | Cycles renders of the source scene at the preview cameras, into `runs/reference/`: the ground truth for looks. Needs more than ~26 GB RAM (15 GB + zram was not enough); needs no built world. |
-| `run` | Flies over the forest in a fullscreen window, then exits. Until the autopilot can arm (EKF3 learning its gyro biases, ~40 s of simulated time) the simulation runs as fast as it can, the view at 10 fps; takeoff comes ~16 s after launch. `--world empty` for the bare test area; `--editor` for Webots' UI; `--record` streams the sensors to ROS 2 and records a rosbag2 in the run folder (in real time throughout). |
+| `run` | Flies over the forest in a fullscreen window, then exits. Until the autopilot can arm (EKF3 learning its gyro biases, ~40 s of simulated time) the simulation runs as fast as it can, the view at 10 fps; takeoff comes ~16 s after launch. `--world empty` for the bare test area; `--editor` for Webots' UI; `--record` streams the sensors to ROS 2 and records a rosbag2 of the flight in the run folder (in real time throughout). |
 | `replay RUN` | Plays a recorded run's bag in the ROS 2 container; its `/clock` topic carries Webots time. |
-| `check-recording RUN` | Checks a recorded empty-world flight against the calibration wall: LiDAR distance and orientation, camera ↔ LiDAR agreement. |
-| `check-replay RUN` | Replays a recorded flight while recording it again and compares: same messages, stamps and static transforms. |
+| `check-recording RUN` | Checks a recorded flight: the bag is complete (every topic, a message every period, over the whole flight), and the IMU at rest reads gravity, no rotation and the rig's noise. In the empty world, then the calibration wall: LiDAR distance, orientation and scatter against the rig's range noise, camera ↔ LiDAR agreement, and the ground in front of the wall not red. |
+| `check-replay RUN` | Replays a recorded flight while recording it again and compares: every topic present, the same messages byte for byte, in order. |
 | `check` | The same flight on a virtual display, empty world by default. Exits nonzero on failure. |
 
 For empty-world flights, Webots is chosen in order: `WEBOTS_HOME`, a current
@@ -110,10 +110,12 @@ and carries the rig of `config/sensors.json`: a Mid-360-class LiDAR (360° × 59
 (640 × 480, 90°, 20 Hz, with the scattering fog). With `--record`, the flight
 controller samples them after each 2 ms physics step, on Webots time, and streams them over local
 TCP ([`sensing/protocol.py`](sensing/protocol.py)); a full queue drops and counts, never stalling
-physics, and pausing stops the clock. A ROS 2 Humble container ([`ros/`](ros)) publishes `/clock`,
+physics, and pausing stops the clock. After the flight the stream ends: the bridge acknowledges
+every message, and a run whose stream dropped, failed or left a message unsent fails, naming the loss
+(`sensing.json` in the run folder). A ROS 2 Humble container ([`ros/`](ros)) publishes `/clock`,
 `/imu/data`, `/lidar/points` (x, y, z, ring, time), `/camera/image_raw` (bgra8),
 `/camera/camera_info` and `/tf_static`, ground truth only on `/ground_truth/pose` and
-`/ground_truth/velocity`, and records all of it with rosbag2 (reliable, deep queues: `ros/record_qos.yaml`; each message compressed with zstd, losslessly: a forest flight's minute is 1.2 GB, the empty world's 0.16 GB). A recorded check adds sensing's cost to `result.json` (real-time factor, messages sent and dropped). Frames are REP-103: Webots' world is
+`/ground_truth/velocity`, and records all of it with rosbag2 (reliable, deep queues: `ros/record_qos.yaml`; each message compressed with zstd, losslessly: a forest flight's minute is 1.2 GB, the empty world's 0.16 GB). A recorded check adds sensing's cost to `result.json` (real-time factor, messages sent). Frames are REP-103: Webots' world is
 ENU and bodies FLU; [`sensing/frames.py`](sensing/frames.py) is the one place for ENU/FLU ↔ NED/FRD.
 
 ## Webots patches

@@ -4,6 +4,13 @@ Called after every physics step. Each sensor is read at the steps its period div
 sensors.json), stamped with that step's Webots time, and queued; a sender thread writes the queue
 to the bridge over TCP (sensing/protocol.py). A full queue drops messages and counts them: the
 stream never stalls physics, and pausing Webots stops its clock.
+
+The stream starts when the bridge connects and ends when the launcher asks (sensing-end in the run
+folder, after the flight) or when it fails: an error while sampling (a sensor without data among
+them), or a lost connection. Ending, it stops sampling, sends what it queued, has the bridge
+acknowledge every message (protocol.finish) and writes its account, sensing.json in the run folder:
+messages queued, sent, acknowledged and dropped, and the failure. A failure is written at once. The
+launcher fails a run that lost any message.
 """
 import ctypes
 import json
@@ -14,6 +21,7 @@ import socket
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,8 +38,11 @@ class SensorStream:
         self.robot = robot
         self.config = json.loads(Path(config_path).read_text())
         self.step_ms = int(robot.getBasicTimeStep())
-        self.dropped = 0
-        self.sent = 0
+        self.run = Path(os.environ["IRONLARK_RUN_DIR"])
+        self.queued = self.sent = self.dropped = 0
+        self.acknowledged = self.failure = None
+        self.started = self.ended = False
+        self.lock = threading.Lock()  # queueing against ending: the counts stop when the stream ends
 
         def period(rate_hz):
             ms = int(round(1000.0 / rate_hz))
@@ -66,35 +77,74 @@ class SensorStream:
         threading.Thread(target=self._send, daemon=True).start()
 
     def _put(self, message):
-        try:
-            self.queue.put_nowait(message)
-        except queue.Full:
-            self.dropped += 1
+        with self.lock:
+            if self.ended:
+                return
+            try:
+                self.queue.put_nowait(message)
+                self.queued += 1
+            except queue.Full:
+                self.dropped += 1
+
+    def _end(self, failure=None):
+        with self.lock:
+            self.ended = True
+            if failure and not self.failure:
+                self.failure = failure
+                print(f"sensing failed: {failure}", flush=True)
+                self._account()  # now: the sender may be stuck on the bridge
+
+    def _account(self):
+        """Write sensing.json, holding the lock."""
+        account = {"queued": self.queued, "sent": self.sent, "acknowledged": self.acknowledged,
+                   "dropped": self.dropped, "failure": self.failure}
+        temporary = self.run / "sensing.json.tmp"
+        temporary.write_text(json.dumps(account, indent=2) + "\n")
+        temporary.replace(self.run / "sensing.json")
 
     def _send(self):
-        while True:
+        connection = None
+        while connection is None and not self.ended:
             try:
                 connection = socket.create_connection(self.address, timeout=2.0)
             except OSError:
-                time.sleep(1.0)  # the bridge is not up (yet): nothing is queued meanwhile
-                continue
+                time.sleep(1.0)  # the bridge is not up (yet): nothing is sampled meanwhile
+        if connection is not None:
+            connection.settimeout(None)  # a slow bridge holds the sender back; the queue absorbs it or drops
             connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            self.connected = True
+            self.started = True
             try:
-                while True:
-                    connection.sendall(self.queue.get())
+                while not (self.ended and self.queue.empty()):
+                    try:
+                        message = self.queue.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+                    connection.sendall(message)
                     self.sent += 1
-            except OSError:
-                connection.close()
-                self.connected = False
-
-    connected = False
+                self.acknowledged = protocol.finish(connection)
+            except (OSError, EOFError) as error:
+                self._end(f"lost the ROS bridge after {self.sent} messages ({error or 'closed'})")
+            connection.close()
+        with self.lock:
+            self._account()
 
     def after_step(self):
-        """Queue what this step measured. Nothing is queued while the bridge is away."""
-        if not self.connected:
+        """Queue what this step measured, from the bridge's connection to the stream's end."""
+        if self.ended:
             return
-        now_ms = int(round(self.robot.getTime() * 1000))
+        now_ms = None
+        try:  # called from C (lockstep.c), which cannot see a Python exception
+            now_ms = int(round(self.robot.getTime() * 1000))
+            if now_ms % 100 == 0 and (self.run / "sensing-end").exists():
+                self._end(None if self.started else "the ROS bridge never connected")
+            elif self.started:
+                self._sample(now_ms)
+        except Exception as error:
+            traceback.print_exc()
+            at = "" if now_ms is None else f" at {now_ms / 1000:.3f} s"
+            self._end(f"{type(error).__name__} while sampling{at}: {error}")
+
+    def _sample(self, now_ms):
         stamp = now_ms * 1_000_000
         if now_ms % 5000 == 0:
             # Webots and wall time side by side: the launcher derives sensing's cost from them.
@@ -114,14 +164,14 @@ class SensorStream:
             count = min(self.lidar.getNumberOfPoints(),
                         self.config["lidar"]["layers"] * self.lidar.getHorizontalResolution())
             pointer = self._wb.wb_lidar_get_point_cloud(self.lidar._tag)
-            if count and pointer:
-                points = ctypes.string_at(pointer, count * protocol.LIDAR_POINT_BYTES)
-                self._put(protocol.pack(protocol.LIDAR, stamp, protocol.COUNT.pack(count) + points))
+            if not (count and pointer):
+                raise RuntimeError("the LiDAR returned no points")
+            points = ctypes.string_at(pointer, count * protocol.LIDAR_POINT_BYTES)
+            self._put(protocol.pack(protocol.LIDAR, stamp, protocol.COUNT.pack(count) + points))
         if now_ms % self.camera_period == 0:
-            image = self.camera.getImage()
-            if image:
-                size = protocol.SIZE.pack(self.camera.getWidth(), self.camera.getHeight())
-                self._put(protocol.pack(protocol.IMAGE, stamp, size + bytes(image)))
+            image = self.camera.getImage()  # raises without an image
+            size = protocol.SIZE.pack(self.camera.getWidth(), self.camera.getHeight())
+            self._put(protocol.pack(protocol.IMAGE, stamp, size + bytes(image)))
 
 
 def enabled():
