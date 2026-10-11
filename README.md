@@ -183,7 +183,7 @@ installed as `./webots/`, and a save.
 `tools/render_lighting_reference.py` renders the built world in Cycles under the
 source's own suns, world, fog and Filmic view (4.6 GB; the full source needs more
 than ~26 GB); `tools/compare_views.py runs/lighting-reference runs/preview` scores
-`tools/render_forest.py` views against it.
+`tools/render_forest.py` views against it. `render_forest.py --repeatable` renders a frame after every physics step, so two captures of one build are bit-identical (temporal anti-aliasing otherwise follows wall time); `compare_views.py MAIN BRANCH --tiles` lists the 60 px tiles where two such captures differ.
 `tools/profile_forest.py --out runs/<name>` reports load time, real-time factor,
 frame rate, GPU and CPU time per render pass and peak RAM/GPU for the forest as a
 viewer sees it (headless: under `xvfb-run -a -s "-screen 0 1920x1080x24"`, which

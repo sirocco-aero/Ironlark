@@ -1,7 +1,10 @@
 """The checks' own verdicts: each refuses evidence that is missing or wrong."""
+import contextlib
 import importlib.util
+import io
 import json
 import sys
+import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -12,6 +15,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import check_recording  # noqa: E402
 import check_replay  # noqa: E402
+import compare_views  # noqa: E402
+from PIL import Image  # noqa: E402
 
 # flight_smoke runs in the SITL container beside pymavlink, which this environment lacks; judge() never uses it.
 sys.modules.setdefault("pymavlink", mock.MagicMock())
@@ -178,6 +183,63 @@ class Stream(unittest.TestCase):
         losses = launcher.sensing_losses(self.account(sent=990, acknowledged=None, failure=failure))
         self.assertEqual(losses, [failure, "10 queued messages never sent"])
 
+
+
+class Views(unittest.TestCase):
+    """compare_views scores every reference view, or refuses."""
+
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.reference, self.webots = Path(scratch.name, "reference"), Path(scratch.name, "webots")
+        self.reference.mkdir(), self.webots.mkdir()
+        for name, shade in (("forest", 90), ("drone", 160)):
+            Image.new("RGB", (32, 24), (shade, shade, shade)).save(self.reference / f"{name}.png")
+            Image.new("RGB", (32, 24), (shade, shade + 20, shade)).save(self.webots / f"{name}.png")
+
+    def test_every_view_is_scored(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            compare_views.main([str(self.reference), str(self.webots)])
+        report = json.loads((self.webots / "compare.json").read_text())
+        self.assertEqual(sorted(report), ["drone", "forest"])
+        self.assertGreater(report["forest"]["channel_ratio"][1], 1.0)
+
+    def test_a_view_without_a_webots_render_fails(self):
+        (self.webots / "drone.png").unlink()
+        with self.assertRaisesRegex(SystemExit, "No Webots render of drone"):
+            compare_views.main([str(self.reference), str(self.webots)])
+
+    def tiles(self, change):
+        """Changed tiles between a 240 x 120 capture and a copy changed by change(pixels)."""
+        import numpy as np
+
+        pixels = np.full((120, 240, 3), 90, dtype=np.uint8)
+        Image.fromarray(pixels).save(self.reference / "forest.png")
+        Image.fromarray(change(pixels.copy())).save(self.webots / "forest.png")
+        (self.reference / "drone.png").unlink(missing_ok=True), (self.webots / "drone.png").unlink(missing_ok=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            compare_views.main([str(self.reference), str(self.webots), "--tiles"])
+        return json.loads((self.webots / "compare.json").read_text())["forest"]["changed_tiles"]
+
+    def test_repeatable_captures_list_the_tiles_that_changed(self):
+        def missing_object(pixels):  # 12 x 12 px: 4% of one 60 px tile
+            pixels[70:82, 130:142] = 20
+            return pixels
+
+        self.assertEqual(self.tiles(lambda pixels: pixels), [])
+        self.assertEqual(self.tiles(missing_object), [[1, 2]])
+        self.assertEqual(len(self.tiles(lambda pixels: pixels + 1)), 8)  # 1/255 brighter: every tile
+
+    def test_captures_of_different_sizes_are_refused(self):
+        Image.new("RGB", (64, 48), (90, 90, 90)).save(self.webots / "forest.png")
+        with self.assertRaisesRegex(SystemExit, "forest: the reference is \\(32, 24\\), Webots \\(64, 48\\)"):
+            compare_views.main([str(self.reference), str(self.webots), "--tiles"])
+
+    def test_no_references_fails(self):
+        for path in self.reference.iterdir():
+            path.unlink()
+        with self.assertRaisesRegex(SystemExit, "No reference renders"):
+            compare_views.main([str(self.reference), str(self.webots)])
 
 
 

@@ -6,6 +6,14 @@
 
 Per view: mean luminance ratio, contrast (luminance spread) ratio, mean
 saturation of each, per-channel mean ratio, and SSIM of luminance.
+
+    .venv/bin/python tools/compare_views.py runs/main runs/branch --tiles
+        ->  the same, and per view the 60 px tiles where the branch changed
+
+--tiles compares repeatable captures of the same views (tools/render_forest.py --repeatable: two of one build are
+bit-identical), which must be the same size: a tile changed where more than 0.5% of its pixels changed by more than
+8/255, or its mean by more than 0.5/255. A small missing object changes a few percent of a tile; a global shift of
+1/255 moves every tile's mean. Changed tiles go to Zaid; they never pass or fail alone.
 """
 import argparse
 import json
@@ -40,18 +48,44 @@ def stats(rgb):
     return lin, luminance, saturation
 
 
-def main():
+TILE, CHANGED, SHARE, SHIFT = 60, 8, 0.005, 0.5  # px; /255; of a tile's pixels; /255 of its mean
+
+
+def changed_tiles(a, b):
+    """The tiles of TILE px, as (row, column), where two same-sized 8-bit RGB images differ: more than SHARE of their
+    pixels changed by more than CHANGED/255 in some channel, or their mean change exceeds SHIFT/255."""
+    change = np.abs(a.astype(np.int16) - b.astype(np.int16)).max(2).astype(np.float64)
+    rows, cols = np.arange(0, change.shape[0], TILE), np.arange(0, change.shape[1], TILE)
+
+    def per_tile(values):
+        sums = np.add.reduceat(np.add.reduceat(values, rows, axis=0), cols, axis=1)
+        return sums / np.add.reduceat(np.add.reduceat(np.ones_like(values), rows, axis=0), cols, axis=1)
+
+    flagged = (per_tile((change > CHANGED).astype(np.float64)) > SHARE) | (per_tile(change) > SHIFT)
+    return [tuple(int(i) for i in tile) for tile in np.argwhere(flagged)]
+
+
+def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("reference", type=Path)
     p.add_argument("webots", type=Path)
-    args = p.parse_args()
+    p.add_argument("--tiles", action="store_true", help="repeatable captures of one size: list the tiles that changed")
+    args = p.parse_args(argv)
+    references = [path for path in sorted(args.reference.glob("*.png")) if not path.name.endswith("-compare.png")]
+    if not references:
+        raise SystemExit(f"No reference renders (*.png) in {args.reference}.")
+    if missing := [path.stem for path in references if not (args.webots / path.name).exists()]:
+        raise SystemExit(f"No Webots render of {', '.join(missing)} in {args.webots}. "
+                         "Render the same views first (tools/render_forest.py).")
     report = {}
-    for ref_path in sorted(args.reference.glob("*.png")):
+    for ref_path in references:
         ours_path = args.webots / ref_path.name
-        if not ours_path.exists() or ref_path.name.endswith("-compare.png"):
-            continue
         ref = Image.open(ref_path).convert("RGB")
-        ours = Image.open(ours_path).convert("RGB").resize(ref.size, Image.Resampling.LANCZOS)
+        ours = Image.open(ours_path).convert("RGB")
+        if args.tiles and ours.size != ref.size:
+            raise SystemExit(f"{ref_path.stem}: the reference is {ref.size}, Webots {ours.size}. "
+                             "Capture both at the same resolution.")
+        ours = ours.resize(ref.size, Image.Resampling.LANCZOS)  # a Cycles reference's size; none with --tiles
         a, b = np.asarray(ref) / 255.0, np.asarray(ours) / 255.0
         la, lum_a, sat_a = stats(a)
         lb, lum_b, sat_b = stats(b)
@@ -62,6 +96,8 @@ def main():
             "channel_ratio": [round(float(lb[..., c].mean() / la[..., c].mean()), 3) for c in range(3)],
             "ssim": round(ssim(lum_a ** (1 / 2.2), lum_b ** (1 / 2.2)), 3),
         }
+        if args.tiles:
+            report[ref_path.stem]["changed_tiles"] = changed_tiles(np.asarray(ref), np.asarray(ours))
         difference = np.clip(np.abs(a - b).mean(2) * 4, 0, 1)
         heat = (np.stack([difference, difference * 0.35, 1 - difference], 2) * 255).astype(np.uint8)
         strip = Image.new("RGB", (ref.width * 3, ref.height))
