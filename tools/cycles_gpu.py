@@ -1,6 +1,7 @@
 """Cycles on a GPU when Blender finds one (OptiX, then CUDA or HIP), for the forest's bakes; else the CPU, said so.
 
-The same estimator either way: results differ by sampling noise (the canopy light: means equal to 4 decimals).
+The same estimator either way: results differ by sampling noise (the canopy light: means equal to 4 decimals), or by
+float rounding where one sample is taken (trunk materials: within 1/255, 2/255 on 0.03% of normal texels).
 """
 import bpy
 

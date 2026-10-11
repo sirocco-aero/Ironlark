@@ -15,6 +15,7 @@ import bpy
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
+from cycles_gpu import use_gpu
 from export_forest import loop_uvs
 
 
@@ -37,7 +38,7 @@ def main():
     scene = bpy.context.scene
     scene.render.engine = 'CYCLES'
     scene.cycles.samples = 1
-    scene.cycles.device = 'CPU'
+    use_gpu(scene, 'MATERIAL')
     scene.render.bake.margin = 12
     result = {}
     for slot, material in enumerate(source.data.materials):
