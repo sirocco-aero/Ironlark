@@ -29,38 +29,48 @@ def packages(root, names=PACKAGES):
     return {name: installed.get(name) for name in names}
 
 
+PARSED = {}  # a file's sha256: its string constants and the modules it imports, parsed once per process
+
+
+def parsed(data):
+    """A Python file's sha256, its string constants and the top-level modules it imports, in the order written."""
+    sha256 = hashlib.sha256(data).hexdigest()
+    if sha256 not in PARSED:
+        nodes = list(ast.walk(ast.parse(data)))
+        PARSED[sha256] = (
+            [node.value for node in nodes if isinstance(node, ast.Constant) and isinstance(node.value, str)],
+            [name.split(".")[0] for node in nodes for name in (
+                [alias.name for alias in node.names] if isinstance(node, ast.Import) else
+                [node.module] if isinstance(node, ast.ImportFrom) and node.module else [])])
+    return sha256, *PARSED[sha256]
+
+
 def code_closure(root, entry, named_scripts=False, leave_out=()):
     """sha256 of every file of a script's code: itself and its imports from tools/ or from a repository directory a
     script names (build_forest_world.py adds controllers/flight_observer), and with named_scripts the tools scripts
-    it names too (the pipeline's stages), but those in leave_out."""
+    it names too (the pipeline's stages), but those in leave_out. Each file is hashed and read for its imports from
+    the same bytes."""
     root = Path(root)
     folders = [root / "tools"]
 
     def module(name):
         return next((folder / f"{name}.py" for folder in folders if (folder / f"{name}.py").is_file()), None)
 
-    def constants(tree):
-        return [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
-
     first = root / entry
     pending = [first]
     if named_scripts:
-        pending += [path for value in constants(ast.parse(first.read_text())) if value.endswith(".py")
+        pending += [path for value in parsed(first.read_bytes())[1] if value.endswith(".py")
                     and value not in leave_out and (path := module(value[:-3]))]
-    found = set()
+    found = {}
     while pending:
         path = pending.pop()
         if path in found:
             continue
-        found.add(path)
-        tree = ast.parse(path.read_text())
-        folders += [root / value for value in constants(tree) if re.fullmatch(r"[\w.-]+(/[\w.-]+)+", value)
+        found[path], constants, imports = parsed(path.read_bytes())
+        folders += [root / value for value in constants if re.fullmatch(r"[\w.-]+(/[\w.-]+)+", value)
                     and (root / value).is_dir() and root / value not in folders]
-        for node in ast.walk(tree):
-            names = [alias.name for alias in node.names] if isinstance(node, ast.Import) else \
-                [node.module] if isinstance(node, ast.ImportFrom) and node.module else []
-            pending += [found_path for name in names if (found_path := module(name.split(".")[0]))]
-    return {str(path.relative_to(root)): digest(path) for path in sorted(found)}
+        pending += [found_path for name in imports if (found_path := module(name))]
+    return {str(path.relative_to(root)): found[path] for path in sorted(found)}
 
 
 def pipeline_code(root):
@@ -81,7 +91,7 @@ def differences(recorded, current):
                       for name, version in current["packages"].items() if recorded["packages"].get(name) != version]
 
 
-def write_world(world, built_from):
+def write_world(world, built_from, digest=digest):
     """The world's receipt, written after its build succeeded: the recipe it was built from (read when the build began)
     and every output file."""
     world = Path(world)
@@ -92,14 +102,18 @@ def write_world(world, built_from):
     temporary.rename(world / "receipt.json")
 
 
-def world_problems(root, world, contents=False):
+def world_problems(root, world, contents=False, digest=digest):
     """Why the world is not what today's code builds, none if it is: its recipe and its outputs (their sizes, or with
-    contents their sha256 too, about 4 s for the 1.4 GB forest)."""
+    contents their sha256 too, about 4 s for the 1.4 GB forest; the build passes the digests it knows,
+    stage_cache.DIGESTS)."""
     world = Path(world)
     receipt = world / "receipt.json"
     if not receipt.is_file():
         return ["it has no receipt: built before receipts, or not finished"]
-    recorded = json.loads(receipt.read_text())
+    try:
+        recorded = json.loads(receipt.read_text())
+    except ValueError:  # cut short: written, renamed into place, then the power failed before it reached the disk
+        return ["its receipt is unreadable"]
     problems = differences(recorded, recipe(root))
     for name, (size, sha256) in recorded["outputs"].items():
         path = world / name

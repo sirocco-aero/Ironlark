@@ -16,10 +16,10 @@ import time
 from urllib.request import urlretrieve
 import zipfile
 
-from stage_cache import Store, clone, descriptor  # first: it records the code before any is imported
+from stage_cache import DIGESTS, Store, clone, descriptor  # first: it records the code before any is imported
 from forest_process import run_stage
 from forest_textures import thumbnail
-from receipts import code_closure, differences, digest, packages, recipe, write_world
+from receipts import code_closure, differences, packages, recipe, world_problems, write_world
 
 SIM = Path(__file__).resolve().parents[1]
 CACHE = SIM / ".cache"
@@ -37,7 +37,7 @@ INPUTS = {
 
 
 def fetch(name):
-    """Download a pinned build input once and verify it before use."""
+    """Download a pinned build input once and verify it before use (hashed once while it stays the file: DIGESTS)."""
     url, expected = INPUTS[name]
     path = CACHE / name
     if not path.is_file():
@@ -46,11 +46,7 @@ def fetch(name):
         partial = path.with_suffix(path.suffix + ".part")
         urlretrieve(url, partial)
         partial.rename(path)
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        while chunk := file.read(1 << 20):
-            digest.update(chunk)
-    if digest.hexdigest() != expected:
+    if DIGESTS(path) != expected:
         raise RuntimeError(f"Checksum mismatch for {path}; delete it and retry.")
     return path
 
@@ -173,13 +169,15 @@ def exchange(first, second):
 def finish_build(world, building, built_from):
     """The built world, with its receipt, in place of the world, in one step: the folder a link names, the link
     kept. The world it replaced is left in the staging folder until removed, or the next build starts."""
-    write_world(building, built_from)
+    write_world(building, built_from, DIGESTS)
     target = Path(world).resolve()
     if target.exists():
         exchange(building, target)
+        DIGESTS.moved(building, target)
         shutil.rmtree(building)
     else:
         building.rename(target)
+        DIGESTS.moved(building, target)
 
 
 def check_unchanged(root, current):
@@ -239,12 +237,12 @@ def exports(build, source, stages, blender_stage, python_stage=None):
             clone(build / n, room / n)
         if reads_textures:
             (room / TEXTURES_2K).symlink_to(build / TEXTURES_2K)
-        before = {n: digest(room / n) for n in inputs}
+        before = {n: DIGESTS(room / n) for n in inputs}
         (run or blender_stage)(name, script, *args, out=room)
         written = sorted(str((Path(folder) / file).relative_to(room)) for folder, _, files in os.walk(room)
                          for file in files if not (Path(folder) / file).is_symlink())
         value = {n: json.loads((room / n).read_text()) for n in values}
-        outputs = [n for n in written if n not in values and (n not in before or digest(room / n) != before[n])]
+        outputs = [n for n in written if n not in values and (n not in before or DIGESTS(room / n) != before[n])]
         store.save(recipe, room, outputs, value)
         for n in outputs:
             target = build / n
@@ -347,6 +345,10 @@ def build_world(skip_export=False):
         raise RuntimeError("Another forest build is running (.cache is shared by every checkout linking it).") \
             from error
     started, current = time.time(), recipes(SIM)
+    if not world_problems(SIM, world, contents=True, digest=DIGESTS):  # every file the receipt names, byte for byte
+        lock.close()
+        print(f"Forest world already current: {world / 'pine_forest.wbt'}", flush=True)
+        return
     building = start_build(build, world, current, skip_export)
 
     def blender_stage(name, script, *args, out=build):
@@ -404,6 +406,7 @@ def build_world(skip_export=False):
     finish_build(world, building, current["full"])
     if not skip_export:  # which bakes it used: --skip-export ran none
         Store(CACHE / "forest-stages").collect(SIM, started)
+    DIGESTS.forget()
     print(f"Forest world ready: {world / 'pine_forest.wbt'}", flush=True)
 
 

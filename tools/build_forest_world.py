@@ -14,20 +14,18 @@ vicinity arrives with the navigation phase (no autonomy reads it yet).
 
 import argparse
 from concurrent.futures import ProcessPoolExecutor
-import hashlib
 import json
 import math
 import multiprocessing
 import platform
 import re
-import shutil
 import sys
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
-from stage_cache import Store, descriptor  # first: it records the code before any is imported
+from stage_cache import DIGESTS, Store, clone, descriptor  # first: it records the code before any is imported
 import forest_backdrop
 import forest_edge
 import forest_valley
@@ -281,14 +279,13 @@ def finish_copies():
 
 def copy_resource(source, out, convert_mesh=False):
     """Byte-identical assets get one URL, including across tree variants."""
-    with source.open("rb") as stream:
-        key = (hashlib.file_digest(stream, "sha256").hexdigest(), convert_mesh)
+    key = (DIGESTS(source), convert_mesh)
     if key not in COPIED_RESOURCES:
         url = "meshes/" + source.name
         if convert_mesh:
             copy_mesh_later(source, out / url)
         else:
-            shutil.copyfile(source, out / url)
+            clone(source, out / url)
         COPIED_RESOURCES[key] = url
     return COPIED_RESOURCES[key]
 
@@ -810,7 +807,7 @@ def main():
 
     for path in build.glob("sky_*.hdr"):
         if path.name.startswith("sky_light_"):  # the lighting sky, as the source's
-            shutil.copyfile(path, out / "meshes" / path.name)
+            clone(path, out / "meshes" / path.name)
         else:  # the sky cameras see (sky_faces.CAMERA_SKY)
             sky_faces.write_hdr(out / "meshes" / path.name, sky_faces.read_hdr(path) * sky_faces.CAMERA_SKY)
 

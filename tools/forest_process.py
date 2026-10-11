@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import threading
 import time
 
 
@@ -80,6 +81,8 @@ def run_stage(command, log_path, max_mib=4500):
             proc = subprocess.Popen(
                 command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
             )
+            ended = threading.Thread(target=proc.wait, daemon=True)  # done the moment the stage exits
+            ended.start()
             while proc.poll() is None:
                 pss, committed = process_memory(proc.pid)
                 peak_pss = max(peak_pss, pss)
@@ -88,7 +91,7 @@ def run_stage(command, log_path, max_mib=4500):
                 if committed > max_mib * 1024 or available < 768 * 1024:
                     error = f"Stopped before memory exhaustion ({committed / 1024:.0f} MiB process memory); see {log_path}"
                     break
-                time.sleep(0.25)
+                ended.join(0.25)  # the next sample, or the stage's end as it ends
             if not error and proc.wait() != 0:
                 error = f"Build stage exited {proc.returncode}; see {log_path}"
         except KeyboardInterrupt:

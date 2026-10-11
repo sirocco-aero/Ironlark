@@ -4,8 +4,10 @@ import hashlib
 import importlib.util
 import json
 from importlib.machinery import SourceFileLoader
+import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,6 +23,13 @@ import stage_cache
 loader = SourceFileLoader("launcher", str(ROOT / "ironlark"))  # the launcher script, as a module
 launcher = importlib.util.module_from_spec(importlib.util.spec_from_loader("launcher", loader))
 loader.exec_module(launcher)
+
+
+def setUpModule():
+    """The digests these tests learn go to a log of their own, not the checkout's (.cache/digests.jsonl)."""
+    directory = tempfile.TemporaryDirectory()
+    unittest.addModuleCleanup(directory.cleanup)
+    stage_cache.DIGESTS.__init__(Path(directory.name) / "digests.jsonl")
 
 
 class Diagnostics(unittest.TestCase):
@@ -143,6 +152,11 @@ class Drone(unittest.TestCase):
         (self.root / "protos/drone/receipt.json").unlink()
         self.assertEqual(launcher.drone_stale(), "no completed build")
 
+    def test_a_receipt_cut_short_is_stale(self):
+        receipt = self.root / "protos/drone/receipt.json"
+        receipt.write_text(receipt.read_text()[:40])
+        self.assertEqual(launcher.drone_stale(), "its receipt is unreadable")
+
 
 
 class Receipts(unittest.TestCase):
@@ -196,6 +210,40 @@ class Receipts(unittest.TestCase):
         (self.world / "receipt.json").unlink()
         self.assertEqual(receipts.world_problems(self.root, self.world),
                          ["it has no receipt: built before receipts, or not finished"])
+
+    def test_a_build_of_the_world_it_already_has_builds_nothing(self):
+        for name, value in (("SIM", self.root), ("CACHE", self.root / ".cache")):
+            self.addCleanup(setattr, forest_pipeline, name, getattr(forest_pipeline, name))
+            setattr(forest_pipeline, name, value)
+        receipts.write_world(self.world, receipts.recipe(self.root))
+        forest_pipeline.build_world()
+        self.assertFalse((self.root / ".cache/forest-build").exists())  # no stage, no assembly, nothing emptied
+        (self.world / "meshes/tree.obj").write_text("v 0 0 1\n")  # the same size: only its contents tell
+
+        def fetch_source():  # the 2.7 GB download, and the hour of stages after it
+            raise InterruptedError("the build began")
+
+        self.addCleanup(setattr, forest_pipeline, "source_blend", forest_pipeline.source_blend)
+        forest_pipeline.source_blend = fetch_source
+        with self.assertRaisesRegex(InterruptedError, "the build began"):
+            forest_pipeline.build_world()
+
+    def test_a_world_whose_receipt_was_cut_short_is_built_again(self):
+        for name, value in (("SIM", self.root), ("CACHE", self.root / ".cache")):
+            self.addCleanup(setattr, forest_pipeline, name, getattr(forest_pipeline, name))
+            setattr(forest_pipeline, name, value)
+        receipts.write_world(self.world, receipts.recipe(self.root))
+        receipt = self.world / "receipt.json"
+        receipt.write_text(receipt.read_text()[:40])
+        self.assertEqual(receipts.world_problems(self.root, self.world), ["its receipt is unreadable"])
+
+        def fetch_source():
+            raise InterruptedError("the build began")
+
+        self.addCleanup(setattr, forest_pipeline, "source_blend", forest_pipeline.source_blend)
+        forest_pipeline.source_blend = fetch_source
+        with self.assertRaisesRegex(InterruptedError, "the build began"):
+            forest_pipeline.build_world()
 
     def test_a_build_whose_code_changed_while_it_ran_is_not_certified(self):
         began = forest_pipeline.recipes(self.root)
@@ -429,6 +477,73 @@ class StageStore(unittest.TestCase):
             self.manifest().write_text(damage(self.manifest().read_text()))
             self.assertIsNone(self.store.restore(self.recipe(), self.build, self.outputs))
             self.assertFalse(self.store.place(self.recipe()).exists())
+
+
+class Digests(unittest.TestCase):
+    """A file is hashed once: its sha256 is known, to every build process and later builds, while its path holds the
+    same file, and hashed again after any change, even one that keeps its size and mtime."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.digests = stage_cache.Digests(self.root / "digests.jsonl")
+        self.file = self.root / "tree.obj"
+        self.file.write_text("v 0 0 0\n")
+        self.hashed = []
+        digest = stage_cache.digest
+        self.addCleanup(setattr, stage_cache, "digest", digest)
+        stage_cache.digest = lambda path: self.hashed.append(Path(path).name) or digest(path)  # reads the file
+
+    def test_a_file_is_hashed_once_and_again_after_any_change(self):
+        self.assertEqual(self.digests(self.file), hashlib.sha256(b"v 0 0 0\n").hexdigest())
+        self.assertEqual(self.digests(self.file), hashlib.sha256(b"v 0 0 0\n").hexdigest())
+        self.assertEqual(self.hashed, ["tree.obj"])
+        before = self.file.stat()
+        self.file.write_text("v 0 0 1\n")  # the same size, and the mtime put back
+        os.utime(self.file, ns=(before.st_atime_ns, before.st_mtime_ns))
+        self.assertEqual(self.digests(self.file), hashlib.sha256(b"v 0 0 1\n").hexdigest())
+        other = self.root / "other.obj"
+        other.write_text("v 0 0 2\n")
+        os.utime(other, ns=(before.st_atime_ns, before.st_mtime_ns))
+        other.rename(self.file)  # another file in its place
+        self.assertEqual(self.digests(self.file), hashlib.sha256(b"v 0 0 2\n").hexdigest())
+        self.assertEqual(self.hashed, ["tree.obj"] * 3)
+
+    def test_another_process_knows_what_one_hashed_and_a_cut_line_costs_only_itself(self):
+        script = (f"import sys; sys.path.insert(0, {str(ROOT / 'tools')!r}); import stage_cache; "
+                  f"print(stage_cache.Digests({str(self.digests.log)!r})({str(self.file)!r}))")
+        child = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+        self.assertEqual(self.digests(self.file), child.stdout.strip())
+        self.assertEqual(self.hashed, [])  # this process read it from the log
+        with self.digests.log.open("a") as log:
+            log.write('["/a line a crash cut sh')
+        later = stage_cache.Digests(self.digests.log)
+        self.assertEqual(later(self.file), child.stdout.strip())
+        self.assertEqual(self.hashed, [])
+
+    def test_a_clone_or_a_moved_folder_is_known_and_forget_keeps_what_holds(self):
+        digests = stage_cache.DIGESTS
+        self.addCleanup(digests.__init__, digests.log)
+        digests.__init__(self.root / "build.jsonl")
+        (self.root / "partial").mkdir()
+        stage_cache.clone(self.file, self.root / "partial/tree.obj", read_only=True)
+        (self.root / "partial").rename(self.root / "kept")
+        digests.moved(self.root / "partial", self.root / "kept")
+        self.assertEqual(digests(self.root / "kept/tree.obj"), digests(self.file))
+        self.assertEqual(self.hashed, ["tree.obj"])  # the source, once
+        (self.root / "gone.obj").write_text("v 1 1 1\n")
+        digests(self.root / "gone.obj")
+        (self.root / "gone.obj").unlink()
+        reader = stage_cache.Digests(digests.log)
+        reader.catch_up()
+        digests.forget()
+        kept = [json.loads(line)[0] for line in digests.log.read_text().splitlines()]
+        self.assertEqual(sorted(Path(path).name for path in kept), ["tree.obj", "tree.obj"])
+        (self.root / "new.obj").write_text("v 2 2 2\n")
+        digests(self.root / "new.obj")
+        self.assertEqual(reader(self.root / "new.obj"), digests(self.root / "new.obj"))  # read again from the start
+        self.assertEqual(self.hashed, ["tree.obj", "gone.obj", "new.obj"])
 
 
 class Bakes(unittest.TestCase):

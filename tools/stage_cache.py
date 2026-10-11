@@ -10,7 +10,10 @@ exactly the outputs the stage names, each intact, and clones them into the build
 share the stored blocks, so no extra disk, yet are files of their own, so writing one, as an older checkout's stages
 do, leaves the store as it is (a copy where the filesystem cannot share). Another input or code byte is another key.
 After a build, the store keeps what each checkout's latest build used, and nothing else (Store.collect).
+
+A file's sha256 is computed once, by whichever build process first reads it, and known from then on (Digests).
 """
+import contextlib
 import errno
 import fcntl
 import hashlib
@@ -18,7 +21,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import stat
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,12 +38,95 @@ AT_START = {str(path.relative_to(ROOT)): read_digest(path) for folder in ("tools
 from receipts import code_closure, digest  # noqa: E402, after the snapshot
 
 
+class Digests:
+    """The sha256 of files a build read, by path, valid while the path holds the same file: the same device, inode,
+    size, mtime and ctime, which a write, a chmod or another file in its place all change (a write right after a stat
+    too: the kernel then stamps it finer than its clock tick). Not a write through a shared memory mapping to a page
+    already dirty, which updates no time: nothing the build runs writes files so. Its log, appended to by every build
+    process and read back by the others, carries what one learns to the rest and to later builds, so a build hashes
+    only bytes no build hashed before. The log is a cache: a line lost costs one hash, and without it the next build
+    hashes everything again."""
+
+    def __init__(self, log):
+        self.log, self.known, self.read = Path(log), {}, (None, 0)
+
+    @staticmethod
+    def identity(path):
+        found = os.stat(path)
+        return [found.st_dev, found.st_ino, found.st_size, found.st_mtime_ns, found.st_ctime_ns]
+
+    def catch_up(self):
+        """Learn what the log gained since this process last read it (all of it, if rewritten since: forget)."""
+        try:
+            with self.log.open("rb") as stream:
+                inode = os.fstat(stream.fileno()).st_ino
+                stream.seek(self.read[1] if self.read[0] == inode else 0)
+                data = stream.read()
+                end = stream.tell()
+        except FileNotFoundError:
+            return
+        complete = data.rfind(b"\n") + 1
+        for line in data[:complete].splitlines():
+            with contextlib.suppress(ValueError):  # cut short by a crash
+                path, *entry = json.loads(line)
+                self.known[path] = entry
+        self.read = (inode, end - len(data) + complete)
+
+    def remember(self, path, sha256, identity=None):
+        self.known[path] = entry = [*(identity or self.identity(path)), sha256]
+        self.log.parent.mkdir(parents=True, exist_ok=True)
+        with self.log.open("a") as stream:  # one line per write: appends from processes never interleave
+            stream.write(json.dumps([path, *entry]) + "\n")
+        return sha256
+
+    def __call__(self, path):
+        """path's sha256: known, or hashed now. Its identity is read first, so a write while it is hashed leaves the
+        entry already stale."""
+        path = os.path.abspath(path)
+        identity = self.identity(path)
+        if self.known.get(path, [])[:5] != identity:
+            self.catch_up()
+        entry = self.known.get(path, [])
+        return entry[5] if entry[:5] == identity else self.remember(path, digest(path), identity)
+
+    def copied(self, source, target):
+        """target was given source's bytes: known by them, if source was still the file hashed when it was."""
+        entry = self.known.get(os.path.abspath(source), [])
+        if entry[:5] == self.identity(source):
+            self.remember(os.path.abspath(target), entry[5])
+
+    def moved(self, old, new):
+        """Folder old was renamed new: its files are known there."""
+        old, new = os.path.abspath(old) + os.sep, os.path.abspath(new) + os.sep
+        for path, entry in list(self.known.items()):
+            if path.startswith(old):
+                with contextlib.suppress(FileNotFoundError):
+                    if self.identity(moved := new + path[len(old):]) == entry[:5]:
+                        self.remember(moved, entry[5], entry[:5])
+
+    def forget(self):
+        """Rewrite the log with what still holds; only while no other process appends (a build's end)."""
+        self.catch_up()
+        lines = []
+        for path, entry in self.known.items():
+            with contextlib.suppress(FileNotFoundError):
+                if self.identity(path) == entry[:5]:
+                    lines.append(json.dumps([path, *entry]) + "\n")
+        temporary = self.log.with_name(self.log.name + ".tmp")
+        temporary.write_text("".join(lines))
+        temporary.rename(self.log)
+
+
+DIGESTS = Digests(ROOT / ".cache/digests.jsonl")
+
+
 FICLONE = 0x40049409  # linux/fs.h: make the target share the source's blocks
 
 
-def clone(source, target):
-    """target, a file of its own with source's bytes: sharing its blocks where the filesystem can (btrfs), copied
-    where it cannot (tmpfs, as /tmp is) or across filesystems."""
+def clone(source, target, read_only=False):
+    """target, a file of its own with source's bytes, known by source's sha256: sharing its blocks where the
+    filesystem can (btrfs), copied where it cannot (tmpfs, as /tmp is) or across filesystems."""
+    DIGESTS(source)
     with open(source, "rb") as original, open(target, "wb") as copy:
         try:
             fcntl.ioctl(copy.fileno(), FICLONE, original.fileno())
@@ -49,6 +134,9 @@ def clone(source, target):
             if error.errno not in (errno.EOPNOTSUPP, errno.EXDEV):
                 raise
             shutil.copyfileobj(original, copy)
+    if read_only:
+        Path(target).chmod(0o444)
+    DIGESTS.copied(source, target)
 
 
 CODE = {}  # (root, script): its code_closure, read once per process: code does not change during a build (Store.save)
@@ -59,7 +147,7 @@ def descriptor(root, stage, script, args, inputs, toolchain):
     without the paths among them (their files are inputs, by content, wherever the checkout is)."""
     code = CODE.get((str(root), script)) or CODE.setdefault((str(root), script), code_closure(root, script))
     return {"stage": stage, "args": [arg for arg in args if not (isinstance(arg, str) and Path(arg).is_absolute())],
-            "code": code, "inputs": {name: digest(path) for name, path in sorted(inputs.items())},
+            "code": code, "inputs": {name: DIGESTS(path) for name, path in sorted(inputs.items())},
             "toolchain": toolchain}
 
 
@@ -86,7 +174,7 @@ class Store:
         if stored is not None and outputs is None:
             outputs = list(stored["outputs"])
         intact = stored is not None and stored["recipe"] == recipe and set(stored["outputs"]) == set(outputs) and all(
-            (path := place / "outputs" / name).is_file() and path.stat().st_size == size and digest(path) == sha256
+            (path := place / "outputs" / name).is_file() and path.stat().st_size == size and DIGESTS(path) == sha256
             for name, (size, sha256) in stored["outputs"].items())
         if not intact:
             shutil.rmtree(place)
@@ -113,13 +201,13 @@ class Store:
         for name in outputs:
             kept = partial / "outputs" / name
             kept.parent.mkdir(parents=True, exist_ok=True)
-            clone(Path(build) / name, kept)
-            kept.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-            files[name] = [kept.stat().st_size, digest(kept)]
+            clone(Path(build) / name, kept, read_only=True)
+            files[name] = [kept.stat().st_size, DIGESTS(kept)]
         manifest = {"recipe": recipe, "outputs": files, "value": value}
         (partial / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
         shutil.rmtree(place, ignore_errors=True)
         partial.rename(place)
+        DIGESTS.moved(partial, place)
         return {"value": value, "outputs": files}
 
     def collect(self, checkout, since):

@@ -362,7 +362,10 @@ def drone_stale():
     receipt = ROOT / "protos/drone/receipt.json"
     if not receipt.is_file():
         return "no completed build"
-    recorded = json.loads(receipt.read_text())
+    try:
+        recorded = json.loads(receipt.read_text())
+    except ValueError:  # cut short: written, renamed into place, then the power failed before it reached the disk
+        return "its receipt is unreadable"
     for name, digest in {**recorded["inputs"], **recorded["outputs"]}.items():
         path = ROOT / name
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
@@ -410,7 +413,7 @@ def flight(headless, editor=False, world="forest", record=False):
         if problems := world_problems(ROOT, built):
             more = f" and {len(problems) - 3} more" if len(problems) > 3 else ""
             raise RuntimeError(f"The forest world is not what today's code builds: {'; '.join(problems[:3])}{more}. "
-                               "Rebuild it: ./ironlark build-world (about 78 min).")
+                               "Rebuild it: ./ironlark build-world (21 s to 34 min, by what changed).")
     doctor(overview=False, home=home, record=record)
     if not headless and not os.environ.get("DISPLAY"):
         raise RuntimeError("Webots R2025a needs an X11/XWayland DISPLAY; Wayland-only is unsupported. "
@@ -731,7 +734,9 @@ def main():
     elif args.command == "build-world":
         with exclusive():
             build_world(skip_export=args.skip_export)
-            build_drone()
+            if stale := drone_stale():
+                print(f"Building the drone ({stale}).", flush=True)
+                build_drone()
     elif args.command == "build-drone":
         with exclusive():
             build_drone()
