@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import threading
 import time
 
 
@@ -49,28 +50,30 @@ def memory_fields(path):
 
 
 def process_memory(pid):
-    """Count the complete stage, including make's compiler children."""
-    rss = swapped = 0
+    """The complete stage's memory, make's compiler children and forked workers included: its proportional set size
+    (a page shared by n of its processes counts 1/n in each, so forked workers' shared pages count once), and that
+    with its swapped pages."""
+    pss = swapped = 0
     pending = [pid]
     while pending:
         child = pending.pop()
         try:
-            fields = memory_fields(Path(f"/proc/{child}/status"))
-            rss += fields.get("VmRSS", 0)
-            swapped += fields.get("VmSwap", 0)
+            fields = memory_fields(Path(f"/proc/{child}/smaps_rollup"))
+            pss += fields.get("Pss", 0)
+            swapped += fields.get("SwapPss", 0)
             children = Path(f"/proc/{child}/task/{child}/children").read_text()
             pending.extend(map(int, children.split()))
         except (FileNotFoundError, ProcessLookupError):
             continue
-    return rss, rss + swapped
+    return pss, pss + swapped
 
 
 def run_stage(command, log_path, max_mib=4500):
-    """Bound RSS plus swapped process pages, retaining logs and measurements."""
+    """Bound the stage's memory (process_memory), retaining logs and measurements."""
     log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
-    peak_rss = peak_committed = 0
+    peak_pss = peak_committed = 0
     error = None
     proc = None
     with log_path.open("w") as log:
@@ -78,15 +81,17 @@ def run_stage(command, log_path, max_mib=4500):
             proc = subprocess.Popen(
                 command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
             )
+            ended = threading.Thread(target=proc.wait, daemon=True)  # done the moment the stage exits
+            ended.start()
             while proc.poll() is None:
-                rss, committed = process_memory(proc.pid)
-                peak_rss = max(peak_rss, rss)
+                pss, committed = process_memory(proc.pid)
+                peak_pss = max(peak_pss, pss)
                 peak_committed = max(peak_committed, committed)
                 available = memory_fields(Path("/proc/meminfo"))["MemAvailable"]
                 if committed > max_mib * 1024 or available < 768 * 1024:
                     error = f"Stopped before memory exhaustion ({committed / 1024:.0f} MiB process memory); see {log_path}"
                     break
-                time.sleep(0.25)
+                ended.join(0.25)  # the next sample, or the stage's end as it ends
             if not error and proc.wait() != 0:
                 error = f"Build stage exited {proc.returncode}; see {log_path}"
         except KeyboardInterrupt:
@@ -109,8 +114,8 @@ def run_stage(command, log_path, max_mib=4500):
             log_path.with_suffix(".metrics.json").write_text(
                 json.dumps(
                     {
-                        "peak_rss_mib": round(peak_rss / 1024, 1),
-                        "peak_rss_and_swap_mib": round(peak_committed / 1024, 1),
+                        "peak_pss_mib": round(peak_pss / 1024, 1),
+                        "peak_pss_and_swap_mib": round(peak_committed / 1024, 1),
                         "seconds": round(time.monotonic() - started, 1),
                         "exit_code": proc.returncode if proc is not None else None,
                         "error": error,

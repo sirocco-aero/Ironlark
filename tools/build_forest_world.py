@@ -13,20 +13,21 @@ vicinity arrives with the navigation phase (no autonomy reads it yet).
 """
 
 import argparse
-import hashlib
+from concurrent.futures import ProcessPoolExecutor
 import json
 import math
+import multiprocessing
+import platform
 import re
-import shutil
 import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
 
+from stage_cache import DIGESTS, Store, clone, descriptor  # first: it records the code before any is imported
 import forest_backdrop
 import forest_edge
-import forest_valley
 import forest_valley
 from forest_view import CAMERAS, ORIGIN, REGION, VIEW_CEILING, VIEW_MARGIN
 
@@ -34,24 +35,14 @@ sys.path.insert(
     0, str(Path(__file__).resolve().parents[1] / "controllers/flight_observer")
 )
 from minimap import look_at
+from world_meshes import copy_mesh, drop_back_copies, enu
+from dds import write_bc7_dds
+from forest_textures import (TEXTURE_LIMIT, bleed_alpha, bleed_normal, dilate, impostor_atlases, limit_texture,
+                             photograph, twig_atlas)
+from receipts import packages
 
 COLLIDER_RADIUS = 25.0  # invisible trunk colliders within this range of home
 # ---------------------------------------------------------------- obj helpers
-
-
-def enu(v):
-    """Legacy export cache (X,Y-up,Z) -> flight/world ENU, a proper rotation."""
-    return (v[0], -v[2], v[1])
-
-
-def copy_mesh(src, dst):
-    with open(src) as fi, open(dst, "w") as fo:
-        for line in fi:
-            if line.startswith(("v ", "vn ")):
-                kind, *v = line.split()
-                fo.write(kind + " %.6f %.6f %.6f\n" % enu(list(map(float, v[:3]))))
-            else:
-                fo.write(line)
 
 
 # Blender->Webots frame change as a rotation matrix (and its transpose).
@@ -91,6 +82,33 @@ def cover_placement(mat_blender):
     w = C_FWD @ np.array(mat_blender, dtype=np.float64).reshape(3, 3) @ C_FWD.T
     s = float(np.linalg.norm(w, axis=0).mean())
     return s, mat_to_axis_angle(w / s)
+
+
+def cover_placements(mats):
+    """cover_placement of many bases at once, equal to it bit for bit: one call factors every matrix (the same
+    LAPACK routine on each), and the rest is its arithmetic, elementwise; a rotation near 180 degrees, which needs
+    its own branch, goes through mat_to_axis_angle."""
+    w = np.array([C_FWD @ np.array(m, dtype=np.float64).reshape(3, 3) @ C_FWD.T for m in mats])
+    scale = np.linalg.norm(w, axis=1).mean(1)
+    rotation = w / scale[:, None, None]
+    u, _, vt = np.linalg.svd(rotation)
+    r = u @ vt
+    flip = np.linalg.det(r) < 0
+    u[flip, :, -1] = -u[flip, :, -1]
+    r[flip] = u[flip] @ vt[flip]
+    trace = (np.trace(r, axis1=1, axis2=2) - 1.0) / 2.0
+    angle = np.array([math.acos(max(-1.0, min(1.0, t))) for t in trace.tolist()])
+    sine = 2.0 * np.array([math.sin(a) for a in angle.tolist()])
+    axis = np.stack([r[:, 2, 1] - r[:, 1, 2], r[:, 0, 2] - r[:, 2, 0], r[:, 1, 0] - r[:, 0, 1]], 1) / sine[:, None]
+    placements = []
+    for k, (s, a) in enumerate(zip(scale.tolist(), angle.tolist())):
+        if a < 1e-9:
+            placements.append((s, (0.0, 1.0, 0.0, 0.0)))
+        elif a > math.pi - 1e-6:
+            placements.append((s, mat_to_axis_angle(rotation[k])))
+        else:
+            placements.append((s, (*axis[k].tolist(), a)))
+    return placements
 
 
 def tree_placement(matrix, base_z, home):
@@ -229,42 +247,47 @@ VISUAL_INSTANCES = []
 COPIED_RESOURCES = {}
 
 
+# Mesh conversions in flight (destination: future): the assembly reads no copied mesh before finish_copies().
+COPIES, COPY_POOL = {}, None
+STAGES = None  # the stage store (main's --stages), for the workers too
+# The source's textures (main's --source) and the archive they were extracted from, whose extraction the pipeline
+# checks before assembling: a stored step names a source file by it, not by hashing the file.
+SOURCE, SOURCE_ARCHIVE = None, None
+
+
+def stored_mesh(src, dst):
+    """copy_mesh, kept in the stage store by the mesh it reads."""
+    stored(STAGES, dst.parent, "mesh", "tools/world_meshes.py", [dst.name], {"mesh": src}, [dst.name],
+           lambda: copy_mesh(src, dst))
+
+
+def copy_mesh_later(src, dst):
+    """copy_mesh in a worker. A second copy to the same path waits for the first: the last still wins."""
+    global COPY_POOL
+    if COPY_POOL is None:
+        COPY_POOL = ProcessPoolExecutor(WORKERS, mp_context=FORK)
+    if dst in COPIES:
+        COPIES.pop(dst).result()
+    COPIES[dst] = COPY_POOL.submit(stored_mesh, src, dst)
+
+
+def finish_copies():
+    for done in COPIES.values():
+        done.result()
+    COPIES.clear()
+
+
 def copy_resource(source, out, convert_mesh=False):
     """Byte-identical assets get one URL, including across tree variants."""
-    with source.open("rb") as stream:
-        key = (hashlib.file_digest(stream, "sha256").hexdigest(), convert_mesh)
+    key = (DIGESTS(source), convert_mesh)
     if key not in COPIED_RESOURCES:
         url = "meshes/" + source.name
         if convert_mesh:
-            copy_mesh(source, out / url)
+            copy_mesh_later(source, out / url)
         else:
-            shutil.copyfile(source, out / url)
+            clone(source, out / url)
         COPIED_RESOURCES[key] = url
     return COPIED_RESOURCES[key]
-
-
-def light_signature(build, out):
-    """Invalidate canopy lighting when its actual geometry or alpha changes."""
-    digest = hashlib.sha256(json.dumps(VISUAL_INSTANCES, sort_keys=True).encode())
-    # Meshes, and the textures whose alpha masks the light (RGBA PNGs: the bake treats the rest as
-    # opaque, whatever their colour).
-    def masks_light(path):
-        with path.open("rb") as stream:
-            header = stream.read(26)
-        return len(header) == 26 and header[25] == 6
-
-    urls = {record["mesh"] for record in VISUAL_INSTANCES}
-    urls |= {record["texture"] for record in VISUAL_INSTANCES if record["texture"] and masks_light(out / record["texture"])}
-    paths = [out / url for url in sorted(urls)]
-    paths += [
-        build / "terrain.obj",
-        Path(__file__).with_name("bake_forest_light.py"),
-        Path(__file__).with_name("forest_terrain.py"),
-    ]
-    for path in paths:
-        with path.open("rb") as stream:
-            digest.update(hashlib.file_digest(stream, "sha256").digest())
-    return digest.hexdigest()
 
 
 def shape_fields(mesh, tex, normal="", roughness="", shadow=True):
@@ -311,7 +334,7 @@ def find_texture(source, image_name):
     return matches[0] if matches else None
 
 
-def build_cover_textures(source, build, out):
+def build_cover_textures(source, build, out, stages):
     """One photographic material per atlas, shared across all asset variants."""
     assets = json.loads((build / "cover_assets.json").read_text())
     index, prepared = {}, {}
@@ -324,56 +347,27 @@ def build_cover_textures(source, build, out):
             raise RuntimeError(f"Missing cover albedo: {name}: {diff}")
         key = (diff, alpha, first.get("invert_alpha", False))
         if key not in prepared:
-            safe = "material_" + re.sub(r"\W", "_", diff) + ".png"
-            img = Image.open(src).convert("RGB")
-            img = img.resize((1024, 1024), Image.Resampling.LANCZOS)
-            asrc = find_texture(source, alpha) if alpha else None
-            if asrc:
-                a = (
-                    Image.open(asrc)
-                    .convert("L")
-                    .resize(img.size, Image.Resampling.LANCZOS)
-                )
-                if first.get("invert_alpha"):
-                    a = ImageOps.invert(a)
-                img.putalpha(a)
-            img.save(out / "meshes" / safe)
-            prepared[key] = "meshes/" + safe
+            url = "meshes/material_" + re.sub(r"\W", "_", diff) + ".png"
+            stored_photograph(stages, out, url, src, alpha=find_texture(source, alpha) if alpha else None,
+                              invert=first.get("invert_alpha"))
+            prepared[key] = url
         index[name] = prepared[key]
     return index
 
 
-def prepare_visual_trees(source, build, out):
+def prepare_visual_trees(source, build, out, stages):
     """Source-authored branches and twigs, baked before tree evaluation."""
     meta = json.loads((build / "visual_trees.json").read_text())
     material_images = json.loads((build / "material_images.json").read_text())
     atlas = json.loads((build / "twig_atlas.json").read_text())
     prepared = {}
     for species, cards in atlas.items():
-        img = Image.new("RGBA", (2048, 2048))
-        normals = Image.new("RGB", (2048, 2048), (128, 128, 255))
-        for card in cards:
-            cell = (
-                Image.open(build / card["file"])
-                .convert("RGBA")
-                .resize((512, 512), Image.Resampling.LANCZOS)
-            )
-            # Alpha is kept at full precision. No hard threshold erases needles.
-            img.paste(cell, ((card["cell"] % 4) * 512, (card["cell"] // 4) * 512))
-            if "normal" in card:
-                cell = (
-                    Image.open(build / card["normal"])
-                    .convert("RGB")
-                    .resize((512, 512), Image.Resampling.LANCZOS)
-                )
-                normals.paste(
-                    cell, ((card["cell"] % 4) * 512, (card["cell"] // 4) * 512)
-                )
-        img.save(out / f"meshes/twigs_{species}.png")
-        normals.save(out / f"meshes/twigs_{species}_normal.png")
+        urls = [f"meshes/twigs_{species}.png", f"meshes/twigs_{species}_normal.png"]
+        inputs = {card[key]: build / card[key] for card in cards for key in ("file", "normal") if key in card}
+        stored(stages, out, "twig-atlas", "tools/forest_textures.py", [species, cards], inputs, urls,
+               lambda: twig_atlas(build, cards, out / urls[0], out / urls[1]))
     for variant, parts in meta["variants"].items():
-        baked_path = build / f"baked_{variant}.json"
-        baked = json.loads(baked_path.read_text()) if baked_path.exists() else {}
+        baked = json.loads((build / f"baked_{variant}.json").read_text())
         for part in parts:
             part["mesh_url"] = copy_resource(
                 build / part["file"], out, convert_mesh=True
@@ -434,24 +428,9 @@ def prepare_visual_trees(source, build, out):
                 if cache_key in prepared:
                     part[key] = prepared[cache_key]
                     continue
-                name = f"material_{material}_{suffix}.png"
-                img = (
-                    Image.open(src)
-                    .convert("RGB")
-                    .resize((1024, 1024), Image.Resampling.LANCZOS)
-                )
-                if key == "tex" and part["foliage"]:
-                    if alpha:
-                        mask = (
-                            Image.open(alpha)
-                            .convert("L")
-                            .resize(img.size, Image.Resampling.LANCZOS)
-                        )
-                        if part["textures"].get("invert_alpha"):
-                            mask = ImageOps.invert(mask)
-                        img.putalpha(mask)
-                img.save(out / "meshes" / name)
-                part[key] = "meshes/" + name
+                part[key] = f"meshes/material_{material}_{suffix}.png"
+                stored_photograph(stages, out, part[key], src, alpha=alpha,
+                                  invert=part.get("textures", {}).get("invert_alpha"))
                 prepared[cache_key] = part[key]
     return meta["variants"]
 
@@ -509,12 +488,8 @@ def instanced_tree_shapes(parts, out, far):
     return nodes
 
 
-# Trees beyond this distance are drawn as impostors (tools/bake_impostors.py). A view
-# covers the capture sphere's diameter; at this distance on a 1080-line screen with the
-# viewer's 1 rad field of view, a metre spans about 12 pixels.
-IMPOSTOR_DISTANCE = 150.0
-IMPOSTOR_PIXELS_PER_METRE = 12.0
-IMPOSTOR_FRAMES = 8
+# Trees beyond this distance are drawn as impostors (tools/bake_impostors.py).
+IMPOSTOR_DISTANCE = 150.0  # its atlases' resolution: forest_textures.IMPOSTOR_PIXELS_PER_METRE
 # Coverage an impostor texel needs to be drawn. Full trees keep a needle texel whose mipmapped
 # alpha, scaled by 1 + mip / 4 (Webots patch 0004), reaches 0.5: past 150 m (mip 6 and up)
 # about 0.2 of it covered.
@@ -534,68 +509,49 @@ f 1/1/1 3/3/1 4/4/1
 """
 
 
-def dilate(color, alpha, steps=16):
-    """Spread colours into empty texels so filtering never pulls in black."""
-    valid = (alpha > 1e-3).astype(np.float32)
-    color = color * valid[..., None]
-    for _ in range(steps):
-        pad_c = np.pad(color, ((1, 1), (1, 1), (0, 0)), mode="edge")
-        pad_v = np.pad(valid, 1, mode="edge")
-        acc = sum(pad_c[1 + dy:pad_c.shape[0] - 1 + dy, 1 + dx:pad_c.shape[1] - 1 + dx]
-                  for dy in (-1, 0, 1) for dx in (-1, 0, 1))
-        weight = sum(pad_v[1 + dy:pad_v.shape[0] - 1 + dy, 1 + dx:pad_v.shape[1] - 1 + dx]
-                     for dy in (-1, 0, 1) for dx in (-1, 0, 1))
-        grow = (valid == 0) & (weight > 0)
-        color[grow] = acc[grow] / weight[grow][:, None]
-        valid = np.maximum(valid, grow.astype(np.float32))
-    fill = color[valid > 0].mean(0) if valid.any() else np.zeros(color.shape[-1])
-    color[valid == 0] = fill
-    return color
+# Independent parts of the assembly run in forked workers: the same computations. Two are as fast as four (172 s against
+# 171 s on a 4-core laptop) at 1.1 GB of memory against 1.8 GB; the assembly alone needs 0.6 GB.
+WORKERS, FORK = 2, multiprocessing.get_context("fork")
 
 
-def impostor_atlases(build, out, variant, radius):
-    """Albedo+alpha and normal atlases, sized so a view has about the screen's pixels
-    at the impostor distance."""
-    data = np.load(build / f"impostor_{variant}.npz")
-    alpha = data["alpha"]
-    safe = np.maximum(alpha, 1e-6)[..., None]
-    albedo = np.clip(data["albedo"] / safe, 0, 1)
-    albedo = np.where(albedo <= 0.0031308, 12.92 * albedo, 1.055 * albedo ** (1 / 2.4) - 0.055)
-    # The mean normal over each texel's needles, kept unnormalized: its length says how much
-    # they agree, which the impostor shader's foliage lighting uses.
-    normal = np.clip(data["normal"] / safe * 2 - 1, -1, 1)
-    depth = np.clip(data["depth"] / safe[..., 0], 0, 1)
-    # Power-of-two views: Webots would rescale any other atlas size.
-    view = int(np.clip(2 ** np.ceil(np.log2(2 * radius * IMPOSTOR_PIXELS_PER_METRE)), 32, 256))
-    size = (IMPOSTOR_FRAMES * view,) * 2
-    color = Image.fromarray(np.round(np.dstack([dilate(albedo, alpha), alpha]) * 255).astype(np.uint8), "RGBA")
-    color.resize(size, Image.Resampling.LANCZOS).save(out / f"meshes/impostor_{variant}.png")
-    # Normals (RGB) and depth (A) shade the crown softly: half the views' resolution is enough.
-    filled = dilate(np.dstack([normal * 0.5 + 0.5, depth]), alpha)
-    Image.fromarray(np.round(filled * 255).astype(np.uint8), "RGBA").resize(
-        (size[0] // 2, size[1] // 2), Image.Resampling.LANCZOS).save(out / f"meshes/impostor_{variant}_normal.png")
+def stored_photograph(stages, out, url, src, mode="RGB", alpha=None, invert=False):
+    """forest_textures.photograph to out/url, kept in the stage store by the photographs it reads."""
+    inputs = {"photograph": src} | ({"alpha": alpha} if alpha else {})
+    stored(stages, out, "photograph", "tools/forest_textures.py", [url, mode, bool(invert)], inputs, [url],
+           lambda: photograph(src, out / url, mode, alpha, invert))
 
 
-def impostor_shapes(build, out, visual_trees, groups):
+def impostor_atlas(build, out, stages, variant, radius):
+    """A variant's impostor atlases (forest_textures.impostor_atlases), from its capture and capture sphere."""
+    stored(stages, out, "impostor-atlas", "tools/forest_textures.py", [variant, radius],
+           {"capture": build / f"impostor_{variant}.npz"},
+           [f"meshes/impostor_{variant}.png", f"meshes/impostor_{variant}_normal.png"],
+           lambda: impostor_atlases(build, out, variant, radius))
+
+
+def impostor_shapes(build, out, stages, visual_trees, groups, declare_only=False):
     """Declare the variants for tools/bake_impostors.py; once baked, one instanced impostor Shape
     per variant and group. groups: (rows, variants, near, far, suffix), each drawn from near to far
-    metres from the viewer (0: no end). Returns the Shapes (empty before the bake)."""
+    metres from the viewer (0: no end). Returns the Shapes (none with declare_only)."""
     declared = {v: [{"mesh": p["mesh_url"], "tex": p["tex"], "normal": p.get("normal", "")} for p in parts]
                 for v, parts in visual_trees.items()}
     (build / "impostor_variants.json").write_text(json.dumps(declared, indent=1, sort_keys=True))
-    baked_path = build / "impostors.json"
-    baked = json.loads(baked_path.read_text()) if baked_path.exists() else {}
-    if not declared.keys() <= baked.keys():
+    if declare_only:
         return []
-    for variant in declared:  # a bake from an older capture lacks passes: rebake first
-        with np.load(build / f"impostor_{variant}.npz") as data:
-            if not {"albedo", "normal", "depth", "alpha"} <= set(data.files):
-                return []
+    baked_path = build / "impostors.json"
+    baked = json.loads(baked_path.read_text()) if baked_path.is_file() else {}
+    if not declared.keys() <= baked.keys():
+        raise RuntimeError(f"No impostor capture of {', '.join(sorted(declared.keys() - baked.keys()))} in {build}. "
+                           "Run ./ironlark build-world without --skip-export.")
     (out / "meshes/impostor_quad.obj").write_text(IMPOSTOR_QUAD)
     nodes = []
+    with ProcessPoolExecutor(WORKERS, mp_context=FORK) as pool:  # each variant's atlases on their own
+        atlases = [pool.submit(impostor_atlas, build, out, stages, variant, baked[variant]["radius"])
+                   for variant in declared]
+        for done in atlases:
+            done.result()
     for variant in sorted(declared):
         sphere = baked[variant]
-        impostor_atlases(build, out, variant, sphere["radius"])
         for rows, variants, near, far, suffix in groups:
             # Instance space = capture space: the tree's frame, moved to the sphere's centre, scaled by its radius.
             placed = rows[np.array([v == variant for v in variants], bool)]
@@ -642,7 +598,7 @@ def height(path, row):
     return z.max() - z.min()
 
 
-def instance_cover(source, build, out, cover_index):
+def instance_cover(source, build, out, cover_index, stages):
     """Place every source cover instance with GPU instancing.
 
     Each asset becomes one transforms file and two instanced Shapes: lod0 up to
@@ -657,7 +613,7 @@ def instance_cover(source, build, out, cover_index):
         if name not in cover_index:
             continue
         mesh_urls[name] = "meshes/" + meta["file"]
-        copy_mesh(build / meta["file"], out / mesh_urls[name])
+        copy_mesh_later(build / meta["file"], out / mesh_urls[name])
     # The source's normal and roughness maps, at the albedo's size.
     normal_maps, roughness_maps = {}, {}
     for name in mesh_urls:
@@ -667,10 +623,11 @@ def instance_cover(source, build, out, cover_index):
             if src is None:
                 continue
             url = "meshes/material_" + re.sub(r"\W", "_", src.name) + ".png"
-            if not (out / url).exists():
-                Image.open(src).convert(mode).resize((1024, 1024), Image.Resampling.LANCZOS).save(out / url)
+            if url not in maps.values():
+                stored_photograph(stages, out, url, src, mode)
             maps[name] = url
 
+    finish_copies()  # the placements below read the copied meshes' bounds
     groups = {}
     for r in records:
         groups.setdefault(r["asset"], []).append(r)
@@ -678,12 +635,11 @@ def instance_cover(source, build, out, cover_index):
     for asset, placements in sorted(groups.items()):
         first = placements[0]
         rows = []
-        for r in placements:
+        for r, (s, (ax, ay, az, ang)) in zip(placements, cover_placements([r["mat"] for r in placements])):
             # The instance basis is the source's world matrix (the mesh keeps source axes).
             basis = np.array(r["mat"], dtype=np.float64).reshape(3, 3)
             origin = enu(r["pos"])
             rows.append(np.hstack([basis, np.array(origin)[:, None]]))
-            s, (ax, ay, az, ang) = cover_placement(r["mat"])
             # The canopy bake shades the ground through every lod0 placement.
             VISUAL_INSTANCES.append(
                 {
@@ -758,12 +714,86 @@ def write_world(out, solids, colliders, pad_y, manifest, terrain_shapes, edge_sh
     (out / "build_manifest.json").write_text(json.dumps(manifest, indent=1))
 
 
+def toolchain():
+    """What the assembly's stored results are computed with, beside their code."""
+    return {"python": platform.python_version(), "packages": packages(Path(__file__).resolve().parents[1])}
+
+
+def stored(stages, out, stage, script, args, inputs, files, compute, in_place=False):
+    """compute()'s value and the files it writes under out, kept in the stage store (tools/stage_cache.py) by script's
+    code, args and the input files (a source file by its name and the source's archive), and taken back unchanged:
+    computed only when one of them changed. in_place: compute rewrites files it reads, so they stay until it runs."""
+    pinned = {name: str(Path(path).resolve().relative_to(SOURCE)) for name, path in inputs.items()
+              if SOURCE and Path(path).resolve().is_relative_to(SOURCE)}
+    recipe = descriptor(Path(__file__).resolve().parents[1], stage, script, [*args, pinned] if pinned else args,
+                        {name: path for name, path in inputs.items() if name not in pinned},
+                        toolchain() | ({"source": SOURCE_ARCHIVE} if pinned else {}))
+    store = Store(stages)
+    kept = store.restore(recipe, out, files)
+    if kept:
+        return kept["value"]
+    for name in files if not in_place else ():
+        (out / name).unlink(missing_ok=True)
+    value = compute()
+    store.save(recipe, out, files, value)
+    return value
+
+
+def valley_shapes(build, out, stages):
+    """The valley's Shapes, its meshes and textures in out/meshes, from its code, the build's height grid and the
+    bounds it mirrors about."""
+    return stored(stages, out, "valley", "tools/forest_valley.py", [list(forest_backdrop.BOUNDS)],
+                  {"heights.json": build / "heights.json"}, forest_valley.FILES, lambda: forest_valley.shapes(build, out))
+
+
+def terrain_tiles(build, out, stages):
+    """The terrain's four tiles and their Shapes (forest_terrain.build_terrain_tiles), from the terrain mesh, its maps
+    and the bounds."""
+    from forest_terrain import TILE_FILES, build_terrain_tiles
+
+    tiles = [f"terrain_{x}_{y}" for x in range(2) for y in range(2)]
+    inputs = {"terrain.obj": build / "terrain.obj"} | {
+        f"{tile}_{kind}.png": build / f"{tile}_{kind}.png" for tile in tiles for kind in ("floor", "normal")}
+    nodes, backdrop = stored(stages, out, "terrain-tiles", "tools/forest_terrain.py", [list(forest_backdrop.BOUNDS)],
+                             inputs, TILE_FILES, lambda: build_terrain_tiles(build, out, forest_backdrop.BOUNDS))
+    return nodes, backdrop
+
+
+def edge_ground(out, stages):
+    """The terrain tiles' copies past the edges (forest_edge.ground_shapes), from the tiles and the bounds."""
+    tiles = [f"meshes/terrain_{x}_{y}.obj" for x in range(2) for y in range(2)]
+    return stored(stages, out, "edge-ground", "tools/forest_edge.py", [list(forest_backdrop.BOUNDS)],
+                  {name: out / name for name in tiles}, [f"meshes/edge_{x}_{y}.obj" for x in range(2) for y in range(2)],
+                  lambda: forest_edge.ground_shapes(out))
+
+
+def terrain_detail(build, out, source, home, occlusion, stages):
+    """The terrain detail layers' fields and maps (forest_terrain.terrain_detail_fields), from the source's ground
+    photographs, the build's blend masks and ground, home and the light occlusion fields."""
+    from forest_terrain import DETAIL_LAYERS, terrain_detail_fields
+
+    inputs = {f"{name}_{suffix}.png": source / f"{name}_{suffix}.png"
+              for name, _ in DETAIL_LAYERS for suffix in ("diff", "nor_gl", "rough")}
+    inputs |= {f"terrain_{x}_{y}_mask.png": build / f"terrain_{x}_{y}_mask.png" for x in range(2) for y in range(2)}
+    inputs |= {name: build / name for name in ("terrain_generated.json", "terrain_meta.json", "heights.json")}
+    files = [f"meshes/terrain_detail_{kind}.png" for kind in ("color", "normal", "roughness", "mask")]
+    return stored(stages, out, "terrain-detail", "tools/forest_terrain.py", [list(home), occlusion], inputs, files,
+                  lambda: terrain_detail_fields(build, out, home, source, occlusion))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", required=True)
     parser.add_argument("--source", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--stages", required=True, help="the stage store (tools/stage_cache.py)")
+    parser.add_argument("--source-archive", required=True, help="the sha256 of the archive --source was extracted from")
+    parser.add_argument("--bake-inputs", action="store_true",
+                        help="only what the light and impostor bakes read: no valley, edge ground, fog, light "
+                             "occlusion, impostor atlases or compressed textures")
     args = parser.parse_args()
+    global STAGES, SOURCE, SOURCE_ARCHIVE
+    STAGES, SOURCE, SOURCE_ARCHIVE = Path(args.stages), Path(args.source).resolve(), args.source_archive
     build = Path(args.build)
     source = Path(args.source)
     out = Path(args.out)
@@ -772,12 +802,12 @@ def main():
 
     # -- textures --
     print("textures", flush=True)
-    visual_trees = prepare_visual_trees(source, build, out)
+    visual_trees = prepare_visual_trees(source, build, out, Path(args.stages))
     import sky_faces
 
     for path in build.glob("sky_*.hdr"):
         if path.name.startswith("sky_light_"):  # the lighting sky, as the source's
-            shutil.copyfile(path, out / "meshes" / path.name)
+            clone(path, out / "meshes" / path.name)
         else:  # the sky cameras see (sky_faces.CAMERA_SKY)
             sky_faces.write_hdr(out / "meshes" / path.name, sky_faces.read_hdr(path) * sky_faces.CAMERA_SKY)
 
@@ -785,6 +815,9 @@ def main():
 
     forest_backdrop.BOUNDS = inner_rect(build)
     print("mirrored about", [round(b, 3) for b in forest_backdrop.BOUNDS], flush=True)
+    # The valley needs only the build folder and these bounds: it computes beside everything else.
+    valley_worker = ProcessPoolExecutor(1, mp_context=FORK)
+    valley = None if args.bake_inputs else valley_worker.submit(valley_shapes, build, out, Path(args.stages))
 
     # -- tree instances as Transforms --
     print("instances", flush=True)
@@ -850,10 +883,10 @@ def main():
     for row, original in zip(edge[near], sources[near]):
         for part in visual_trees[tree_variants[original]]:
             tree_parts[part_key(part)].append(row)
-    impostors = impostor_shapes(build, out, visual_trees, [
+    impostors = impostor_shapes(build, out, Path(args.stages), visual_trees, [
         (np.concatenate([tree_rows, edge, hill]),
          tree_variants + [tree_variants[s] for s in sources] + [tree_variants[s] for s in copied[on_hill]],
-         IMPOSTOR_DISTANCE - 1, 0.0, "")])
+         IMPOSTOR_DISTANCE - 1, 0.0, "")], declare_only=args.bake_inputs)
     solids.extend(instanced_tree_shapes(tree_parts, out, IMPOSTOR_DISTANCE if impostors else None))
     solids.extend(impostors)
     print(
@@ -861,14 +894,14 @@ def main():
     )
 
     # -- ground cover instances --
-    cover_index = build_cover_textures(source, build, out)
-    cover_nodes, cover_tris, cover_meshes = instance_cover(source, build, out, cover_index)
+    cover_index = build_cover_textures(source, build, out, Path(args.stages))
+    cover_nodes, cover_tris, cover_meshes = instance_cover(source, build, out, cover_index, Path(args.stages))
     solids.extend(cover_nodes)
     tri_total += cover_tris
     print("cover tris", cover_tris, flush=True)
 
-    copy_mesh(build / "terrain.obj", out / "meshes/terrain.obj")
-    copy_mesh(build / "river.obj", out / "meshes/river.obj")
+    copy_mesh_later(build / "terrain.obj", out / "meshes/terrain.obj")
+    copy_mesh_later(build / "river.obj", out / "meshes/river.obj")
 
     # -- minimap scene --
     heights_grid = json.loads((build / "heights.json").read_text())
@@ -906,19 +939,21 @@ def main():
         }
     )
     from forest_fog import fog_node
-    from forest_terrain import build_terrain_tiles
 
-    manifest["light_signature"] = light_signature(build, out)
+    finish_copies()
     # Its mirrored-tile shapes are no longer drawn: the edge's own ground replaces them.
-    terrain_shapes, _ = build_terrain_tiles(build, out, forest_backdrop.BOUNDS)
-    edge_shapes = forest_edge.ground_shapes(out) + forest_valley.shapes(build, out)
-    fog = fog_node(build, out, manifest["home_blender"])
-    from forest_fog import light_occlusion_fields
+    terrain_shapes, _ = terrain_tiles(build, out, Path(args.stages))
+    if args.bake_inputs:  # none of these is read by a bake
+        edge_shapes, fog, light_occlusion = [], "", ""
+    else:
+        edge_shapes = edge_ground(out, Path(args.stages)) + valley.result()
+        fog = fog_node(build, out, manifest["home_blender"])
+        from forest_fog import light_occlusion_fields
 
-    light_occlusion = light_occlusion_fields(build, out, manifest["home_blender"], forest_backdrop.BOUNDS)
-    from forest_terrain import terrain_detail_fields
-
-    light_occlusion += terrain_detail_fields(build, out, manifest["home_blender"], source, light_occlusion)
+        light_occlusion = light_occlusion_fields(build, out, manifest["home_blender"], forest_backdrop.BOUNDS)
+        light_occlusion += terrain_detail(build, out, source, manifest["home_blender"], light_occlusion,
+                                          Path(args.stages))
+    valley_worker.shutdown()
     write_world(out, solids, colliders, home_z + 0.02, manifest, terrain_shapes, "\n    ".join(edge_shapes), fog,
                 light_occlusion)
     two_sided_materials(out)
@@ -933,31 +968,35 @@ def main():
     for path in (out / "meshes").iterdir():
         if path.is_file() and "meshes/" + path.name not in referenced:
             path.unlink()
-    limit_textures(out / "meshes")
-    bleed_alpha(out / "meshes")
-    bleed_normals(out)
-    compress_textures(build, out)
+    limit_textures(out, Path(args.stages))
+    bleed_textures(out, Path(args.stages))
+    if args.bake_inputs:
+        print("wrote the bakes' inputs to", out, flush=True)
+        return
+    compress_textures(out, Path(args.stages))
     print("wrote", out / "pine_forest.wbt", flush=True)
 
 
-# HD textures, matching Poly Haven's official 1K downsamples of the same originals.
-TEXTURE_LIMIT = 1024
-
-
-def limit_textures(folder):
-    """Downsample textures above the limit. Terrain tiles span 60 m each and are
-    rebuilt separately from the source's tiling ground materials; impostor atlases
-    hold 64 views, each sized to the screen at the impostor distance; the light occlusion
-    layers stack five 0.2 m maps."""
-    for path in folder.glob("*.png"):
+def limit_textures(out, stages):
+    """Downsample textures above the limit (forest_textures.limit_texture). Terrain tiles span 60 m each and are
+    rebuilt separately from the source's tiling ground materials; impostor atlases hold 64 views, each sized to the
+    screen at the impostor distance; the light occlusion layers stack five 0.2 m maps. Each kept in the stage store by
+    its bytes before."""
+    for path in sorted((out / "meshes").glob("*.png")):
         if path.name.startswith(("terrain_", "impostor_", "light_occlusion")):
             continue
         with Image.open(path) as image:
             if max(image.size) <= TEXTURE_LIMIT:
                 continue
-            image.load()
-        image.thumbnail((TEXTURE_LIMIT, TEXTURE_LIMIT), Image.Resampling.LANCZOS)
-        image.save(path)
+        url = str(path.relative_to(out))
+        stored(stages, out, "limit-texture", "tools/forest_textures.py", [], {"texture": path}, [url],
+               lambda: limit_texture(path), in_place=True)
+
+
+def stored_drop(path):
+    """drop_back_copies on a mesh, kept in the stage store by its bytes before."""
+    return stored(STAGES, path.parent, "drop-back-copies", "tools/world_meshes.py", [path.name], {"mesh": path},
+                  [path.name], lambda: drop_back_copies(path), in_place=True)
 
 
 def two_sided_materials(out):
@@ -987,73 +1026,23 @@ def two_sided_materials(out):
 
     world = re.sub(r"Shape \{.*?geometry Mesh \{ url \"[^\"]+\" \}", material, world, flags=re.S)
     path.write_text(world)
-    dropped = 0
-    for mesh, masked in users.items():
-        if all(masked) and "impostor_" not in mesh:
-            dropped += drop_back_copies(out / mesh)
+    with ProcessPoolExecutor(WORKERS, mp_context=FORK) as pool:  # each mesh its own file
+        drops = [pool.submit(stored_drop, out / mesh) for mesh, masked in users.items()
+                 if all(masked) and "impostor_" not in mesh]
+        dropped = sum(done.result() for done in drops)
     print("two-sided: dropped", dropped, "back copies", flush=True)
-
-
-def drop_back_copies(path):
-    """Remove the second of each pair of faces with the same corners and texture
-    coordinates (a card and its reversed copy)."""
-    lines = path.read_text().splitlines(keepends=True)
-    positions = [l.split()[1:4] for l in lines if l.startswith("v ")]
-    uvs = [l.split()[1:3] for l in lines if l.startswith("vt ")]
-    seen, kept, dropped = set(), [], 0
-    for line in lines:
-        if line.startswith("f "):
-            corners = []
-            for vertex in line.split()[1:]:
-                index = vertex.split("/")
-                uv = tuple(uvs[int(index[1]) - 1]) if len(index) > 1 and index[1] else ()
-                corners.append((tuple(positions[int(index[0]) - 1]), uv))
-            key = frozenset(corners)
-            if len(key) == len(corners) and key in seen:
-                dropped += 1
-                continue
-            seen.add(key)
-        kept.append(line)
-    if dropped:
-        path.write_text("".join(kept))
-    return dropped
-
-
-def write_bc7_dds(image, path):
-    """DDS (DX10 header, BC7) with a box-filtered mip chain, as Webots would generate."""
-    import struct
-
-    import etcpak
-
-    rgba = image.convert("RGBA")
-    alpha = rgba.getchannel("A").getextrema()[0] < 250
-    levels, level = [], rgba
-    while True:
-        w, h = level.size
-        block = level if w % 4 == 0 and h % 4 == 0 else level.resize((max(4, w), max(4, h)), Image.Resampling.BOX)
-        levels.append(etcpak.compress_bc7(np.ascontiguousarray(np.asarray(block)).tobytes(), *block.size))
-        if w == 1 and h == 1:
-            break
-        level = level.resize((max(1, w // 2), max(1, h // 2)), Image.Resampling.BOX)
-    width, height = rgba.size
-    header = struct.pack("<4s7I44x", b"DDS ", 124, 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | 0x80000, height, width,
-                         len(levels[0]), 0, len(levels))
-    header += struct.pack("<2I4s5I", 32, 0x4 | (0x1 if alpha else 0), b"DX10", 0, 0, 0, 0, 0)
-    header += struct.pack("<5I", 0x1000 | 0x400000 | 0x8, 0, 0, 0, 0)
-    header += struct.pack("<5I", 98, 3, 0, 1, 0)  # BC7_UNORM, 2D texture, one of it
-    path.write_bytes(header + b"".join(levels))
 
 
 # BC7 is visually lossless on these textures (41-47 dB) but not on the terrain's fine
 # noise (22-32 dB with this encoder): the terrain stays uncompressed.
-def compress_textures(build, out):
-    """Webots patch 0024 loads BC7 DDS: a quarter of the RGBA8 memory, no CPU copy kept.
-    Each power-of-two PNG the world uses becomes a DDS beside it (the PNG stays for the
-    Blender tools), cached by content in the build folder."""
+def compress_textures(out, stages):
+    """Webots' compressed-textures patch loads BC7 DDS: a quarter of the RGBA8 memory, no CPU copy kept. Each
+    power-of-two PNG the world uses becomes a DDS beside it (the PNG stays for the Blender tools), kept in the stage
+    store by the PNG's bytes and the encoder's code (tools/dds.py), and taken back while those are unchanged."""
+    root = Path(__file__).resolve().parents[1]
+    store = Store(stages)
     path = out / "pine_forest.wbt"
     world = path.read_text()
-    cache = build / "bc7"
-    cache.mkdir(exist_ok=True)
     saved = 0
     for url in sorted(set(re.findall(r'url "(meshes/[^"]+\.png)"', world))):
         if Path(url).name.startswith("terrain_"):
@@ -1063,43 +1052,30 @@ def compress_textures(build, out):
             w, h = image.size
             if w & (w - 1) or h & (h - 1) or min(w, h) < 64:
                 continue
-            digest = hashlib.sha256(source.read_bytes()).hexdigest()[:24]
-            cached = cache / f"{digest}.dds"
-            if not cached.exists():
-                write_bc7_dds(image, cached)
-        dds = source.with_suffix(".dds")
-        shutil.copyfile(cached, dds)
-        world = world.replace(f'url "{url}"', f'url "{url[:-4]}.dds"')
-        saved += w * h * 4 * 4 // 3 - dds.stat().st_size
+            dds = f"{url[:-4]}.dds"
+            recipe = descriptor(root, "bc7", "tools/dds.py", [dds], {"png": source}, toolchain())
+            if not store.restore(recipe, out, [dds]):
+                (out / dds).unlink(missing_ok=True)
+                write_bc7_dds(image, out / dds)
+                store.save(recipe, out, [dds])
+        world = world.replace(f'url "{url}"', f'url "{dds}"')
+        saved += w * h * 4 * 4 // 3 - (out / dds).stat().st_size
     path.write_text(world)
     print("compressed textures: saves", saved // 2**20, "MB of graphics memory", flush=True)
 
 
-def bleed_alpha(folder):
-    """Give masked-out texels their opaque neighbours' colours. Mipmaps average colour
-    over the mask: with near-black texels there (78% of a twig atlas), distant foliage
-    darkened to a fifth of its colour. Nothing visible changes at full resolution."""
-    for path in folder.glob("*.png"):
+def bleed_textures(out, stages):
+    """forest_textures.bleed_alpha on every texture with an alpha mask, then bleed_normal on the normal maps drawn with
+    one; each kept in the stage store by the bytes it reads."""
+    for path in sorted((out / "meshes").glob("*.png")):
         if path.name.startswith("impostor_"):
             continue  # dilated when built
         with Image.open(path) as image:
             if image.mode != "RGBA":
                 continue
-            rgba = np.asarray(image, np.float32) / 255
-        alpha = rgba[..., 3]
-        if (alpha > 0.5).all():
-            continue
-        # Dilate from texels that stay opaque at any cutoff, a few texels at a time, then fill
-        # the rest (which only deep mipmaps reach) with the mean opaque colour.
-        color = dilate(rgba[..., :3], np.where(alpha > 0.5, alpha, 0), steps=8)
-        keep = alpha[..., None] > 0.5
-        rgba[..., :3] = np.where(keep, rgba[..., :3], color)
-        Image.fromarray(np.round(rgba * 255).astype(np.uint8), "RGBA").save(path)
-
-
-def bleed_normals(out):
-    """Same for normal maps, under their base colour's mask: their mipmaps then average the
-    needles' normals only, whose disagreement the renderer shades (Webots patch 0018)."""
+        url = str(path.relative_to(out))
+        stored(stages, out, "bleed-alpha", "tools/forest_textures.py", [], {"texture": path}, [url],
+               lambda: bleed_alpha(path), in_place=True)
     pairs = set(re.findall(r'baseColorMap ImageTexture \{ url "([^"]+)" \}\s*normalMap ImageTexture \{ url "([^"]+)" \}',
                            (out / "pine_forest.wbt").read_text()))
     for base, normal in sorted(pairs):
@@ -1108,15 +1084,8 @@ def bleed_normals(out):
         with Image.open(out / base) as image:
             if image.mode != "RGBA":
                 continue
-            alpha = image.getchannel("A")
-        with Image.open(out / normal) as image:
-            rgb = np.asarray(image.convert("RGB"), np.float32) / 255
-        alpha = np.asarray(alpha.resize(rgb.shape[1::-1], Image.Resampling.BILINEAR), np.float32) / 255
-        if (alpha > 0.5).all():
-            continue
-        keep = alpha[..., None] > 0.5
-        rgb = np.where(keep, rgb, dilate(rgb, np.where(alpha > 0.5, alpha, 0), steps=8))
-        Image.fromarray(np.round(rgb * 255).astype(np.uint8), "RGB").save(out / normal)
+        stored(stages, out, "bleed-normal", "tools/forest_textures.py", [], {"base": out / base, "normal": out / normal},
+               [normal], lambda: bleed_normal(out / base, out / normal), in_place=True)
 
 
 if __name__ == "__main__":

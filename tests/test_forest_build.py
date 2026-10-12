@@ -13,10 +13,11 @@ SIM = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM / "controllers/flight_observer"))
 sys.path.insert(0, str(SIM / "tools"))
 from minimap import look_at, WorldView
-from build_forest_world import enu, copy_mesh, cover_placement, tree_placement
+from build_forest_world import enu, copy_mesh, cover_placement, cover_placements, tree_placement
 from forest_terrain import clip_polygon
 import forest_backdrop
 import forest_edge
+import forest_valley
 from forest_mesh import write_material_obj
 
 
@@ -129,6 +130,16 @@ class Coordinates(unittest.TestCase):
             rotate(world_rotation, np.array(point) * s), m @ point, atol=1e-9
         )
 
+    def test_cover_placements_at_once_equal_one_at_a_time_bit_for_bit(self):
+        rng = np.random.default_rng(3)
+        q, _ = np.linalg.qr(rng.normal(size=(500, 3, 3)))
+        bases = list(q * rng.uniform(0.2, 3.0, (500, 1, 1)))
+        bases += [np.eye(3), np.diag([-1.0, -1.0, 1.0]) * 2.0, np.diag([1.0, 1.0, -1.0]), np.diag([-1.0, 1.0, -1.0])]
+        mats = [m.ravel().tolist() for m in bases]
+        for (s, aa), (s1, aa1) in zip(cover_placements(mats), [cover_placement(m) for m in mats]):
+            self.assertEqual(np.float64(s).tobytes(), np.float64(s1).tobytes())
+            self.assertEqual(np.array(aa, np.float64).tobytes(), np.array(aa1, np.float64).tobytes())
+
     def test_tile_clipping_preserves_the_surface(self):
         # Position and UV both describe an inclined plane; clipping must not
         # create cracks by changing its elevation at the shared tile edge.
@@ -197,6 +208,31 @@ class Edge(unittest.TestCase):
         lifted, kept = forest_edge.lift(rows)
         self.assertEqual(kept.tolist(), [True, False])
         self.assertAlmostEqual(lifted[0, 2, 3], float(forest_edge.offset(-40, 187.3)))
+
+
+class Valley(unittest.TestCase):
+    def test_nearest_point_on_a_line_matches_every_segment_measured(self):
+        t = np.linspace(0.0, 6.0, 700)
+        line = np.column_stack([400.0 * np.cos(t) + 60.0 * np.sin(5.0 * t), 300.0 * np.sin(t)])
+        x, y = np.random.default_rng(1).uniform(-800.0, 800.0, (2, 30000))
+        a, ab = line[:-1], np.diff(line, axis=0)
+        along = np.concatenate([[0.0], np.cumsum(np.hypot(ab[:, 0], ab[:, 1]))])
+        best, station, side = np.full(x.shape, np.inf), np.zeros(x.shape), np.zeros(x.shape)
+        for k in range(len(a)):  # every point against every segment, one segment at a time
+            u = np.clip(((x - a[k, 0]) * ab[k, 0] + (y - a[k, 1]) * ab[k, 1]) / (ab[k] @ ab[k]), 0.0, 1.0)
+            d = np.hypot(x - a[k, 0] - u * ab[k, 0], y - a[k, 1] - u * ab[k, 1])
+            closer = d < best
+            best[closer], station[closer] = d[closer], along[k] + u[closer] * np.hypot(*ab[k])
+            side[closer] = np.where(ab[k, 0] * (y - a[k, 1]) - ab[k, 1] * (x - a[k, 0]) >= 0.0, 1.0, -1.0)[closer]
+        for reach in (40.0, 220.0):
+            dist, found, sides = forest_valley.line_frame(x, y, line, reach)
+            near = best <= reach
+            self.assertTrue(near.any() and (~near).any())
+            np.testing.assert_allclose(dist[near], best[near], rtol=0, atol=1e-9)
+            np.testing.assert_allclose(found[near], station[near], rtol=0, atol=1e-6)
+            np.testing.assert_array_equal(sides[near], side[near])
+            self.assertTrue((dist[~near] == 1e9).all() and (found[~near] == 0.0).all() and (sides[~near] == 1.0).all())
+
 
 if __name__ == "__main__":
     unittest.main()

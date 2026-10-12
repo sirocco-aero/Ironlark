@@ -31,14 +31,14 @@ compiles and links against each to list what's missing.
 | --- | --- |
 | `setup` | Builds ArduPilot Copter 4.7.1 (`dbe7921`) in an Ubuntu 22.04 image, which keeps only the SITL binary, its parameters and pymavlink (0.3 GB; Docker's build cache holds the rest); extracts its Iris model and Webots bridge to `.cache/`; creates `.venv/` (Python 3.12.11, NumPy, Pillow). System Python is untouched. |
 | `doctor` | Lists missing runtime and renderer build requirements, and forest readiness. |
-| `build-world` | Downloads Blender 4.2.9 and the [Poly Haven Pine Forest](https://polyhaven.com/collections/pine_forest) scene (checksummed), exports it stage by stage, and assembles `worlds/pine_forest/`. Resumable; `--skip-export` only reassembles. |
-| `build-drone` | Models the drone in Blender and writes `protos/IronlarkDrone.proto` (also run by `build-world`, and by `run`/`check` when missing). |
+| `build-world` | Downloads Blender 4.2.9 and the [Poly Haven Pine Forest](https://polyhaven.com/collections/pine_forest) scene (checksummed), exports it stage by stage, and assembles `worlds/pine_forest/` in an empty folder beside it, writing last its receipt (`tools/receipts.py`): the pipeline's code as the build began, the NumPy, Pillow and etcpak versions, and every output's size and sha256. The finished folder then replaces the world, so an interrupted build leaves the last one, and a build whose code changed while it ran fails. Every stage keeps its result in `.cache/forest-stages/` by the bytes it reads (its code, inputs and toolchain; `tools/stage_cache.py`): each export stage, run in a folder holding only what it declares, the bakes, and the assembly's steps (valley, terrain tiles and detail, edge ground, impostor atlases, textures, meshes). An unchanged one is cloned back (a btrfs reflink: no extra disk), so a build redoes only what an edit changed. A file is hashed once, and known after by its inode, size and timestamps (`.cache/digests.jsonl`; deleted, the next build hashes everything again), and a world already matching today's code byte for byte is left as it is. Other export code empties `.cache/forest-build` first, and the store refills it; after a full build the store keeps only what each checkout's latest build used. Forest runs refuse a world whose receipt does not match today's code. `--skip-export` only reassembles, from bakes today's code finished. |
+| `build-drone` | Models the drone in Blender and writes `protos/IronlarkDrone.proto` (also run by `build-world`, `run` and `check` when an input or output differs from its receipt, `protos/drone/receipt.json`). |
 | `build-renderer` | Builds patched Webots into `.cache/webots-renderer/`. See [Webots patches](#webots-patches). |
 | `render-reference` | Cycles renders of the source scene at the preview cameras, into `runs/reference/`: the ground truth for looks. Needs more than ~26 GB RAM (15 GB + zram was not enough); needs no built world. |
-| `run` | Flies over the forest in a fullscreen window, then exits. Until the autopilot can arm (EKF3 learning its gyro biases, ~40 s of simulated time) the simulation runs as fast as it can, the view at 10 fps; takeoff comes ~16 s after launch. `--world empty` for the bare test area; `--editor` for Webots' UI; `--record` streams the sensors to ROS 2 and records a rosbag2 in the run folder (in real time throughout). |
+| `run` | Flies over the forest in a fullscreen window, then exits. Until the autopilot can arm (EKF3 learning its gyro biases, ~40 s of simulated time) the simulation runs as fast as it can, the view at 10 fps; takeoff comes ~16 s after launch. `--world empty` for the bare test area; `--editor` for Webots' UI; `--record` streams the sensors to ROS 2 and records a rosbag2 of the flight in the run folder (in real time throughout). |
 | `replay RUN` | Plays a recorded run's bag in the ROS 2 container; its `/clock` topic carries Webots time. |
-| `check-recording RUN` | Checks a recorded empty-world flight against the calibration wall: LiDAR distance and orientation, camera ↔ LiDAR agreement. |
-| `check-replay RUN` | Replays a recorded flight while recording it again and compares: same messages, stamps and static transforms. |
+| `check-recording RUN` | Checks a recorded flight: the bag is complete (every topic, a message every period, over the whole flight), and the IMU at rest reads gravity, no rotation and the rig's noise. In the empty world, then the calibration wall: LiDAR distance, orientation and scatter against the rig's range noise, camera ↔ LiDAR agreement, and the ground in front of the wall not red. |
+| `check-replay RUN` | Replays a recorded flight while recording it again and compares: every topic present, the same messages byte for byte, in order. |
 | `check` | The same flight on a virtual display, empty world by default. Exits nonzero on failure. |
 
 For empty-world flights, Webots is chosen in order: `WEBOTS_HOME`, a current
@@ -53,7 +53,7 @@ checkout, which is live. To ignore a `WEBOTS_HOME` override in sh or fish, use
 changed resources from its working tree. A failed compile leaves the previous
 runtime in place and prints the compiler and linker errors; downloads are
 checked through `.part` files. Build stages run with two jobs and stop at
-4.5 GiB RSS; logs and metrics go to `.cache/build-logs/`.
+4.5 GiB of memory (PSS: pages a stage's processes share count once); logs and metrics go to `.cache/build-logs/`.
 First setup needs internet and several GB of disk. OS packages in the image float,
 so builds are source-pinned, not bit-identical.
 
@@ -70,8 +70,8 @@ Configure in files, not panels; restart to apply:
 Native Webots runs the physics; containerized ArduPilot SITL flies. The upstream
 bridge carries dynamics and sensors to SITL and motor outputs back; a small Iris
 adapter treats disabled outputs as stopped, not reversed, and runs the per-step
-lockstep in C (`controllers/flight_bridge/lockstep.c`, compiled by the launcher;
-the Python loop when no compiler is found). MAVLink uses TCP 5760,
+lockstep in C (`controllers/flight_bridge/lockstep.c`, compiled by the launcher into each
+run's folder; the Python loop when no compiler is found). MAVLink uses TCP 5760,
 the bridge UDP 9002–9003. Occupied ports and concurrent runs are refused.
 
 Pass requires EKF3, GPS fix, a valid position estimate, accepted commands,
@@ -110,10 +110,12 @@ and carries the rig of `config/sensors.json`: a Mid-360-class LiDAR (360° × 59
 (640 × 480, 90°, 20 Hz, with the scattering fog). With `--record`, the flight
 controller samples them after each 2 ms physics step, on Webots time, and streams them over local
 TCP ([`sensing/protocol.py`](sensing/protocol.py)); a full queue drops and counts, never stalling
-physics, and pausing stops the clock. A ROS 2 Humble container ([`ros/`](ros)) publishes `/clock`,
+physics, and pausing stops the clock. After the flight the stream ends: the bridge acknowledges
+every message, and a run whose stream dropped, failed or left a message unsent fails, naming the loss
+(`sensing.json` in the run folder). A ROS 2 Humble container ([`ros/`](ros)) publishes `/clock`,
 `/imu/data`, `/lidar/points` (x, y, z, ring, time), `/camera/image_raw` (bgra8),
 `/camera/camera_info` and `/tf_static`, ground truth only on `/ground_truth/pose` and
-`/ground_truth/velocity`, and records all of it with rosbag2 (reliable, deep queues: `ros/record_qos.yaml`; each message compressed with zstd, losslessly: a forest flight's minute is 1.2 GB, the empty world's 0.16 GB). A recorded check adds sensing's cost to `result.json` (real-time factor, messages sent and dropped). Frames are REP-103: Webots' world is
+`/ground_truth/velocity`, and records all of it with rosbag2 (reliable, deep queues: `ros/record_qos.yaml`; each message compressed with zstd, losslessly: a forest flight's minute is 1.2 GB, the empty world's 0.16 GB). A recorded check adds sensing's cost to `result.json` (real-time factor, messages sent); every flight adds what it cost the machine: peak RAM and CPU time of Webots with its controllers, SITL and ROS, and GPU memory, Webots' own and the card's, each named when it could not be measured. Frames are REP-103: Webots' world is
 ENU and bodies FLU; [`sensing/frames.py`](sensing/frames.py) is the one place for ENU/FLU ↔ NED/FRD.
 
 ## Webots patches
@@ -181,9 +183,9 @@ installed as `./webots/`, and a save.
 `tools/render_lighting_reference.py` renders the built world in Cycles under the
 source's own suns, world, fog and Filmic view (4.6 GB; the full source needs more
 than ~26 GB); `tools/compare_views.py runs/lighting-reference runs/preview` scores
-`tools/render_forest.py` views against it.
+`tools/render_forest.py` views against it. `render_forest.py --repeatable` renders a frame after every physics step, so two captures of one build are bit-identical (temporal anti-aliasing otherwise follows wall time); `compare_views.py MAIN BRANCH --tiles` lists the 60 px tiles where two such captures differ.
 `tools/profile_forest.py --out runs/<name>` reports load time, real-time factor,
-frame rate, GPU and CPU time per render pass and peak RAM/GPU for the forest as a
+frame rate, GPU and CPU time per render pass, and peak RAM, CPU time and GPU memory (Webots' own and the card's; `tools/run_resources.py`) for the forest as a
 viewer sees it (headless: under `xvfb-run -a -s "-screen 0 1920x1080x24"`, which
 renders on the NVIDIA GPU; its swap waits for a readback, so frames come slower than
 on a display). Any run can log frames: `IRONLARK_FRAME_LOG=/tmp/f.log ./ironlark run`,

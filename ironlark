@@ -2,6 +2,7 @@
 """Launch Ironlark's first simulated-flight integration check (Linux)."""
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 import fcntl
@@ -19,6 +21,8 @@ import fcntl
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "tools"))
 from renderer_support import select_webots, renderer_problem, renderer_preflight, preflight_report
+from receipts import packages, world_problems
+from run_resources import Sampler
 CACHE = ROOT / ".cache"
 IMAGE = "ironlark-sitl:copter-4.7.1"
 ROS_IMAGE = "ironlark-ros:humble"
@@ -39,26 +43,25 @@ def webots_home(world="empty"):
     return select_webots(ROOT, world, os.environ.get("WEBOTS_HOME"))
 
 
-def build_lockstep(home=None):
-    """The flight bridge's per-step loop in C (controllers/flight_bridge/lockstep.c), compiled when its source
-    changed. Without a C compiler the bridge runs the same loop in Python."""
-    source = ROOT / "controllers/flight_bridge/lockstep.c"
-    library = CACHE / "flight_lockstep.so"
-    if library.exists() and library.stat().st_mtime >= source.stat().st_mtime:
-        return library
+def build_lockstep(home):
+    """The flight bridge's per-step loop in C (controllers/flight_bridge/lockstep.c), compiled for each run (73 ms),
+    so the run holds the loop it flew. Without a C compiler the bridge runs the same loop in Python; a source that
+    does not compile stops the flight."""
     compiler = shutil.which("cc") or shutil.which("gcc")
     if compiler is None:
         return None
-    home = home or webots_home()
-    built = subprocess.run(
-        [compiler, "-O2", "-shared", "-fPIC", str(source), "-I", str(home / "include/controller/c"),
-         "-L", str(home / "lib/controller"), "-lController", "-o", str(library)],
-        capture_output=True, text=True,
-    )
-    if built.returncode:
-        print(f"Flight bridge in Python: the C loop did not compile:\n{built.stderr}", flush=True)
-        return None
-    return library
+    with tempfile.TemporaryDirectory() as scratch:
+        library = Path(scratch, "flight_lockstep.so")
+        built = subprocess.run(
+            [compiler, "-O2", "-shared", "-fPIC", str(ROOT / "controllers/flight_bridge/lockstep.c"),
+             "-I", str(home / "include/controller/c"), "-L", str(home / "lib/controller"), "-lController",
+             "-o", str(library)],
+            capture_output=True, text=True,
+        )
+        if built.returncode:
+            raise RuntimeError(f"The flight bridge's C loop does not compile. Fix controllers/flight_bridge/lockstep.c:\n"
+                               f"{built.stderr}")
+        return library.read_bytes()
 
 
 def setup():
@@ -154,7 +157,8 @@ def doctor(overview=True, home=None, record=False):
         except RuntimeError as error:
             forest_renderer = False
             print(str(error))
-        forest_world = (ROOT / "worlds/pine_forest/pine_forest.wbt").is_file()
+        forest_world = (ROOT / "worlds/pine_forest/pine_forest.wbt").is_file() and not world_problems(
+            ROOT, ROOT / "worlds/pine_forest")
         print(f"{'OK     ' if runtime_ready and forest_renderer and forest_world else 'MISSING'} "
               "Forest readiness (setup, build-renderer, build-world)")
         print(f"{'OK     ' if runtime_ready else 'MISSING'} Empty-world readiness (stock Webots supported)")
@@ -174,6 +178,9 @@ def check_ports():
         (socket.SOCK_DGRAM, 9003),
     ):
         with socket.socket(socket.AF_INET, kind) as probe:
+            if kind == socket.SOCK_STREAM:
+                # A listener occupies the port; the last run's closed connection (TIME_WAIT, up to 60 s) does not.
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 probe.bind(("127.0.0.1", port))
             except OSError as exc:
@@ -220,12 +227,6 @@ def stage_world(run, world):
             target.parent / ".flight_foundation.wbproj",
         )
         return target, None
-    source = ROOT / "worlds/pine_forest/pine_forest.wbt"
-    if not source.is_file():
-        raise RuntimeError(
-            "Forest world is not built. Run ./ironlark build-world first "
-            "(or copy .cache/forest-build from another machine)."
-        )
     # Flat layout: Webots resolves controllers from <project>/controllers,
     # where <project> is the parent of worlds/. A nested worlds/pine_forest/
     # dir breaks that lookup and robots silently fall back to `generic`.
@@ -247,6 +248,10 @@ def stage_world(run, world):
 
 def build_world(skip_export):
     args = ["--skip-export"] if skip_export else []
+    # The build runs the code its receipt hashes: Python would trust bytecode compiled earlier by the source's mtime,
+    # to the second, and its size, so a same-size edit within that second would run the old code.
+    for cache in [*ROOT.glob("tools/**/__pycache__"), *ROOT.glob("controllers/**/__pycache__")]:
+        shutil.rmtree(cache, ignore_errors=True)
     run_tool("forest_pipeline.py", *args)
 
 
@@ -262,20 +267,55 @@ def sensing_cost(run):
     runs in real time unless rendering falls behind: time past real time is what sensing added."""
     import re
 
-    lines = re.findall(r"sensing: (\d+) sent, (\d+) dropped, \d+ queued at (\d+) s, wall ([\d.]+)",
-                       (run / "webots.log").read_text(errors="replace"))
+    lines = re.findall(r"sensing: .* at (\d+) s, wall ([\d.]+)", (run / "webots.log").read_text(errors="replace"))
     if len(lines) < 2:
-        return None
-    (_, _, sim0, wall0), (sent, dropped, sim1, wall1) = lines[0], lines[-1]
+        return {}
+    (sim0, wall0), (sim1, wall1) = lines[0], lines[-1]
     simulated, wall = int(sim1) - int(sim0), float(wall1) - float(wall0)
     return {
-        "messages_sent": int(sent),
-        "messages_dropped": int(dropped),
         "simulated_s": simulated,
         "wall_s": round(wall, 2),
         "realtime_factor": round(simulated / wall, 3),
         "added_wall_time": round(max(0.0, wall / simulated - 1.0), 3),
     }
+
+
+def sensing_report(run):
+    """The sensor stream's account, written once when it ends (sensor_stream.py), or None."""
+    path = run / "sensing.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def sensing_losses(report):
+    """What a stream's account says it measured and did not deliver; empty when nothing was lost."""
+    losses = [report["failure"]] if report["failure"] else []
+    if report["dropped"]:
+        losses.append(f"{report['dropped']} messages dropped on a full queue")
+    if report["sent"] < report["queued"]:
+        losses.append(f"{report['queued'] - report['sent']} queued messages never sent")
+    if report["acknowledged"] is not None and report["acknowledged"] != report["sent"]:
+        losses.append(f"the ROS bridge read {report['acknowledged']} of {report['sent']} messages")
+    elif report["acknowledged"] is None and not report["failure"]:
+        losses.append("the ROS bridge never acknowledged the stream")
+    return losses
+
+
+def end_sensing(run, processes):
+    """End the stream after the flight: it stops sampling, sends what it queued and has the bridge
+    acknowledge every message. Its account, once nothing was lost."""
+    (run / "sensing-end").touch()
+    deadline = time.monotonic() + 60
+    while (report := sensing_report(run)) is None:
+        if any(process.poll() is not None for process in processes):
+            raise RuntimeError(f"A simulator process exited before sensing ended. Inspect {run}.")
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"Sensing did not end within 60 seconds of the flight. Inspect {run / 'webots.log'} "
+                               f"and {run / 'ros.log'}.")
+        time.sleep(0.1)
+    if losses := sensing_losses(report):
+        raise RuntimeError(f"The recording is incomplete: {'; '.join(losses)}. Inspect {run / 'webots.log'} "
+                           f"and {run / 'ros.log'}.")
+    return report
 
 
 def ros_image_ready():
@@ -316,6 +356,27 @@ def build_drone():
     run_tool("build_drone.py")
 
 
+def drone_stale():
+    """Why protos/ does not hold the drone today's sources build, or None: its receipt (tools/build_drone.py) lists
+    each input and output with its sha256."""
+    receipt = ROOT / "protos/drone/receipt.json"
+    if not receipt.is_file():
+        return "no completed build"
+    try:
+        recorded = json.loads(receipt.read_text())
+    except ValueError:  # cut short: written, renamed into place, then the power failed before it reached the disk
+        return "its receipt is unreadable"
+    for name, digest in {**recorded["inputs"], **recorded["outputs"]}.items():
+        path = ROOT / name
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            return f"{name} changed"
+    if "packages" not in recorded:
+        return "its receipt lists no packages"
+    if (current := packages(ROOT, tuple(recorded["packages"]))) != recorded["packages"]:
+        return f"its packages were {recorded['packages']}, now {current}"
+    return None
+
+
 def check_replay(run):
     """A recorded flight replayed: same messages, stamps and transforms (tools/check_replay.py)."""
     run = Path(run).resolve()
@@ -330,25 +391,45 @@ def check_recording(run):
     call(*ros_container(f"ironlark-check-{os.getpid()}", run, "python3 /project/tools/check_recording.py /run/ironlark"))
 
 
+@contextlib.contextmanager
+def exclusive():
+    """One flight or build at a time, across the checkouts sharing .cache: a build replaces what a flight loaded."""
+    CACHE.mkdir(exist_ok=True)
+    with (CACHE / "flight.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("Another Ironlark flight or build is running. Wait for it to end.") from exc
+        yield
+
+
 def flight(headless, editor=False, world="forest", record=False):
     home = webots_home(world)  # Refuse an incompatible forest before creating any run artifacts.
+    if world == "forest":
+        built = ROOT / "worlds/pine_forest"
+        if not (built / "pine_forest.wbt").is_file():
+            raise RuntimeError("Forest world is not built. Run ./ironlark build-world first "
+                               "(or copy .cache/forest-build from another machine).")
+        if problems := world_problems(ROOT, built):
+            more = f" and {len(problems) - 3} more" if len(problems) > 3 else ""
+            raise RuntimeError(f"The forest world is not what today's code builds: {'; '.join(problems[:3])}{more}. "
+                               "Rebuild it: ./ironlark build-world (21 s to 34 min, by what changed).")
     doctor(overview=False, home=home, record=record)
     if not headless and not os.environ.get("DISPLAY"):
         raise RuntimeError("Webots R2025a needs an X11/XWayland DISPLAY; Wayland-only is unsupported. "
                            "Enable XWayland or use ./ironlark check for headless.")
     if headless and not shutil.which("xvfb-run"):
         raise RuntimeError("Headless checks require xvfb-run.")
-    if not (ROOT / "protos/IronlarkDrone.proto").is_file():
-        build_drone()
-    CACHE.mkdir(exist_ok=True)
-    with (CACHE / "flight.lock").open("w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError("Another Ironlark flight is running.") from exc
+    with exclusive():
         check_ports()
+        if stale := drone_stale():
+            print(f"Building the drone ({stale}).", flush=True)
+            build_drone()
+        lockstep = build_lockstep(home)
         run = ROOT / "runs" / (time.strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}")
         run.mkdir(parents=True)
+        if lockstep:
+            (run / "flight_lockstep.so").write_bytes(lockstep)
         (run / "manifest.json").write_text(
             json.dumps(
                 {
@@ -368,6 +449,12 @@ def flight(headless, editor=False, world="forest", record=False):
                         (ROOT / "docker/webots-clock.patch").read_bytes()
                     ).hexdigest(),
                     "position_source": "simulated GPS",
+                    # The flight bridge's per-step loop: lockstep.c (flight_lockstep.so here), or its Python twin
+                    # without a C compiler.
+                    "flight_loop": {
+                        "language": "C" if lockstep else "Python",
+                        "library_sha256": hashlib.sha256(lockstep).hexdigest() if lockstep else None,
+                    },
                     "mission": "takeoff-hover-land",
                     "headless": headless,
                     "world": world,
@@ -384,9 +471,9 @@ def flight(headless, editor=False, world="forest", record=False):
         # Patched Webots keeps parsed meshes here (patch 0048): later loads skip parsing the OBJ text.
         env.setdefault("WEBOTS_MESH_CACHE", str(CACHE / "mesh-cache"))
         env["IRONLARK_RUN_DIR"] = str(run)
-        lockstep = build_lockstep(home)
+        env.pop("IRONLARK_LOCKSTEP", None)  # the Python loop flies unless this run built the C one
         if lockstep:
-            env["IRONLARK_LOCKSTEP"] = str(lockstep)
+            env["IRONLARK_LOCKSTEP"] = str(run / "flight_lockstep.so")
         if record:
             env["IRONLARK_SENSING"] = "1"
         else:
@@ -424,7 +511,7 @@ def flight(headless, editor=False, world="forest", record=False):
         command.append(str(world_path))
         name = f"ironlark-sitl-{os.getpid()}"
         ros_name = f"ironlark-ros-{os.getpid()}"
-        webots = sitl = mission = ros = None
+        webots = sitl = mission = ros = resources = None
         with (
             (run / "webots.log").open("w") as webots_log,
             (run / "sitl.log").open("w") as sitl_log,
@@ -492,6 +579,10 @@ def flight(headless, editor=False, world="forest", record=False):
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
+                # What the run costs the machine, every process in it: added to result.json after the flight.
+                resources = Sampler(sessions={"webots": webots.pid},
+                                    containers={"sitl": name, **({"ros": ros_name} if record else {})})
+                resources.start()
                 # Wait for docker run to create the container before docker exec.
                 deadline = time.monotonic() + 30
                 while time.monotonic() < deadline:
@@ -540,6 +631,9 @@ def flight(headless, editor=False, world="forest", record=False):
                         raise RuntimeError(
                             f"A simulator process exited during flight. Inspect {run}."
                         )
+                    if record and (stream := sensing_report(run)):
+                        raise RuntimeError(f"Sensing failed during the flight: {'; '.join(sensing_losses(stream))}. "
+                                           f"Inspect {run / 'webots.log'} and {run / 'ros.log'}.")
                     if time.monotonic() > deadline:
                         raise RuntimeError(
                             f"Flight exceeded the 900-second wall-clock backstop. Inspect {run}."
@@ -548,12 +642,22 @@ def flight(headless, editor=False, world="forest", record=False):
                 if mission.returncode:
                     raise RuntimeError(f"Flight check failed. Inspect {run}.")
                 print(f"PASS: takeoff, hover, landing. Report: {run / 'result.json'}")
-                if record and (cost := sensing_cost(run)):
-                    report = json.loads((run / "result.json").read_text())
-                    report["sensing"] = cost
-                    (run / "result.json").write_text(json.dumps(report, indent=2) + "\n")
-                    print(f"Sensing: {cost['messages_sent']} messages, {cost['messages_dropped']} dropped; "
-                          f"{cost['realtime_factor']}x real time (+{cost['added_wall_time']:.0%} wall time)")
+                report = json.loads((run / "result.json").read_text())
+                if record:
+                    stream = end_sensing(run, (webots, sitl, ros))
+                    report["sensing"] = {**stream, **(cost := sensing_cost(run))}
+                    print(f"Sensing: {stream['sent']} messages, all acknowledged by the ROS bridge"
+                          + (f"; {cost['realtime_factor']}x real time (+{cost['added_wall_time']:.0%} wall time)"
+                             if cost else ""))
+                resources.stop()
+                report["resources"] = used = resources.result()
+                (run / "result.json").write_text(json.dumps(report, indent=2) + "\n")
+                ram, gpu = used["peak_rss_mib"], used["gpu_mib"]
+                parts = ", ".join(f"{k} {v}" for k, v in ram.items() if k != "total")
+                cpu = ", ".join(f"{k} {v} s" for k, v in used["cpu_s"].items())
+                print(f"Resources: RAM peak {ram['total']} MiB ({parts}), CPU {cpu}; GPU: Webots "
+                      f"{gpu['webots_peak_mib']} MiB, the card {gpu['card_peak_mib']} MiB"
+                      + (f"; not measured: {', '.join(used['missing'])}" if used["missing"] else ""))
                 if not headless:
                     print(
                         "World left open (keys 1–4 switch views). Ctrl+C to exit.",
@@ -561,6 +665,8 @@ def flight(headless, editor=False, world="forest", record=False):
                     )
                     webots.wait()
             finally:
+                if resources is not None:
+                    resources.done.set()
                 if ros is not None:
                     subprocess.run(["docker", "kill", "--signal", "INT", ros_name],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -626,10 +732,14 @@ def main():
     elif args.command == "render-reference":
         run_tool("render_reference.py")
     elif args.command == "build-world":
-        build_world(skip_export=args.skip_export)
-        build_drone()
+        with exclusive():
+            build_world(skip_export=args.skip_export)
+            if stale := drone_stale():
+                print(f"Building the drone ({stale}).", flush=True)
+                build_drone()
     elif args.command == "build-drone":
-        build_drone()
+        with exclusive():
+            build_drone()
     else:
         world = args.world or ("empty" if args.command == "check" else "forest")
         flight(headless=args.command == "check", editor=args.editor, world=world, record=args.record)

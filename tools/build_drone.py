@@ -5,6 +5,7 @@ rig of config/sensors.json.
     .venv/bin/python tools/build_drone.py
 """
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "protos"
 PARTS = OUT / "drone"
 sys.path.insert(0, str(ROOT / "tools"))
+from receipts import digest, packages  # noqa: E402
 
 # PBR materials, Webots colors (sRGB).
 MATERIALS = {
@@ -195,15 +197,34 @@ PROTO IronlarkDrone [
 """
 
 
+# What the drone is built from; tools/forest_pipeline.py pins Blender.
+INPUTS = ("tools/build_drone.py", "tools/drone_meshes.py", "config/sensors.json", "tools/forest_pipeline.py")
+RECEIPT = PARTS / "receipt.json"
+
+
 def main():
     from forest_pipeline import blender_executable
 
-    PARTS.mkdir(parents=True, exist_ok=True)
+    # The receipt goes first and comes back last, so a build that stops halfway is never taken for complete.
+    inputs = {name: digest(ROOT / name) for name in INPUTS}  # what this build reads, before it reads it
+    shutil.rmtree(PARTS, ignore_errors=True)
+    (OUT / "IronlarkDrone.proto").unlink(missing_ok=True)
+    PARTS.mkdir(parents=True)
     subprocess.run([str(blender_executable()), "--background", "--python-exit-code", "1", "--python", str(ROOT / "tools/drone_meshes.py"),
                     "--", "--out", str(PARTS)], check=True, stdout=subprocess.DEVNULL)
     carbon_textures()
     config = json.loads((ROOT / "config/sensors.json").read_text())
     (OUT / "IronlarkDrone.proto").write_text(proto(config))
+    if changed := [name for name in INPUTS if digest(ROOT / name) != inputs[name]]:
+        raise SystemExit(f"{', '.join(changed)} changed during the build. Build the drone again.")
+    outputs = [OUT / "IronlarkDrone.proto", *sorted(PARTS.iterdir())]
+    temporary = RECEIPT.with_suffix(".tmp")
+    temporary.write_text(json.dumps({
+        "inputs": inputs,
+        "packages": packages(ROOT, ("numpy", "pillow")),  # the carbon weave's
+        "outputs": {str(path.relative_to(ROOT)): digest(path) for path in outputs},
+    }, indent=1) + "\n")
+    temporary.rename(RECEIPT)
     print("Drone ready:", OUT / "IronlarkDrone.proto")
 
 

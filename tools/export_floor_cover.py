@@ -4,13 +4,13 @@ Low-growing moss and needle litter contribute to tiled ground materials. The
 original 3D cover meshes remain in the world as well. No painted blob textures
 or random replacement placements are used.
 """
-import argparse,gzip,json,sys
+import argparse,gzip,io,json,sys
 from pathlib import Path
 import bpy
 import numpy as np
 from mathutils import Vector
 sys.path.insert(0,str(Path(__file__).parent))
-from export_forest import REGION,HOME,CLEAR_RADIUS
+from export_forest import REGION,HOME,CLEAR_RADIUS,render_still
 from forest_materials import asset_textures
 
 
@@ -53,7 +53,7 @@ def main():
   if small.exists():img.buffers_free();img.filepath=str(small)
  bpy.context.view_layer.update();dg=bpy.context.evaluated_depsgraph_get()
  count=0;names=set();xmin,xmax,ymin,ymax=REGION
- with gzip.open(out/'floor_cover.jsonl.gz','wt') as stream:
+ with io.TextIOWrapper(gzip.GzipFile(out/'floor_cover.jsonl.gz','wb',mtime=0)) as stream:  # no time in its header
   for inst in dg.object_instances:
    if not inst.is_instance or inst.instance_object is None:continue
    obj=inst.instance_object;name=obj.name
@@ -67,7 +67,7 @@ def main():
  print('FLOOR_SCATTER',count,sorted(names),flush=True)
  # Copy only the necessary evaluated assets; subsequent renders contain one
  # small plant at a time, never the scatter or the original forest.
- meshes={name:bpy.data.meshes.new_from_object(bpy.data.objects[name].evaluated_get(dg),preserve_all_data_layers=True,depsgraph=dg) for name in names}
+ meshes={name:bpy.data.meshes.new_from_object(bpy.data.objects[name].evaluated_get(dg),preserve_all_data_layers=True,depsgraph=dg) for name in sorted(names)}
  textures={name:asset_textures(bpy.data.objects[name]) for name in names}
  scene=bpy.data.scenes.new('Ironlark floor photographs');bpy.context.window.scene=scene
  scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.device='CPU';scene.cycles.transparent_max_bounces=16
@@ -93,7 +93,7 @@ def main():
   ls.new(emit.outputs[0],mix.inputs[1 if tex.get('invert_alpha') else 2]);ls.new(transparent.outputs[0],mix.inputs[2 if tex.get('invert_alpha') else 1]);ls.new(mix.outputs[0],output.inputs['Surface'])
   mesh.materials.clear();mesh.materials.append(mat)
   for poly in mesh.polygons:poly.material_index=0
-  scene.render.filepath=str(out/f'floor_{name}.png');bpy.ops.render.render(write_still=True)
+  render_still(scene,out/f'floor_{name}.png')
   meta[name]={'image':f'floor_{name}.png','center':center[:2].tolist(),'size':size}
   bpy.data.objects.remove(obj,do_unlink=True)
   print('FLOOR_PHOTO',name,flush=True)

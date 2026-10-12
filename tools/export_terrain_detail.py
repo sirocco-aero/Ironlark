@@ -66,17 +66,39 @@ def preserve_coordinates(group):
 preserve_coordinates(bpy.data.materials['main_terrain'].node_tree)
 meta=json.loads((out/'terrain_meta.json').read_text());x0,y0,x1,y1=meta['planar']
 uv[:,0]=(world[lv,0]-x0)/(x1-x0)*2-tx;uv[:,1]=(world[lv,1]-y0)/(y1-y0)*2-ty
-keep=[list(t.loops) for t in m.loop_triangles if all(uv[list(t.loops)].max(axis=0)>0) and all(uv[list(t.loops)].min(axis=0)<1)]
+tris=np.empty(len(m.loop_triangles)*3,dtype=np.int32);m.loop_triangles.foreach_get('loops',tris);tris=tris.reshape(-1,3)
+def within(uv,tris,reach=0):
+ '''Those of tris reaching into an image whose UVs are uv, or within reach of it (in its widths), in mesh order.'''
+ corners=uv[tris];return tris[(corners.max(axis=1)>-reach).all(axis=1)&(corners.min(axis=1)<1+reach).all(axis=1)]
+keep=within(uv,tris)
 base.HOME=(*base.HOME[:2],json.loads((out/'manifest.json').read_text())['home_ground_z'])
 # Where the source's ground layers tile from (its Generated coordinates: the original terrain's
 # bounds), for the renderer's terrain detail layers.
 (out/'terrain_generated.json').write_text(json.dumps({'low':lo.tolist(),'span':span.tolist()}))
-for kind,size in [('diff',4096),('normal',2048),('mask',1024)]:
- if (out/f'terrain_{tx}_{ty}_{kind}.png').exists():continue
+def bake(kind,size,uv,keep):
  base.BAKE_SIZE=size
  old=bpy.data.images.get('ironlark_terrain_bake')
  if old:bpy.data.images.remove(old)
  base.bake_terrain(obj,m,keep,lv,world,uv,kind={'normal':'NORMAL','mask':'MASK'}.get(kind,'DIFFUSE'))
- img=bpy.data.images['ironlark_terrain_bake'];img.filepath_raw=str(out/f'terrain_{tx}_{ty}_{kind}.png');img.file_format='PNG'
+ return bpy.data.images['ironlark_terrain_bake']
+for kind,size in [('diff',4096),('normal',2048),('mask',1024)]:
+ if (out/f'terrain_{tx}_{ty}_{kind}.png').exists():continue
+ if size<=2048:img=bake(kind,size,uv,keep.tolist())
+ else:
+  # Blender holds a whole bake image several times over (a record per pixel, Cycles' passes, the result):
+  # 3.5 GiB at 4096 px. Baked in quarters, each a margin wider on every side so its edges bake as its inside
+  # does, the tile peaks at 1.4 GiB. A quarter's mesh is the tile's triangles within two of the terrain's
+  # 32 px quads of it, so the vertices along its cut keep every face around them, and with it their normals.
+  half=size//2;edge=half+2*16;pixels=np.empty((size,size,4),np.uint8)  # bytes, as the image holds them
+  for qx in range(2):
+   for qy in range(2):
+    quarter=(uv*size-[qx*half-16,qy*half-16])/edge  # the tile's pixel positions, in the quarter's image
+    a=np.empty(edge*edge*4,np.float32)
+    bake(kind,edge,quarter,within(quarter,keep,64/edge).tolist()).pixels.foreach_get(a)
+    pixels[qy*half:(qy+1)*half,qx*half:(qx+1)*half]=np.rint(a.reshape(edge,edge,4)[16:-16,16:-16]*255)
+  bpy.data.images.remove(bpy.data.images['ironlark_terrain_bake'])
+  img=bpy.data.images.new('ironlark_terrain_bake',size,size)
+  img.pixels.foreach_set(pixels.ravel()/np.float32(255));del pixels,a
+ img.filepath_raw=str(out/f'terrain_{tx}_{ty}_{kind}.png');img.file_format='PNG'
  img.save();print('TERRAIN_TILE',tx,ty,kind,flush=True)
 bpy.data.meshes.remove(m)

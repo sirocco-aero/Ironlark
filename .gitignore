@@ -22,6 +22,7 @@ node_modules/
 /webots/
 /runs/
 /worlds/pine_forest/
+/worlds/.pine_forest.*/
 /protos/
 /*.tar
 /*.tar.*

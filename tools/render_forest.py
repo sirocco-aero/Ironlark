@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Capture repeatable forest views exactly as the main 3D view shows them.
+"""Capture forest views exactly as the main 3D view shows them.
 
-Does not run or command a flight. Opens fullscreen and exports the main view,
-records process RSS and nvidia-smi evidence, and exits after three views.
+Does not run or command a flight. Opens fullscreen and exports the main view at each scene camera,
+records process RSS and nvidia-smi evidence, and exits. Temporal anti-aliasing blends each frame with
+the last, so a capture depends on how many frames wall time allowed between steps: moving water
+differs between two captures of one build. --repeatable renders a frame after every physics step,
+and two captures of one build are bit-identical.
 """
 
 import argparse
@@ -14,6 +17,7 @@ import subprocess
 import time
 
 from forest_process import memory_fields
+from renderer_support import select_webots
 
 SIM = Path(__file__).resolve().parents[1]
 CONTROLLER = """import json,os,sys,time
@@ -63,7 +67,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--out", required=True)
     p.add_argument("--timeout", type=int, default=240)
-    p.add_argument("--webots-home", type=Path, default=SIM / "webots")
+    p.add_argument("--webots-home", type=Path,
+                   help="a patched Webots build (default: the one forest runs use)")
     p.add_argument("--no-fog", action="store_true", help="without the scattering fog")
     p.add_argument("--fog-density", type=float, help="override the fog's density (0: a medium that does nothing)")
     p.add_argument("--exposure", type=float, help="override the view's exposure")
@@ -76,11 +81,16 @@ def main():
     p.add_argument("--no-light-occlusion", action="store_true", help="without the baked light occlusion")
     p.add_argument("--sub", action="append", default=[], metavar="REGEX=>REPLACEMENT",
                    help="edit the world with a regular expression (debugging)")
+    p.add_argument("--repeatable", action="store_true",
+                   help="a frame after every physics step, so captures repeat exactly (set IRONLARK_PREVIEW_FRAMES=2: "
+                        "21 s for the five views)")
     p.add_argument("--pref", action="append", default=[], metavar="GROUP/KEY=VALUE",
                    help="Webots preference for this run only, e.g. OpenGL/GTAO=0 (the user's own stay untouched)")
     p.add_argument("--lights", choices=["all", "sky", "main", "secondary"], default="all",
                    help="one light only, fog off (as tools/render_lighting_reference.py --lights)")
     args = p.parse_args()
+    # The patched renderer forest runs use, refused when stale before any output, unless a build is named.
+    home = args.webots_home.resolve() if args.webots_home else select_webots(SIM, "forest", os.environ.get("WEBOTS_HOME"))
     out = Path(args.out).resolve()
     worlds = out / "worlds"
     worlds.mkdir(parents=True, exist_ok=True)
@@ -98,6 +108,10 @@ def main():
         .replace("../protos/", str(SIM / "protos") + "/")
     )
     world = world.replace('controller "flight_bridge"', 'controller "<none>"')
+    if args.repeatable:  # a frame after every physics step (the docstring says why)
+        world, found = re.subn(r"\bFPS [\d.]+", "FPS 10000", world, count=1)
+        if not found:
+            raise SystemExit("The world sets no FPS to raise. Rebuild it (./ironlark build-world).")
     # The minimap robot draws nothing without its controller; drop it from previews.
     world = re.sub(r"Robot \{\s*children \[\s*Display \{[^}]*\}\s*\][^}]*\}", "", world)
     world += """\nRobot {
@@ -155,7 +169,7 @@ def main():
         IRONLARK_PREVIEW=str(out),
     )
     cmd = [
-        str(args.webots_home.resolve() / "webots"),
+        str(home / "webots"),
         "--batch",
         "--mode=realtime",
         "--fullscreen",

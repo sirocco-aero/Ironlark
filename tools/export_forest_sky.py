@@ -22,6 +22,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sky_faces import WEBOTS_FACES, face_directions, write_hdr  # noqa: E402
+from cycles_gpu import use_gpu  # noqa: E402
 
 p = argparse.ArgumentParser()
 p.add_argument("--out", required=True)
@@ -34,8 +35,11 @@ with bpy.data.libraries.load(str(source), link=False) as (_, data):
 world = data.worlds[0]
 scene = bpy.context.scene
 scene.world = world
+# The panoramas' rays see the sky and light nothing, so the map Cycles builds to sample the sky as a light (its
+# importance map, from the 8k sky: 1.3 GiB) would go unused.
+world.cycles.sampling_method = "NONE"
 scene.render.engine = "CYCLES"
-scene.cycles.device = "CPU"
+use_gpu(scene, "SKY")
 scene.cycles.samples = 8
 scene.cycles.use_denoising = False
 scene.view_settings.view_transform = "Standard"

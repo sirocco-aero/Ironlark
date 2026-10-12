@@ -16,7 +16,7 @@ import numpy as np
 from mathutils import Vector
 
 sys.path.insert(0, str(Path(__file__).parent))
-from export_forest import loop_uvs, loop_normals, loop_vert_indices
+from export_forest import loop_uvs, loop_normals, loop_vert_indices, render_still
 from forest_mesh import write_material_obj
 
 TWIG_OBJECTS = {
@@ -126,8 +126,7 @@ def bake_twig(obj, species, index, scene, camera):
         path = OUT / f"twig_{species}_{index}_{view}.png"
         if not path.exists() or FORCE:
             scene.view_settings.view_transform = "Standard"
-            scene.render.filepath = str(path)
-            bpy.ops.render.render(write_still=True)
+            render_still(scene, path)
         # Retain the source needle normals instead of lighting every needle as
         # the flat card. Encode them in this projection's tangent basis.
         mat = MATERIALS[species]
@@ -155,8 +154,7 @@ def bake_twig(obj, species, index, scene, camera):
         created.append(scaled)
         normal_path = OUT / f"twig_{species}_{index}_{view}_normal.png"
         scene.view_settings.view_transform = "Raw"
-        scene.render.filepath = str(normal_path)
-        bpy.ops.render.render(write_still=True)
+        render_still(scene, normal_path)
         links.new(color_socket, emit.inputs[0])
         for node in created:
             nodes.remove(node)
@@ -433,18 +431,12 @@ def main():
         (OUT / "twig_atlas.json").write_text(json.dumps(atlas, indent=1))
     if args.prepare_only:
         return
-    variants = sorted(
-        {r["variant"] for r in json.loads((OUT / "authored_trees.json").read_text())}
-    )
     result = (
         json.loads((OUT / "visual_trees.json").read_text())["variants"]
         if (OUT / "visual_trees.json").exists()
         else {}
     )
-    for name in [args.variant] if args.variant else variants:
-        if name not in bpy.data.objects:
-            continue
-        result[name] = export_variant(name, scene)
+    result[args.variant] = export_variant(args.variant, scene)
     (OUT / "visual_trees.json").write_text(
         json.dumps({"version": 1, "variants": result}, indent=1)
     )
